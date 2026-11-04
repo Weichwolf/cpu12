@@ -1,0 +1,38 @@
+CPU12 native byte memory contract
+
+Core accepts an optional Ram{first, bytes} and Io{owner, read, write}. A RAM
+window explicitly declares known writable bytes; its storage must remain alive
+and at the same address throughout Core's lifetime. Its last byte cannot exceed
+ffff. Empty RAM declares no storage. The core never supplies zero for unknown
+memory or silently accepts an unhandled write.
+
+Captured direct/extended LDAA/B and the supported byte ALU instructions perform
+one read. STAA/B performs one write and no implicit destination read. The native
+RAM path embeds the validated host byte address; cached code reads current data,
+not captured values. Full opcode/operand bytes distinguish cache entries.
+
+Outside that window, a real noexcept callback performs the access. Read returns
+true with an established byte. Write receives a named ByteWrite{address,value}
+and returns true only when accepted. Null/refusing callbacks produce explicit
+memory_read/memory_write faults with original PC/opcode, address and diagnostic
+payload. A refused read's payload is not an accepted CPU value. Native code
+retains the SysV state/context registers and stack alignment across callbacks;
+all arithmetic, flag packing and PC updates remain generated host instructions.
+
+A refused access retires nothing and leaves architectural CPU registers intact.
+External side effects already performed by a callback remain actual effects.
+The bus fault is latched: execute makes no additional access until the caller
+explicitly establishes a new register boundary. Coordinate restoration of bus
+state outside the core; clearing code cache does not clear the fault. Reentrant
+execution returns a fault. Register replacement and cache invalidation during
+active execution throw setup/API errors before mutating state or freeing code.
+Callbacks must not throw through generated code; the noexcept boundary enforces
+that contract. No clock, interrupt, board or peripheral success is synthesized.
+
+Qualification uses independently authored RAM/byte-port fixtures. Every byte
+pair is checked for all supported direct/extended ALU/load forms; all store
+values and native/helper/refusal/cache/RAM-boundary contracts are checked. The
+existing 3,166,209 native instruction cases pass on the new coherent library.
+These are CPU component checks, not original firmware boot, complete ISA, whole
+instrument, physical-device or real-time acceptance. No fuzzing or broad
+sanitizer campaign was run; the user's real-time-first validation policy applies.

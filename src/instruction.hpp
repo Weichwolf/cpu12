@@ -15,13 +15,18 @@ enum class Kind : std::uint8_t {
   bit_or,
   bit_xor,
   bit_test,
-  branch
+  branch,
+  store
 };
+
+enum class Addressing : std::uint8_t { immediate, direct, extended };
 
 struct Instruction {
   Kind kind = Kind::nop;
   std::uint8_t opcode = 0, operand = 0, length = 0;
   bool accumulator_b = false;
+  Addressing addressing = Addressing::immediate;
+  std::uint16_t address = 0;
 };
 
 [[nodiscard]] std::optional<Instruction> decode(std::span<const std::uint8_t> bytes);

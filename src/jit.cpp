@@ -6,6 +6,7 @@
 #include "cpu12/core.hpp"
 #include "instruction.hpp"
 #include "jit/emitter.hpp"
+#include "runtime.hpp"
 
 #include <cerrno>
 #include <cstddef>
@@ -22,7 +23,7 @@
 namespace cpu12::detail {
 namespace {
 #if defined(__x86_64__) && defined(__linux__)
-extern "C" void cpu12_enter_generated(const void *, Registers *) noexcept;
+extern "C" void cpu12_enter_generated(const void *, Registers *, NativeContext *) noexcept;
 asm(".pushsection .text\n"
     ".globl cpu12_enter_generated\n"
     ".hidden cpu12_enter_generated\n"
@@ -31,6 +32,7 @@ asm(".pushsection .text\n"
     "endbr64\n"
     "mov %rdi,%rax\n"
     "mov %rsi,%rdi\n"
+    "mov %rdx,%rsi\n"
     "jmp *%rax\n"
     ".size cpu12_enter_generated,.-cpu12_enter_generated\n"
     ".popsection\n");
@@ -59,11 +61,12 @@ public:
   Executable(const Executable &) = delete;
   Executable &operator=(const Executable &) = delete;
 
-  void enter(Registers &registers) const noexcept {
+  void enter(Registers &registers, NativeContext &context) const noexcept {
 #if defined(__x86_64__) && defined(__linux__)
-    cpu12_enter_generated(memory_, &registers);
+    cpu12_enter_generated(memory_, &registers, &context);
 #else
     static_cast<void>(registers);
+    static_cast<void>(context);
 #endif
   }
 
@@ -75,27 +78,32 @@ private:
 
 class Jit::Impl {
 public:
-  std::unordered_map<std::uint16_t, std::unique_ptr<Executable>> blocks;
+  Ram ram;
+  std::unordered_map<std::uint32_t, std::unique_ptr<Executable>> blocks;
   Statistics statistics;
 };
 
-Jit::Jit() : impl_(std::make_unique<Impl>()) {}
+Jit::Jit(const Ram ram) : impl_(std::make_unique<Impl>()) {
+  impl_->ram = ram;
+}
 
 Jit::~Jit() = default;
 
-void Jit::execute(const Instruction &instruction, Registers &registers) {
-  constexpr unsigned byte_bits = 8;
+void Jit::execute(const Instruction &instruction, Registers &registers, NativeContext &context) {
+  constexpr unsigned opcode_shift = 16;
   constexpr unsigned cache_limit = 1024;
-  const auto key = static_cast<std::uint16_t>(
-      (static_cast<unsigned>(instruction.opcode) << byte_bits) | instruction.operand);
+  const auto operand = static_cast<std::uint32_t>(
+      instruction.addressing == Addressing::immediate ? instruction.operand : instruction.address);
+  const auto key = (static_cast<std::uint32_t>(instruction.opcode) << opcode_shift) | operand;
   auto found = impl_->blocks.find(key);
   if (found == impl_->blocks.end()) {
     if (impl_->blocks.size() == cache_limit) { clear(); }
-    found = impl_->blocks.emplace(key, std::make_unique<Executable>(emit(instruction))).first;
+    found = impl_->blocks.emplace(key, std::make_unique<Executable>(emit(instruction, impl_->ram)))
+                .first;
     ++impl_->statistics.compiled_entries;
   }
-  found->second->enter(registers);
-  ++impl_->statistics.native_instructions;
+  found->second->enter(registers, context);
+  if (context.fault == Fault::none) { ++impl_->statistics.native_instructions; }
 }
 
 void Jit::clear() {

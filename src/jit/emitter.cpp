@@ -3,6 +3,7 @@
 
 #include "cpu12/core.hpp"
 #include "instruction.hpp"
+#include "runtime.hpp"
 
 #include <array>
 #include <bit>
@@ -42,6 +43,10 @@ constexpr std::array<std::uint8_t, 10> signed_condition{
 
 enum Encoding : std::uint8_t {
   ret = 0xc3,
+  load_si = 0xbe,
+  register_operands = 0xc8,
+  move_al_cl = 0x88,
+  test_al_cl = 0x84,
   load_al = 0xb0,
   add_al = 0x04,
   sub_al = 0x2c,
@@ -64,6 +69,18 @@ public:
 
   void byte(const std::uint8_t value) { bytes.push_back(value); }
 
+  void u32(const std::uint32_t value) {
+    for (unsigned shift = 0; shift < sizeof(value) * byte_bits; shift += byte_bits) {
+      byte(static_cast<std::uint8_t>((value >> shift) & byte_mask));
+    }
+  }
+
+  void u64(const std::uint64_t value) {
+    for (unsigned shift = 0; shift < sizeof(value) * byte_bits; shift += byte_bits) {
+      byte(static_cast<std::uint8_t>((value >> shift) & byte_mask));
+    }
+  }
+
   void advance(const int delta) {
     const auto value = static_cast<std::uint16_t>(delta);
     raw(pc_add);
@@ -71,6 +88,66 @@ public:
     byte(static_cast<std::uint8_t>(value >> byte_bits));
   }
 };
+
+// All call templates retain state/context registers and SysV stack alignment.
+constexpr std::array<std::uint8_t, 2> absolute_r11{0x49, 0xbb};
+constexpr std::array<std::uint8_t, 9> call_begin{
+    0x57, 0x56, 0x48, 0x83, 0xec, 0x08, 0x48, 0x89, 0xf7};
+constexpr std::array<std::uint8_t, 3> call_r11{0x41, 0xff, 0xd3};
+constexpr std::array<std::uint8_t, 6> call_end{0x48, 0x83, 0xc4, 0x08, 0x5e, 0x5f};
+constexpr std::array<std::uint8_t, 8> read_result{0x3d, 0x00, 0x01, 0x00, 0x00, 0x75, 0x01, 0xc3};
+constexpr std::array<std::uint8_t, 5> write_result{0x85, 0xc0, 0x75, 0x01, 0xc3};
+constexpr std::array<std::uint8_t, 2> operand_from_ax{0x89, 0xc1};
+constexpr std::array<std::uint8_t, 4> ram_read{0x41, 0x0f, 0xb6, 0x0b};
+constexpr std::array<std::uint8_t, 3> ram_write{0x41, 0x88, 0x03};
+constexpr std::array<std::uint8_t, 3> write_argument{0x0f, 0xb6, 0xd0};
+
+std::uint8_t *ram_pointer(const Ram ram, const std::uint16_t address) {
+  if (address < ram.first) { return nullptr; }
+  const auto offset = static_cast<std::size_t>(address - ram.first);
+  return offset < ram.bytes.size() ? ram.bytes.data() + offset : nullptr;
+}
+
+void bus_call(Code &code, const Instruction &instruction, const bool write) {
+  if (write) { code.raw(write_argument); }
+  code.raw(call_begin);
+  code.byte(load_si);
+  code.u32(instruction.address);
+  code.raw(absolute_r11);
+  if (write) {
+    code.u64(reinterpret_cast<std::uintptr_t>(&write_byte));
+  } else {
+    code.u64(reinterpret_cast<std::uintptr_t>(&read_byte));
+  }
+  code.raw(call_r11);
+  code.raw(call_end);
+  if (write) {
+    code.raw(write_result);
+  } else {
+    code.raw(read_result);
+  }
+}
+
+void memory_read(Code &code, const Instruction &instruction, const Ram ram) {
+  if (const auto *pointer = ram_pointer(ram, instruction.address)) {
+    code.raw(absolute_r11);
+    code.u64(reinterpret_cast<std::uintptr_t>(pointer));
+    code.raw(ram_read);
+    return;
+  }
+  bus_call(code, instruction, false);
+  code.raw(operand_from_ax);
+}
+
+void memory_write(Code &code, const Instruction &instruction, const Ram ram) {
+  if (const auto *pointer = ram_pointer(ram, instruction.address)) {
+    code.raw(absolute_r11);
+    code.u64(reinterpret_cast<std::uintptr_t>(pointer));
+    code.raw(ram_write);
+    return;
+  }
+  bus_call(code, instruction, true);
+}
 
 struct FlagPolicy {
   bool carry = false, overflow = false, half = false;
@@ -93,7 +170,9 @@ void flags(Code &code, const FlagPolicy policy) {
   code.raw(store_ccr);
 }
 
-void arithmetic(Code &code, const Instruction &instruction) {
+void arithmetic(Code &code, const Instruction &instruction, const Ram ram) {
+  const bool immediate = instruction.addressing == Addressing::immediate;
+  if (!immediate) { memory_read(code, instruction, ram); }
   const auto offset = static_cast<std::uint8_t>(d_offset + (instruction.accumulator_b ? 0 : 1));
   code.raw(load_accumulator);
   code.byte(offset);
@@ -123,17 +202,46 @@ void arithmetic(Code &code, const Instruction &instruction) {
       store = false;
       break;
     case Kind::nop:
+    case Kind::store:
     case Kind::branch:
     default: throw std::logic_error("Invalid native arithmetic kind");
   }
-  code.byte(opcode);
-  code.byte(instruction.operand);
+  if (immediate) {
+    code.byte(opcode);
+    code.byte(instruction.operand);
+  } else {
+    constexpr unsigned register_form_delta = 4;
+    auto native = static_cast<unsigned>(opcode);
+    if (opcode == load_al) {
+      native = move_al_cl;
+    } else if (opcode == test_al) {
+      native = test_al_cl;
+    } else {
+      native -= register_form_delta;
+    }
+    code.byte(static_cast<std::uint8_t>(native));
+    code.byte(register_operands);
+  }
   if (instruction.kind == Kind::load) { code.raw(test_accumulator); }
   if (store) {
     code.raw(store_accumulator);
     code.byte(offset);
   }
   flags(code, policy);
+  code.advance(instruction.length);
+  code.byte(ret);
+}
+
+void store(Code &code, const Instruction &instruction, const Ram ram) {
+  const auto offset = static_cast<std::uint8_t>(d_offset + (instruction.accumulator_b ? 0 : 1));
+  code.raw(load_accumulator);
+  code.byte(offset);
+  memory_write(code, instruction, ram);
+  // Successful bus writes retain CPU state; reload the source after the ABI call.
+  code.raw(load_accumulator);
+  code.byte(offset);
+  code.raw(test_accumulator);
+  flags(code, {});
   code.advance(instruction.length);
   code.byte(ret);
 }
@@ -164,7 +272,7 @@ void branch(Code &code, const Instruction &instruction) {
 }
 }
 
-std::vector<std::uint8_t> emit(const Instruction &instruction) {
+std::vector<std::uint8_t> emit(const Instruction &instruction, const Ram ram) {
   Code code;
   code.raw(entry);
   if (instruction.kind == Kind::branch) {
@@ -172,8 +280,10 @@ std::vector<std::uint8_t> emit(const Instruction &instruction) {
   } else if (instruction.kind == Kind::nop) {
     code.advance(1);
     code.byte(ret);
+  } else if (instruction.kind == Kind::store) {
+    store(code, instruction, ram);
   } else {
-    arithmetic(code, instruction);
+    arithmetic(code, instruction, ram);
   }
   return code.bytes;
 }

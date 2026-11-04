@@ -1,5 +1,5 @@
 {
-  "scope": "First independent CPU12 captured native subset; not a complete CPU12 core or Blofeld integration",
+  "scope": "Historical first captured native subset at qualified_revision; current integration evidence is in memory-reference.json",
   "source_sha256": {
     "include/cpu12/core.hpp": "b0a40c98bf740382afd9b6433941c18976ecd4ac847f9f3de57b10976aa9bda2",
     "src/core.cpp": "c099b2aad8e737300a6d4ca6557d243ce216956c2e90a82d6af1fe95a22affea",
@@ -49,5 +49,6 @@
   "fuzz": false,
   "sanitizers": "Extensive sanitizer and regression matrices deferred until original Blofeld firmware real-time operation",
   "native_speed_claim": false,
-  "instrument_complete": false
+  "instrument_complete": false,
+  "qualified_revision": "c86888a072ddf892c0d039f8c546bbe0c3a01b0b"
 }
