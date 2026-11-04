@@ -1,56 +1,57 @@
-Native indexed addressing — focused Release qualification
+Native indexed addressing and effective-address operations
 
-The captured CPU12 entry accepts up to four bytes. Native indexed byte
-load/ALU/ store and D/X/Y/SP word load/compare/add/sub/store forms share the
-existing flag and retirement implementation. Captured opcode, complete postbyte
-and all offset bits distinguish native entries; PC and base-register values
-remain dynamic.
+The captured entry accepts up to four bytes. Complete captured bytes and length
+identify a native cache entry; base registers and PC remain dynamic. Decoding
+runs only on a cache miss. Invalid prefixes or excess zero padding cannot reuse
+a valid native entry. The frontend never replaces unsupported instructions.
 
-Implemented layouts use X, Y, SP or PC with signed 5-/9-bit constants, wrapping
-16-bit constants, unsigned A/B/D accumulator offsets, 16-bit constant indirect
-and D indirect addresses. PC denotes the address after the complete captured
-instruction. The 160 corresponding postbytes are decoded; the 96 automatic
-pre/post-update forms still refuse explicitly before changing CPU or memory.
-Their source/destination overlap and architectural update order need separate
-qualification. Remaining ISA, fetch/reset/IRQ/wait and board integration are
-open.
+Implemented memory opcodes support all 256 indexed postbytes: signed 5-/9-bit
+and wrapping 16-bit constants, unsigned A/B/D offsets, constant/D indirect
+pointers, and X/Y/SP pre/post changes from -8..-1 or 1..8. PC denotes the
+address after the complete instruction. LEAX/LEAY/LEAS support all 248 legal
+nonindirect postbytes without data accesses or CCR changes. Indirect LEA
+refuses explicitly. Remaining ISA, fetch/reset/IRQ/wait and board integration
+are open.
 
-Generated x64 computes the effective address and accesses known RAM directly.
-The full 64-KiB layout omits impossible bounds checks; partial windows use
-unsigned bounds for both bytes of a word. A word crossing a window boundary
-delegates its entire logical request to the supplied owner, including known RAM
-portions. Words and indirect pointers are big-endian and wrap from ffff to
-zero. An indirect access first reads the logical word pointer, then the
-addressed operand.
+Pre-update selects the adjusted base address; post-update selects the old one.
+The operation reads adjusted register sources. A loaded destination can replace
+its index update. LEA receives the effective address, so overlapping
+post-update is not retained. S12CPUV2 section 3.9.5 and the LEA entries
+document the address rules and LEA overlap. Separately authored SLEIGH
+observations corroborate the load/store/compare overlaps; this is not a
+measured silicon claim.
 
-Only actual external accesses call real noexcept bus callbacks. A failed
-pointer read never accesses the operand. A failed operand retains an already
-accepted pointer-read side effect; CPU state remains unchanged, and the latched
-fault prevents replay. Diagnostic address and width identify the actual failing
-phase. Indirect stores reload their CPU source after a possible pointer
-callback. No arithmetic/address interpreter or silently successful bus fallback
-is added.
+Generated x64 computes addresses and accesses known RAM directly. A full 64-KiB
+layout omits impossible bounds checks; partial windows check both word bytes.
+Words and indirect pointers are big-endian and wrap from ffff to zero. A
+partial RAM word delegates its complete logical request, including known RAM
+portions, to the supplied owner. Indirect access reads the pointer before its
+operand. Only genuine external accesses call the real noexcept bus callbacks.
 
-The authored matrix varies every implemented postbyte, directed extensions,
-distinct base-register/PC boundaries, byte/word operations and data extremes.
-Independent arithmetic expectations check complete registers and CCR, not a
-round trip. Additional checks cover native/external runtime address changes in
-one cached entry, word seams, indirect callbacks and precise latched refusals.
-LLVM disassembly has independently confirmed the new x64 address/load/store
-encodings. test/indexed_window.smt2 proves unsigned interval admission, wrapped
-word offsets and folded PC-relative arithmetic; four claims are unsat and two
-deliberately incorrect guards are sat. Neither inspection establishes CPU
-runtime correctness. The optimized native matrix passes 168432 independent
-cases. All four existing native/byte/word/API consumers pass on the same
-coherent library. Source, ELF and receipt identities are pinned in indexed-
-reference.json. These are component checks, not original startup, complete MCU
-integration or realtime acceptance. Fuzzing and broad sanitizer campaigns are
-excluded from this focused work. Primary reference identity and sections are in
-reference-manifest.json.
+A rejected access leaves CPU/index registers at the original unretired
+boundary. Accepted external effects remain real, including an adjusted-source
+store that then refuses. Callbacks see that original CPU boundary. CPU updates
+publish only after accepted data access, and a latched fault prevents replay.
+Diagnostic PC, opcode, address and width identify the failing pointer/operand
+phase. This is an explicit synchronous functional API, not physical bus-error
+rollback.
 
-Focused reproduction after build admission:
+The focused native auto/LEA matrix passes 292732 cases. Five existing
+consumers, including 168432 non-auto indexed cases, pass on the same coherent
+library. All CCR values, destination/source overlap, wrapping, indirect
+effects, cache length collisions and latched refusals have independent
+expectations. auto-indexed-reference.json pins current source, ELF and actual
+run receipts. Historical indexed-reference.json retains its separate source
+pins. Four SMT queries prove interval/wrap/PC arithmetic, with two SAT negative
+controls; LLVM decoding separately checks the emitted host instruction
+encodings. These are component checks, not full ISA, original boot, instrument
+or realtime acceptance. No fuzzing was run; extensive sanitizer work remains
+deferred under the real-time-first development policy. reference-manifest.json
+pins the manual.
+
+Focused reproduction:
 
   cmake --preset release
-  cmake --build --preset release --target cpu12-indexed-test
-  ctest --test-dir build/release --output-on-failure -R "^indexed$"
+  cmake --build --preset release --target cpu12-auto-indexed-test cpu12-indexed-test
+  ctest --test-dir build/release --output-on-failure -R '^(auto-indexed|indexed)$'
   z3 -smt2 test/indexed_window.smt2

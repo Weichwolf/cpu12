@@ -109,6 +109,28 @@ bool arithmetic_operand(Instruction &instruction, const std::span<const std::uin
   return true;
 }
 
+std::optional<Instruction> indexed_operation(Instruction instruction,
+                                             const std::span<const std::uint8_t> bytes) {
+  constexpr unsigned first_lea = 0x19;
+  constexpr unsigned last_lea = 0x1b;
+  constexpr unsigned first_word_store = 0x6c;
+  const auto opcode = instruction.opcode;
+  if (opcode >= first_lea && opcode <= last_lea) {
+    instruction.kind = Kind::effective_address;
+    instruction.target = static_cast<WordTarget>(opcode - first_lea + 1);
+  } else {
+    instruction.kind = Kind::store;
+    instruction.word = opcode >= first_word_store;
+    instruction.target = static_cast<WordTarget>(opcode & 3U);
+    instruction.accumulator_b = (opcode & 1U) != 0;
+  }
+  if (!decode_indexed(instruction, bytes) ||
+      (instruction.kind == Kind::effective_address && instruction.indexed.indirect)) {
+    return {};
+  }
+  return instruction;
+}
+
 }
 
 std::optional<Instruction> decode(const std::span<const std::uint8_t> bytes) {
@@ -134,14 +156,11 @@ std::optional<Instruction> decode(const std::span<const std::uint8_t> bytes) {
   }
   constexpr unsigned first_indexed_store = 0x6a;
   constexpr unsigned last_indexed_store = 0x6f;
-  constexpr unsigned first_word_store = 0x6c;
-  if (opcode >= first_indexed_store && opcode <= last_indexed_store) {
-    instruction.kind = Kind::store;
-    instruction.word = opcode >= first_word_store;
-    instruction.target = static_cast<WordTarget>(opcode & 3U);
-    instruction.accumulator_b = (opcode & 1U) != 0;
-    if (!decode_indexed(instruction, bytes)) { return {}; }
-    return instruction;
+  constexpr unsigned first_lea = 0x19;
+  constexpr unsigned last_lea = 0x1b;
+  if ((opcode >= first_indexed_store && opcode <= last_indexed_store) ||
+      (opcode >= first_lea && opcode <= last_lea)) {
+    return indexed_operation(instruction, bytes);
   }
   if (word_store(instruction)) {
     if (!memory_operand(instruction, bytes)) { return {}; }

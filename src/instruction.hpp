@@ -16,7 +16,8 @@ enum class Kind : std::uint8_t {
   bit_xor,
   bit_test,
   branch,
-  store
+  store,
+  effective_address
 };
 
 enum class Addressing : std::uint8_t { immediate, direct, extended, indexed };
@@ -28,6 +29,7 @@ struct Indexed {
   IndexOffset offset = IndexOffset::constant;
   std::uint16_t displacement = 0;
   std::uint8_t postbyte = 0;
+  std::int8_t update = 0;
   bool indirect = false;
 };
 

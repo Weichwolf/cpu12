@@ -6,11 +6,11 @@ GPL-3.0-only.
 The initial implementation compiles captured NOP, 8-bit immediate load/ALU and
 short conditional-branch instructions directly into x86-64/Linux host code.
 Direct/extended byte and word load, ALU and store instructions use native RAM
-access or explicit external bus callbacks. Non-auto indexed forms add dynamic
-X/Y/SP/PC, constant/accumulator offsets and indirect pointer accesses. Word
-operations cover D, X, Y and SP. Native entry requires the detected LAHF long-
-mode CPU feature; unsupported hosts refuse explicitly. Arithmetic, CCR changes
-and branch decisions execute natively. No instruction interpreter or Ghidra
+access or explicit external bus callbacks. Indexed forms add dynamic X/Y/SP/PC,
+constant/accumulator offsets and indirect pointer accesses. Word operations
+cover D, X, Y and SP. Native entry requires the detected long-mode LAHF CPU
+feature; unsupported hosts refuse explicitly. Arithmetic, CCR changes and
+branch decisions execute natively. No instruction interpreter or Ghidra
 dependency is present. Unsupported instructions return an explicit fault
 without retirement. This is an initial ISA subset, not a complete CPU12
 emulator or a completed Blofeld integration.
@@ -24,10 +24,10 @@ bounds fail at setup.
 
 The captured `run_instruction(bytes)` API separates CPU semantics from the
 caller's fetch, clocks and board model. Interrupt entry, reset and waits remain
-required work, along with automatic index updates, remaining ISA and bounded
-native regions. The current RAM/bus contract is described in
-[memory.txt](doc/memory.txt) and [indexed.txt](doc/indexed.txt). See
-[coverage](doc/coverage.txt) and the [full objective](doc/objective.txt).
+required work, along with remaining ISA and bounded native regions. The current
+RAM/bus contract is described in [memory.txt](doc/memory.txt) and
+[indexed.txt](doc/indexed.txt). See [coverage](doc/coverage.txt) and the [full
+objective](doc/objective.txt).
 
 ```sh
 cmake --preset release

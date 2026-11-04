@@ -2,10 +2,11 @@
 #pragma once
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
-#include "instruction.hpp"
 #include "runtime.hpp"
 
+#include <cstdint>
 #include <memory>
+#include <span>
 
 namespace cpu12::detail {
 class Jit {
@@ -14,7 +15,9 @@ public:
   ~Jit();
   Jit(const Jit &) = delete;
   Jit &operator=(const Jit &) = delete;
-  void execute(const Instruction &instruction, Registers &registers, NativeContext &context);
+  // False means unsupported captured bytes, with no native or I/O effect.
+  [[nodiscard]] bool
+  execute(std::span<const std::uint8_t> bytes, Registers &registers, NativeContext &context);
   void clear();
   [[nodiscard]] Statistics statistics() const noexcept;
 

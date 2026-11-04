@@ -201,6 +201,7 @@ void arithmetic(Code &code, const Instruction &instruction, const Ram ram) {
       opcode = test_al;
       store = false;
       break;
+    case Kind::effective_address:
     case Kind::nop:
     case Kind::store:
     case Kind::branch:
@@ -337,6 +338,7 @@ WordEncoding word_operation(const Instruction &instruction) {
     case Kind::add: return add_ax;
     case Kind::subtract: return sub_ax;
     case Kind::compare: return cmp_ax;
+    case Kind::effective_address:
     case Kind::nop:
     case Kind::bit_and:
     case Kind::bit_or:
@@ -432,7 +434,9 @@ void branch(Code &code, const Instruction &instruction) {
 std::vector<std::uint8_t> emit(const Instruction &instruction, const Ram ram) {
   Code code;
   code.raw(entry);
-  if (instruction.word) {
+  if (instruction.kind == Kind::effective_address) {
+    indexed_effective_address(code, instruction);
+  } else if (instruction.word) {
     word_instruction(code, instruction, ram);
   } else if (instruction.kind == Kind::branch) {
     branch(code, instruction);

@@ -26,6 +26,11 @@ public:
 
   void byte(const std::uint8_t value) { bytes.push_back(value); }
 
+  void u16(const std::uint16_t value) {
+    byte(static_cast<std::uint8_t>(value & byte_mask));
+    byte(static_cast<std::uint8_t>(value >> byte_bits));
+  }
+
   void u32(const std::uint32_t value) {
     for (unsigned shift = 0; shift < sizeof(value) * byte_bits; shift += byte_bits) {
       byte(static_cast<std::uint8_t>((value >> shift) & byte_mask));
@@ -39,10 +44,8 @@ public:
   }
 
   void advance(const int delta) {
-    const auto value = static_cast<std::uint16_t>(delta);
     raw(pc_add);
-    byte(static_cast<std::uint8_t>(value & byte_mask));
-    byte(static_cast<std::uint8_t>(value >> byte_bits));
+    u16(static_cast<std::uint16_t>(delta));
   }
 
   // Compile-time fixups only; no branch table or dispatcher in generated code.

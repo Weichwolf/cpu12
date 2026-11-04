@@ -293,14 +293,17 @@ void indirect_bus() {
 void refusals() {
   Core core;
   const auto before = seeds[0];
-  constexpr std::array<Byte, 3> auto_bases{0x20, 0x60, 0xa0};
-  for (const auto base : auto_bases) {
-    for (unsigned update = 0; update < 32; ++update) {
+  constexpr std::array<Byte, 3> lea{0x19, 0x1a, 0x1b};
+  constexpr std::array<Byte, 8> indirect{0xe3, 0xeb, 0xf3, 0xfb, 0xe7, 0xef, 0xf7, 0xff};
+  for (const auto opcode : lea) {
+    for (const auto postbyte : indirect) {
       core.set_registers(before);
-      const std::array<Byte, 2> instruction{0xa6, static_cast<Byte>(base + update)};
-      require(core.run_instruction(instruction).fault == Fault::unsupported_instruction &&
+      const std::array<Byte, 4> instruction{opcode, postbyte, 0, 0};
+      const auto length = (postbyte & 7U) == 3 ? std::size_t{4} : std::size_t{2};
+      require(core.run_instruction(std::span(instruction).first(length)).fault ==
+                      Fault::unsupported_instruction &&
                   core.registers() == before,
-              "Unimplemented auto-update forms refuse explicitly without state or bus effects");
+              "Illegal indirect LEA refuses without CPU or bus effects");
     }
   }
   constexpr std::array<Byte, 4> constant16{0xa6, 0xe2, 0x12, 0x34};

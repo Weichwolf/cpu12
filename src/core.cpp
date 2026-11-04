@@ -2,7 +2,6 @@
 #include "cpu12/core.hpp"
 
 #include "cpu12/memory.hpp"
-#include "instruction.hpp"
 #include "jit.hpp"
 #include "runtime.hpp"
 
@@ -77,19 +76,19 @@ RunResult Core::run_instruction(const std::span<const std::uint8_t> bytes) {
     result.fault = Fault::invalid_input;
     return result;
   }
-  const auto instruction = detail::decode(bytes);
-  if (!instruction) {
-    result.fault = Fault::unsupported_instruction;
-    return result;
-  }
+  bool supported = false;
   impl_->active = true;
   try {
-    impl_->jit.execute(*instruction, impl_->registers, impl_->context);
+    supported = impl_->jit.execute(bytes, impl_->registers, impl_->context);
   } catch (...) {
     impl_->active = false;
     throw;
   }
   impl_->active = false;
+  if (!supported) {
+    result.fault = Fault::unsupported_instruction;
+    return result;
+  }
   if (impl_->context.fault == Fault::none) {
     result.retired = 1;
   } else {

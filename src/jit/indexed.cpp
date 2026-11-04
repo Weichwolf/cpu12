@@ -57,6 +57,9 @@ constexpr std::array<std::uint8_t, 3> shift_high{0xc1, 0xe1, 0x08};
 constexpr std::array<std::uint8_t, 5> low_read{0x47, 0x0f, 0xb6, 0x04, 0x03};
 constexpr std::array<std::uint8_t, 3> merge_word{0x44, 0x09, 0xc1};
 constexpr std::array<std::uint8_t, 3> pointer_result{0x41, 0x89, 0xc9};
+constexpr std::array<std::uint8_t, 3> modify_index{0x66, 0x81, 0x47};
+constexpr std::array<std::uint8_t, 2> advance_source{0x66, 0x05};
+constexpr std::array<std::uint8_t, 4> store_address{0x66, 0x44, 0x89, 0x4f};
 
 enum Encoding : std::uint8_t {
   byte_extend = 0xb6,
@@ -70,6 +73,7 @@ enum Encoding : std::uint8_t {
   compare_low = 0xf8,
   compare_high = 0xfa,
   jump = 0xe9,
+  ret = 0xc3,
   full_index = 0x0b,
   partial_index = 0x13
 };
@@ -77,6 +81,22 @@ enum Encoding : std::uint8_t {
 struct Access {
   bool word = false, write = false;
 };
+
+bool replaces_base(const Instruction &instruction) {
+  if (instruction.kind != Kind::effective_address &&
+      (instruction.kind != Kind::load || !instruction.word)) {
+    return false;
+  }
+  return word_offsets[static_cast<unsigned>(instruction.target)] ==
+         base_offsets[static_cast<unsigned>(instruction.indexed.base)];
+}
+
+void update_index(Code &code, const Instruction &instruction) {
+  if (instruction.indexed.update == 0 || replaces_base(instruction)) { return; }
+  code.raw(modify_index);
+  code.byte(base_offsets[static_cast<unsigned>(instruction.indexed.base)]);
+  code.u16(static_cast<std::uint16_t>(instruction.indexed.update));
+}
 
 void effective_address(Code &code, const Instruction &instruction) {
   const auto &indexed = instruction.indexed;
@@ -216,6 +236,9 @@ void resolve(Code &code, const Instruction &instruction, const Ram ram) {
 void indexed_read(Code &code, const Instruction &instruction, const Ram ram) {
   resolve(code, instruction, ram);
   memory_access(code, ram, {.word = instruction.word});
+  // A refused access has already returned before any CPU mutation. Successful
+  // auto-update precedes the operation, whose register destination may replace it.
+  update_index(code, instruction);
 }
 
 void indexed_write(Code &code, const Instruction &instruction, const Ram ram) {
@@ -228,6 +251,24 @@ void indexed_write(Code &code, const Instruction &instruction, const Ram ram) {
   code.byte(instruction.word
                 ? word_offsets[static_cast<unsigned>(instruction.target)]
                 : static_cast<std::uint8_t>(d_offset + (instruction.accumulator_b ? 0 : 1)));
+  if (instruction.indexed.update != 0 && instruction.word &&
+      word_offsets[static_cast<unsigned>(instruction.target)] ==
+          base_offsets[static_cast<unsigned>(instruction.indexed.base)]) {
+    // Match the adjusted architectural source without exposing a speculative
+    // CPU update to an external callback that may still refuse the write.
+    code.raw(advance_source);
+    code.u16(static_cast<std::uint16_t>(instruction.indexed.update));
+  }
   memory_access(code, ram, {.word = instruction.word, .write = true});
+  update_index(code, instruction);
+}
+
+void indexed_effective_address(Code &code, const Instruction &instruction) {
+  effective_address(code, instruction);
+  update_index(code, instruction);
+  code.raw(store_address);
+  code.byte(word_offsets[static_cast<unsigned>(instruction.target)]);
+  code.advance(instruction.length);
+  code.byte(ret);
 }
 }

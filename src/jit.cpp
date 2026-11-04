@@ -81,7 +81,7 @@ class Jit::Impl {
 public:
   Ram ram;
   std::size_t cache_entries = 0;
-  std::unordered_map<std::uint32_t, std::unique_ptr<Executable>> blocks;
+  std::unordered_map<std::uint64_t, std::unique_ptr<Executable>> blocks;
   Statistics statistics;
 };
 
@@ -96,26 +96,32 @@ Jit::Jit(const Ram ram, const Options options) : impl_(std::make_unique<Impl>())
 
 Jit::~Jit() = default;
 
-void Jit::execute(const Instruction &instruction, Registers &registers, NativeContext &context) {
+bool Jit::execute(const std::span<const std::uint8_t> bytes,
+                  Registers &registers,
+                  NativeContext &context) {
+  constexpr unsigned length_shift = 32;
   constexpr unsigned opcode_shift = 24;
   constexpr unsigned postbyte_shift = 16;
-  const auto operand = static_cast<std::uint32_t>(
-      instruction.addressing == Addressing::immediate ? instruction.operand : instruction.address);
-  const auto captured =
-      instruction.addressing == Addressing::indexed
-          ? (static_cast<std::uint32_t>(instruction.indexed.postbyte) << postbyte_shift) |
-                instruction.indexed.displacement
-          : operand;
-  const auto key = (static_cast<std::uint32_t>(instruction.opcode) << opcode_shift) | captured;
+  constexpr unsigned byte_shift = 8;
+  // The public entry already bounded the capture to 1..4 bytes. Include length
+  // so truncated or zero-padded captures cannot hit a valid native entry.
+  auto key = (static_cast<std::uint64_t>(bytes.size()) << length_shift) |
+             (static_cast<std::uint64_t>(bytes[0]) << opcode_shift);
+  if (bytes.size() > 1) { key |= static_cast<std::uint64_t>(bytes[1]) << postbyte_shift; }
+  if (bytes.size() > 2) { key |= static_cast<std::uint64_t>(bytes[2]) << byte_shift; }
+  if (bytes.size() > 3) { key |= bytes[3]; }
   auto found = impl_->blocks.find(key);
   if (found == impl_->blocks.end()) {
+    const auto instruction = decode(bytes);
+    if (!instruction) { return false; }
     if (impl_->blocks.size() == impl_->cache_entries) { clear(); }
-    found = impl_->blocks.emplace(key, std::make_unique<Executable>(emit(instruction, impl_->ram)))
+    found = impl_->blocks.emplace(key, std::make_unique<Executable>(emit(*instruction, impl_->ram)))
                 .first;
     ++impl_->statistics.compiled_entries;
   }
   found->second->enter(registers, context);
   if (context.fault == Fault::none) { ++impl_->statistics.native_instructions; }
+  return true;
 }
 
 void Jit::clear() {

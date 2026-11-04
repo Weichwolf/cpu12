@@ -13,8 +13,11 @@ Initial native implementation on x86-64/Linux:
 - Direct/extended STD/STX/STY/STS, correct word NZVC and unchanged H.
 - Big-endian known-RAM word reads/writes, including ffff-to-zero wrapping.
 - Explicit logical wide callbacks; unknown wide accesses never guess byte semantics.
-- Non-auto indexed byte/word load/ALU/store: 160 postbytes, X/Y/SP/PC,
+- Indexed byte/word load/ALU/store: all 256 postbytes, X/Y/SP/PC,
   signed 5-/9-bit and wrapping 16-bit constants, unsigned A/B/D and indirect pointers.
+- X/Y/SP pre/post changes -8..-1 or 1..8, including source/destination overlap.
+- LEAX/LEAY/LEAS: all 248 legal postbytes, preserve CCR and perform no data access.
+- Complete captured-byte/length cache keys; ISA decode only on a cache miss.
 - One explicit known RAM window with direct native byte/word/pointer access.
 - Real external read/write callbacks, precise fault context and no automatic replay.
 - Recursive execution and state/cache mutations are refused during callbacks.
@@ -31,7 +34,7 @@ register state, PC wrap, cache-clear/NOP and no-effect refusals. No manufacturer
 program is used. This scope is distinct from an independently booting processor.
 
 Open requirements:
-- The remaining ISA and automatic pre/post-update indexed addressing forms.
+- The remaining ISA and its addressing/control/stack forms.
 - Additional memory-window types and multi-byte/per-instruction access boundaries.
 - Native regions, fetch ownership/code invalidation and event/timing budgets.
 - Reset, interrupt priorities/entry/return, wait/stop and complete checkpoints.
@@ -42,9 +45,9 @@ Open requirements:
 No native throughput or real-time claim is made from correctness test duration.
 Broad QA is deferred until original Blofeld firmware runs in real time, as the
 user requested. No fuzzing was run. Current qualification is in
-indexed-reference.json: 168432 independent indexed cases and all four previous
-native/byte/word/API consumers pass on the same coherent library. Four directed
-SMT queries prove interval/wrap/PC arithmetic, with two SAT negative controls;
-this is separate from actual x64 execution. The historical API qualification at
-d1ed89b is retained in memory-api-reference.json; word, byte and initial native
-records retain their own source pins. None establishes full ISA or an instrument.
+auto-indexed-reference.json: 292732 auto/LEA cases and all five previous
+native/byte/word/API/indexed consumers pass on the same coherent library.
+Historical indexed-reference.json pins the earlier non-auto integration and
+its four directed SMT arithmetic proofs with two SAT negative controls.
+Earlier API, word, byte and initial native records retain their own source
+pins. None establishes full ISA, physical equivalence or a playable instrument.

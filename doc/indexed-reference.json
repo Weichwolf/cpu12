@@ -1,5 +1,5 @@
 {
-  "scope": "Native non-auto indexed addressing and coherent CPU12 consumers; incomplete ISA, no original firmware or instrument acceptance",
+  "scope": "Historical non-auto indexed qualification at qualified_revision; current coherent consumers and auto/LEA evidence are in auto-indexed-reference.json",
   "parent_revision": "d1ed89bbd789182965f503cf497b995a9e007773",
   "source_sha256": {
     ".clang-tidy": "eac7eb8af904bc5486dacc53abd61563ebcf43c699b4c18bc5304cd2cd32a52a",
@@ -127,5 +127,6 @@
   "fuzz": false,
   "throughput_claim": false,
   "firmware_or_instrument_acceptance": false,
-  "extensive_sanitizer_regressions": "Deferred until original firmware runs in real time, per user instruction"
+  "extensive_sanitizer_regressions": "Deferred until original firmware runs in real time, per user instruction",
+  "qualified_revision": "c95afd845ddba161359228875d672aa4bed83565"
 }
