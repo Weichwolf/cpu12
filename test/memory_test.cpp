@@ -77,7 +77,7 @@ void read_case(cpu12::Core &core, const ReadCase &test) {
                                             : (oracle.value * values) | (before.d & byte_mask));
   }
   core.set_registers(before);
-  const auto result = core.execute(instruction.view());
+  const auto result = core.run_instruction(instruction.view());
   require(result.retired == 1 && result.fault == cpu12::Fault::none && result.pc == before.pc &&
               core.registers() == wanted,
           "Independent memory-operand arithmetic, flags and complete state expectation failed");
@@ -146,7 +146,7 @@ void store_case(cpu12::Core &core, const std::span<const std::uint8_t> ram, cons
       static_cast<std::uint8_t>((before.ccr & (byte_mask ^ nzv)) | (value == 0 ? zero : 0U) |
                                 (value >= sign_bit ? negative : 0U));
   core.set_registers(before);
-  const auto result = core.execute(instruction.view());
+  const auto result = core.run_instruction(instruction.view());
   require(result.retired == 1 && core.registers() == wanted && ram[address] == value &&
               ram[address - 1] == 0 && ram[address + 1] == 0,
           "Stores retain A/B, set independent NZV flags and touch exactly one byte");
@@ -187,7 +187,7 @@ bool Bus::read(void *const owner, const std::uint16_t address, std::uint8_t &val
   bus.at_access = bus.core->registers();
   if (bus.reenter) {
     constexpr std::array<std::uint8_t, 1> nop{0xa7};
-    const auto result = bus.core->execute(nop);
+    const auto result = bus.core->run_instruction(nop);
     bus.recursive_refused = result.retired == 0 && result.fault == cpu12::Fault::reentrant;
     try {
       bus.core->set_registers({});
@@ -250,7 +250,7 @@ void bus_operations() {
   core.set_registers(seed);
   const auto instruction =
       encode({.opcode = a_store + store_extended_delta, .address = bus.address, .extended = true});
-  const auto fault = core.execute(instruction.view());
+  const auto fault = core.run_instruction(instruction.view());
   const auto writes = bus.writes;
   const auto retired = core.statistics().native_instructions;
   require(fault.fault == cpu12::Fault::memory_write && fault.retired == 0 && fault.pc == seed.pc &&
@@ -259,14 +259,14 @@ void bus_operations() {
           "A real refused bus write retains its side effect and reports exact context without CPU "
           "retirement");
   core.clear_code_cache();
-  const auto repeated = core.execute(instruction.view());
+  const auto repeated = core.run_instruction(instruction.view());
   require(repeated.fault == fault.fault && repeated.address == fault.address &&
               bus.writes == writes && core.statistics().native_instructions == retired,
           "A latched fault prevents silent duplicate bus traffic even after cache invalidation");
   bus.value = 0;
   bus.reject_write = false;
   core.set_registers(seed); // Caller explicitly restores both bus and CPU boundary.
-  const auto success = core.execute(instruction.view());
+  const auto success = core.run_instruction(instruction.view());
   require(success.retired == 1 && bus.writes == writes + 1 && bus.value == (seed.d >> byte_bits) &&
               core.registers().pc == 1,
           "An explicit fresh boundary permits one actual successful write");
@@ -274,12 +274,12 @@ void bus_operations() {
   core.set_registers(seed);
   const auto load =
       encode({.opcode = load_a + extended_delta, .address = bus.address, .extended = true});
-  const auto failed = core.execute(load.view());
+  const auto failed = core.run_instruction(load.view());
   const auto reads = bus.reads;
   require(failed.fault == cpu12::Fault::memory_read && failed.address == bus.address &&
               failed.retired == 0 && core.registers() == seed,
           "Read refusal leaves all architectural registers unchanged");
-  require(core.execute(load.view()).retired == 0 && bus.reads == reads,
+  require(core.run_instruction(load.view()).retired == 0 && bus.reads == reads,
           "Refused reads are not replayed");
   require(core.statistics().read_callbacks == bus.reads &&
               core.statistics().write_callbacks == bus.writes,
@@ -298,7 +298,7 @@ void boundaries() {
   const auto instruction =
       encode({.opcode = load_a + extended_delta, .address = 0, .extended = true});
   core.set_registers(seed);
-  const auto result = core.execute(instruction.view());
+  const auto result = core.run_instruction(instruction.view());
   require(result.fault == cpu12::Fault::memory_read && result.address == 0 &&
               result.pc == seed.pc && core.registers() == seed,
           "A RAM window ending at ffff does not wrap into unknown address zero");

@@ -2,6 +2,7 @@
 #include "jit/emitter.hpp"
 
 #include "cpu12/core.hpp"
+#include "cpu12/memory.hpp"
 #include "instruction.hpp"
 #include "runtime.hpp"
 

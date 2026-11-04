@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #pragma once
+#include "cpu12/memory.hpp"
+
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <span>
@@ -9,12 +12,6 @@ struct Registers {
   std::uint16_t pc = 0, d = 0, x = 0, y = 0, sp = 0;
   std::uint8_t ccr = 0;
   bool operator==(const Registers &) const = default;
-};
-
-// The caller declares a known, writable RAM window whose storage outlives Core.
-struct Ram {
-  std::uint16_t first = 0;
-  std::span<std::uint8_t> bytes;
 };
 
 // Callbacks perform real external accesses. False means an explicit fault.
@@ -55,6 +52,11 @@ struct RunResult {
   std::uint8_t access_size = 0;
 };
 
+struct Options {
+  // Bounded native code storage; each compiled entry occupies one host page.
+  std::size_t cache_entries = 1024;
+};
+
 struct Statistics {
   std::uint64_t native_instructions = 0, compiled_entries = 0, cache_resets = 0;
   std::uint64_t read_callbacks = 0, write_callbacks = 0;
@@ -65,7 +67,9 @@ struct Statistics {
 // latch until explicit register replacement, preventing automatic access replay.
 class Core {
 public:
-  explicit Core(Ram ram = {}, Io io = {});
+  explicit Core(Memory memory = Memory::external(), Io *io = nullptr, Options options = {});
+  // Raw-window compatibility entry; new integrations use Memory explicitly.
+  explicit Core(Ram ram, Io io = {});
   ~Core();
   Core(const Core &) = delete;
   Core &operator=(const Core &) = delete;
@@ -73,7 +77,7 @@ public:
   [[nodiscard]] Registers registers() const noexcept;
   // An explicit fresh boundary clears a latched bus fault; coordinate bus state externally.
   void set_registers(Registers registers);
-  [[nodiscard]] RunResult execute(std::span<const std::uint8_t> bytes);
+  [[nodiscard]] RunResult run_instruction(std::span<const std::uint8_t> bytes);
   [[nodiscard]] Statistics statistics() const noexcept;
   void clear_code_cache();
 

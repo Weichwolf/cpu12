@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "cpu12/core.hpp"
 
+#include "cpu12/memory.hpp"
 #include "instruction.hpp"
 #include "jit.hpp"
 #include "runtime.hpp"
 
 #include <bit>
-#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <span>
@@ -18,12 +18,7 @@
 namespace cpu12 {
 class Core::Impl {
 public:
-  Impl(const Ram ram, const Io io) : context{.io = io}, jit(ram) {
-    constexpr std::size_t address_bytes = 65536;
-    if (ram.bytes.size() > address_bytes - ram.first) {
-      throw std::invalid_argument("RAM window exceeds the 16-bit CPU12 address space");
-    }
-  }
+  Impl(const Ram ram, const Io io, const Options options) : context{.io = io}, jit(ram, options) {}
 
   const bool supported = Core::native_supported();
   Registers registers;
@@ -33,7 +28,11 @@ public:
   bool active = false;
 };
 
-Core::Core(const Ram ram, const Io io) : impl_(std::make_unique<Impl>(ram, io)) {}
+Core::Core(const Memory memory, Io *const io, const Options options)
+    : impl_(std::make_unique<Impl>(memory.storage(), io != nullptr ? *io : Io{}, options)) {}
+
+Core::Core(const Ram ram, const Io io)
+    : impl_(std::make_unique<Impl>(Memory::window(ram).storage(), io, Options{})) {}
 
 Core::~Core() = default;
 
@@ -63,7 +62,7 @@ void Core::set_registers(const Registers registers) {
   impl_->context.fault = Fault::none;
 }
 
-RunResult Core::execute(const std::span<const std::uint8_t> bytes) {
+RunResult Core::run_instruction(const std::span<const std::uint8_t> bytes) {
   RunResult result{.pc = impl_->registers.pc, .opcode = bytes.empty() ? std::uint8_t{0} : bytes[0]};
   if (impl_->active) {
     result.fault = Fault::reentrant;

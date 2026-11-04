@@ -1,5 +1,5 @@
 {
-  "scope": "Current coherent native CPU12 word family and logical wide-bus integration; not complete ISA or whole instrument",
+  "scope": "Historical word-family qualification at qualified_revision; current API evidence is memory-api-reference.json",
   "parent_revision": "6d9b6b45ce5dadf575d15f00532cf0ce40f4ba0c",
   "source_sha256": {
     "include/cpu12/core.hpp": "e2cac2eaae41f3d37403b25d8f3610eea28a8cabece746895202d0a90cf0012d",
@@ -79,5 +79,6 @@
   "fuzz": false,
   "extensive_sanitizer_regressions": "Deferred until original firmware runs in real time, per user instruction",
   "firmware_or_instrument_acceptance": false,
-  "throughput_claim": false
+  "throughput_claim": false,
+  "qualified_revision": "b0c0f8b887cab4342d4ed74c3025f3bf22f104d2"
 }

@@ -149,7 +149,7 @@ void run_case(cpu12::Core &core, const Case &test) {
     wanted.*test.operation.field = static_cast<std::uint16_t>(prediction.value);
   }
   core.set_registers(before);
-  const auto result = core.execute(instruction.view());
+  const auto result = core.run_instruction(instruction.view());
   require(result.retired == 1 && result.fault == cpu12::Fault::none && result.pc == before.pc &&
               core.registers() == wanted,
           "Independent word arithmetic/target/flags/PC expectation failed");
@@ -290,7 +290,7 @@ void bus_contract() {
                                    .right = 0,
                                    .address = bus.address,
                                    .ccr = seed.ccr});
-  const auto failure = core.execute(instruction.view());
+  const auto failure = core.run_instruction(instruction.view());
   const auto calls = bus.writes;
   require(
       failure.fault == cpu12::Fault::memory_write && failure.address == bus.address &&
@@ -298,7 +298,7 @@ void bus_contract() {
           failure.retired == 0 && bus.committed_high == seed.d >> byte_bits &&
           core.registers() == seed,
       "A failed wide write retains its real partial effect, full payload and unchanged CPU state");
-  require(core.execute(instruction.view()).retired == 0 && bus.writes == calls,
+  require(core.run_instruction(instruction.view()).retired == 0 && bus.writes == calls,
           "Failed word writes latch instead of replaying partial transfers");
   core.set_registers(seed);
   bus.refuse_read = true;
@@ -308,13 +308,14 @@ void bus_contract() {
                             .right = 0,
                             .address = bus.address,
                             .ccr = 0});
-  const auto read = core.execute(load.view());
+  const auto read = core.run_instruction(load.view());
   require(read.fault == cpu12::Fault::memory_read && read.access_size == 2 &&
               read.address == bus.address && read.retired == 0 && core.registers() == seed,
           "Failed word reads cannot commit flags or destination registers");
   cpu12::Core missing({}, {.owner = &bus, .read = &WordBus::byte_read});
   missing.set_registers(seed);
-  require(missing.execute(load.view()).fault == cpu12::Fault::memory_read && bus.byte_calls == 0,
+  require(missing.run_instruction(load.view()).fault == cpu12::Fault::memory_read &&
+              bus.byte_calls == 0,
           "Missing wide handlers refuse rather than guessing byte-access equivalence");
 }
 

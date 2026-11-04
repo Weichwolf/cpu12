@@ -1,5 +1,10 @@
 CPU12 coverage — incomplete
 
+Current public API: Core(Memory, Io*, Options), run_instruction(captured_bytes).
+Borrowed byte views provide unified/window/external layouts; native cache bounds
+are checked at construction. Captured execution still delegates fetching and
+board time to its owner.
+
 Initial native implementation on x86-64/Linux:
 - Captured NOP.
 - Immediate LDAA/B, ADDA/B, SUBA/B, CMPA/B, ANDA/B, ORAA/B, EORA/B, BITA/B.
@@ -35,9 +40,10 @@ Open requirements:
 No native throughput or real-time claim is made from correctness test duration.
 Broad QA is deferred until original Blofeld firmware runs in real time, as the
 user requested. No fuzzing was run. The initial c86888a qualification is retained
-in native-reference.json. Current
-qualification is in word-reference.json, including the complete native and byte
-memory tests after the word ABI integration. Historical byte integration is in
+in native-reference.json. Current API qualification is in
+memory-api-reference.json, including all four coherently rebuilt native
+consumers. Historical word-family qualification is in word-reference.json.
+Historical byte integration is in
 memory-reference.json, including the complete native test after
 the ABI/operand integration, independent RAM byte-pair expectations, stores,
 real callbacks/refusals, PC/RAM boundaries and address-complete cache keys.

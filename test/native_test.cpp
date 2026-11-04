@@ -36,7 +36,7 @@ void arithmetic_case(cpu12::Core &core, const Input input) {
   core.set_registers(before);
   const std::array<std::uint8_t, 2> instruction{static_cast<std::uint8_t>(input.opcode),
                                                 static_cast<std::uint8_t>(input.right)};
-  const auto result = core.execute(instruction);
+  const auto result = core.run_instruction(instruction);
   require(result.retired == 1 && result.fault == cpu12::Fault::none && result.pc == before.pc &&
               core.registers() == wanted,
           "Native immediate arithmetic/CCR/register expectation failed");
@@ -117,7 +117,7 @@ void branches(cpu12::Core &core) {
         wanted.pc = static_cast<std::uint16_t>(
             take_branch({.condition = condition, .ccr = ccr}) ? displacement : 0);
         core.set_registers(before);
-        const auto result = core.execute(instruction);
+        const auto result = core.run_instruction(instruction);
         require(result.retired == 1 && result.fault == cpu12::Fault::none &&
                     core.registers() == wanted,
                 "Independent signed/unsigned branch and PC-wrap expectation failed");
@@ -133,19 +133,19 @@ void refusal(cpu12::Core &core) {
   constexpr std::array<std::uint8_t, 1> unsupported{0};
   constexpr std::array<std::uint8_t, 1> truncated{0x86};
   for (const auto &instruction : {unsupported, truncated}) {
-    const auto result = core.execute(instruction);
+    const auto result = core.run_instruction(instruction);
     require(result.fault == cpu12::Fault::unsupported_instruction && result.retired == 0 &&
                 core.registers() == state,
             "Unsupported instructions refuse visibly before any architectural change");
   }
-  require(core.execute({}).fault == cpu12::Fault::invalid_input &&
+  require(core.run_instruction({}).fault == cpu12::Fault::invalid_input &&
               core.statistics().native_instructions == count,
           "Invalid input and refusals retire no native instruction");
   core.clear_code_cache();
   constexpr std::array<std::uint8_t, 1> nop{0xa7};
   auto wanted = state;
   wanted.pc = static_cast<std::uint16_t>(wanted.pc + 1U);
-  const auto result = core.execute(nop);
+  const auto result = core.run_instruction(nop);
   require(result.retired == 1 && core.registers() == wanted,
           "Cache clear and NOP retain all non-PC registers");
   ++cases;

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #pragma once
 #include "cpu12/core.hpp"
+#include "cpu12/memory.hpp"
 #include "instruction.hpp"
 #include "runtime.hpp"
 
@@ -9,7 +10,7 @@
 namespace cpu12::detail {
 class Jit {
 public:
-  explicit Jit(Ram ram);
+  explicit Jit(Ram ram, Options options);
   ~Jit();
   Jit(const Jit &) = delete;
   Jit &operator=(const Jit &) = delete;

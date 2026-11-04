@@ -4,6 +4,7 @@
 #include "jit.hpp"
 
 #include "cpu12/core.hpp"
+#include "cpu12/memory.hpp"
 #include "instruction.hpp"
 #include "jit/emitter.hpp"
 #include "runtime.hpp"
@@ -79,25 +80,30 @@ private:
 class Jit::Impl {
 public:
   Ram ram;
+  std::size_t cache_entries = 0;
   std::unordered_map<std::uint32_t, std::unique_ptr<Executable>> blocks;
   Statistics statistics;
 };
 
-Jit::Jit(const Ram ram) : impl_(std::make_unique<Impl>()) {
+Jit::Jit(const Ram ram, const Options options) : impl_(std::make_unique<Impl>()) {
+  constexpr std::size_t maximum_entries = 4096;
+  if (options.cache_entries == 0 || options.cache_entries > maximum_entries) {
+    throw std::invalid_argument("CPU12 cache_entries must be in [1,4096]");
+  }
   impl_->ram = ram;
+  impl_->cache_entries = options.cache_entries;
 }
 
 Jit::~Jit() = default;
 
 void Jit::execute(const Instruction &instruction, Registers &registers, NativeContext &context) {
   constexpr unsigned opcode_shift = 16;
-  constexpr unsigned cache_limit = 1024;
   const auto operand = static_cast<std::uint32_t>(
       instruction.addressing == Addressing::immediate ? instruction.operand : instruction.address);
   const auto key = (static_cast<std::uint32_t>(instruction.opcode) << opcode_shift) | operand;
   auto found = impl_->blocks.find(key);
   if (found == impl_->blocks.end()) {
-    if (impl_->blocks.size() == cache_limit) { clear(); }
+    if (impl_->blocks.size() == impl_->cache_entries) { clear(); }
     found = impl_->blocks.emplace(key, std::make_unique<Executable>(emit(instruction, impl_->ram)))
                 .first;
     ++impl_->statistics.compiled_entries;
