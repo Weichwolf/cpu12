@@ -17,7 +17,9 @@ transfers/exchanges also execute natively. Indexed/extended byte memory unary
 operations add native read/modify/write, write-only CLR and read-only TST.
 DBEQ/DBNE, IBEQ/IBNE and TBEQ/TBNE use native counter operations and
 conditional transfers while preserving every guest flag. BSET/BCLR and
-BRSET/BRCLR add masked byte modifications and memory-conditioned branches. No instruction interpreter or
+BRSET/BRCLR add masked byte modifications and memory-conditioned branches.
+MOVB/MOVW transfer byte/word data with sequential source/destination index
+updates and unchanged flags, using HCS12 next-PC semantics. No instruction interpreter or
 Ghidra dependency is present. Unsupported instructions return an explicit fault
 without retirement. This is an initial ISA subset, not a complete CPU12
 emulator or a completed Blofeld integration.
@@ -41,7 +43,9 @@ flag semantics and the remaining interrupt-timing requirement.
 overlap. [Memory unary operations](doc/memory-unary.txt) describe the real bus
 phases and deferred CPU publication. [Loop branches](doc/loop.txt) cover
 byte/word counters and signed nine-bit offsets. [Masked memory operations](doc/bits.txt)
-cover six-byte captures, address/mask tails and real bus phase behavior. See [coverage](doc/coverage.txt) and the [full objective](doc/objective.txt).
+cover six-byte captures, address/mask tails and real bus phase behavior.
+[Memory transfers](doc/move.txt) describe operand order and the explicitly
+unsupported original M68HC12 move-queue variant. See [coverage](doc/coverage.txt) and the [full objective](doc/objective.txt).
 
 ```sh
 cmake --preset release

@@ -30,7 +30,8 @@ enum class Kind : std::uint8_t {
   memory_unary,
   loop,
   memory_bits,
-  bit_branch
+  bit_branch,
+  move
 };
 
 enum class RegisterOp : std::uint8_t {
@@ -68,6 +69,12 @@ enum class StackTarget : std::uint8_t { x, y, a, b, ccr, d, pc };
 
 enum class WordTarget : std::uint8_t { d, y, x, sp };
 
+struct MoveOperand {
+  Addressing addressing = Addressing::immediate;
+  std::uint16_t value = 0;
+  Indexed indexed{};
+};
+
 struct Instruction {
   Kind kind = Kind::nop;
   std::uint8_t opcode = 0, length = 0;
@@ -82,7 +89,10 @@ struct Instruction {
   StackTarget stack_target = StackTarget::d;
   RegisterOp operation = RegisterOp::test;
   std::uint8_t bit_mask = 0;
+  MoveOperand move_source{}, move_destination{};
 };
+
+[[nodiscard]] std::optional<Instruction> decode_move(std::span<const std::uint8_t> bytes);
 
 [[nodiscard]] std::optional<Instruction> decode_bits(std::span<const std::uint8_t> bytes);
 

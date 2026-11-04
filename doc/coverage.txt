@@ -15,6 +15,10 @@ Initial native implementation on x86-64/Linux:
 - TFR/EXG/SEX and assembler aliases:196 normal postbytes, signed/fixed extensions,
   A/B/D overlap and CCR X restriction;60 factory TMP2/TMP3 forms refuse visibly.
 - TAB/TBA preserve C/H/other flags and update N/Z/V.
+- MOVB/MOVW all six source/destination combinations and all 236 single-postbyte
+  index forms, sequential shared-base updates and unchanged CCR.
+- Captured source values survive overlapping big-endian/wrapping word writes;
+  real bus failures retain effects and defer CPU changes without a host frame.
 - BSET/BCLR/BRSET/BRCLR direct/extended/all 248 nonindirect indexed forms.
 - Complete address/mask/relative tails, read-only bit branches with unchanged
   CCR, native byte modifications and precise external phase faults.
@@ -55,6 +59,7 @@ program is used. This scope is distinct from an independently booting processor.
 
 Open requirements:
 - The remaining ISA and its addressing/control/stack forms, factory temporaries.
+- Original M68HC12 move-queue PC corrections; current moves use HCS12 semantics.
 - Additional memory-window types and multi-byte/per-instruction access boundaries.
 - Native regions, fetch ownership/code invalidation and event/timing budgets.
 - Reset, interrupt priorities/entry/return, ANDCC IRQ-recognition delay,
@@ -70,9 +75,10 @@ remains physically unmeasured. stack.txt records the distinction.
 No native throughput or real-time claim is made from correctness test duration.
 Broad QA is deferred until original Blofeld firmware runs in real time, as the
 user requested. No fuzzing was run. Current qualification is in
-bits-reference.json:4276806 bit/capture cases and all twelve previous
-consumers use one coherent library. The raw key packing also has one UNSAT
-injectivity proof and three SAT negative controls. Historical loop-reference.json
+move-reference.json:2306650 MOV cases and all thirteen previous consumers
+use one coherent library. Historical bits-reference.json pins 4276806 bit/capture
+cases and the raw key packing UNSAT proof with three SAT negative controls.
+Historical loop-reference.json
 pins 15289347 loop cases. Historical memory-unary-reference.json pins 1538224
 memory-unary cases. Historical transfer-reference.json pins
 24779786 transfer/exchange cases. Historical alu-reference.json pins the
