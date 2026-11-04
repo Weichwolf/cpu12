@@ -7,6 +7,7 @@
 #include "jit/code.hpp"
 #include "jit/flags.hpp"
 #include "jit/indexed.hpp"
+#include "jit/loop.hpp"
 #include "jit/memory_unary.hpp"
 #include "jit/registers.hpp"
 #include "jit/stack.hpp"
@@ -235,6 +236,7 @@ void arithmetic(Code &code, const Instruction &instruction, const Ram ram) {
     case Kind::register_operation:
     case Kind::transfer:
     case Kind::memory_unary:
+    case Kind::loop:
     case Kind::jump:
     case Kind::effective_address:
     case Kind::nop:
@@ -385,6 +387,7 @@ WordEncoding word_operation(const Instruction &instruction) {
     case Kind::register_operation:
     case Kind::transfer:
     case Kind::memory_unary:
+    case Kind::loop:
     case Kind::jump:
     case Kind::effective_address:
     case Kind::nop:
@@ -480,7 +483,9 @@ void branch(Code &code, const Instruction &instruction) {
 std::vector<std::uint8_t> emit(const Instruction &instruction, const Ram ram) {
   Code code;
   code.raw(entry);
-  if (instruction.kind == Kind::memory_unary) {
+  if (instruction.kind == Kind::loop) {
+    loop_instruction(code, instruction);
+  } else if (instruction.kind == Kind::memory_unary) {
     memory_unary_instruction(code, instruction, ram);
   } else if (instruction.kind == Kind::transfer) {
     transfer_instruction(code, instruction);

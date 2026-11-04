@@ -27,7 +27,7 @@ cover source and destination value domains, all byte CCR values and both raw
 bit3 encodings. Literal manual examples separately pin signed versus fixed
 extensions and the overlapping D/A/B/CCR cases. All 24779786 new transfer cases
 and nine previous consumers pass on one coherent optimized library;
-transfer-reference.json pins current source, archive, actual ELF and run-log
+transfer-reference.json pins that integration source, archive, actual ELF and run-log
 hashes. Unsupported factory postbytes and malformed cached captures retain
 original CPU state, make no bus access, compile no code and retire nothing.
 

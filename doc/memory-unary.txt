@@ -29,8 +29,9 @@ and partial RAM. Directed indexed/auto, pointer alias, wrapping address, real
 callback clobbers, phase refusals and missing CLR-read/TST-write handlers check
 the access contract. No manufacturer program is embedded in these tests.
 The 1538224 memory-unary cases and all ten earlier component consumers passed
-on one coherent optimized library; memory-unary-reference.json pins current
-sources, binaries, actual terminal exits and logs.
+on one coherent optimized library; memory-unary-reference.json pins that
+integration, binaries, actual terminal exits and logs. coverage.txt identifies
+the current coherent consumer qualification.
 Remaining ISA, reset/IRQ/waits, fetch/native regions, checkpoints, event budgets
 and Blofeld integration still require implementation. Component correctness
 is not evidence of complete instrument operation or real-time throughput.
