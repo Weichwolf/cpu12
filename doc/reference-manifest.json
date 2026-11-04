@@ -18,7 +18,8 @@
       "INX/DEX/INY/DEY and ANDCC/ORCC entries; ANDCC IRQ delay remains future timing work",
       "TFR/EXG, SEX, TAB/TBA entries and TableA-5: normal selector encodings, ignored bit3, mixed widths, fixed prefixes and overlapping registers",
       "Indexed/extended NEG/COM/INC/DEC/LSR/ROL/ROR/ASR/ASL/CLR/TST encodings and flags; CLR write-only and TST read-only access semantics",
-      "DBEQ/DBNE, IBEQ/IBNE, TBEQ/TBNE and TableA-6: counter width, unchanged CCR, bit3 aliases and signed9 displacement from bit4; IBEQ/IBNE prose bit0 typo distinguished from literal tables"
+      "DBEQ/DBNE, IBEQ/IBNE, TBEQ/TBNE and TableA-6: counter width, unchanged CCR, bit3 aliases and signed9 displacement from bit4; IBEQ/IBNE prose bit0 typo distinguished from literal tables",
+      "BSET/BCLR and BRSET/BRCLR: direct/extended/indexed encodings, masks, flags, signed8 branch tails, excluded indirect forms and general next-instruction PC reference"
     ],
     "redistributed": false
   }

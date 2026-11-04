@@ -28,7 +28,9 @@ enum class Kind : std::uint8_t {
   register_operation,
   transfer,
   memory_unary,
-  loop
+  loop,
+  memory_bits,
+  bit_branch
 };
 
 enum class RegisterOp : std::uint8_t {
@@ -79,7 +81,10 @@ struct Instruction {
   Indexed indexed{};
   StackTarget stack_target = StackTarget::d;
   RegisterOp operation = RegisterOp::test;
+  std::uint8_t bit_mask = 0;
 };
+
+[[nodiscard]] std::optional<Instruction> decode_bits(std::span<const std::uint8_t> bytes);
 
 [[nodiscard]] std::optional<Instruction> decode_loop(std::span<const std::uint8_t> bytes);
 

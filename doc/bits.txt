@@ -1,0 +1,50 @@
+Native masked memory operations and branches
+
+BSET/BCLR and BRSET/BRCLR support direct, extended and all 248 nonindirect
+indexed postbytes. Indirect forms are excluded by the primary S12CPUV2 entries
+and fail before any pointer or operand access. Mask and relative bytes follow
+the complete indexed address encoding. PC-relative operand addressing uses
+the next instruction after that entire tail, and branch offsets are signed
+bytes relative to the same next PC.
+
+BSET sets each selected bit; BCLR clears it. Both read then write the actual
+byte, update N/Z, clear V and preserve C/H/other CCR bits. A zero mask still
+performs the real read and write. Direct known RAM uses native host operations;
+partial RAM admission happens once before the native read/modify/write.
+External accesses reuse the staged target/result/CCR/context path described
+in memory-unary.txt. A refused phase leaves CPU state unchanged, retains
+actual bus effects and latches the fault against replay.
+
+BRSET takes the branch when every selected bit is set; BRCLR when every
+selected bit is clear. Both read once, never write and preserve every CCR bit.
+An empty mask takes either branch after the real read. The native predicate
+is decided before automatic index publication can change host flags. Both
+branch outcomes commit the documented X/Y/SP change only after accepted read;
+a refused read preserves all CPU state and its precise access context.
+
+Core::run_instruction now accepts captures of 1..maximum_capture_bytes (six).
+The native-cache key contains every captured byte and its exact length.
+Long indexed branches place the mask in byte five and relative offset in
+byte six; neither may alias another warm entry. Oversized and malformed
+captures refuse explicitly. Independent Z3 bit-vector checks prove injectivity
+of the packing for lengths 1..6, with three collision-producing negative
+controls dropping byte five, byte six or the length. The packing puts length
+at bit 48 and bytes at shifts 40/32/24/16/8/0; unused tail bytes are zero.
+This remains a captured-instruction API; fetch, interrupts, clocks, native
+regions and reset remain separate open work.
+
+Independently authored tests cover every mask/value pair in full and partial
+RAM, the complete CCR domain at directed operands, indexed/PC/auto forms,
+all signed branch offsets, trailing-byte cache distinctions, external phase
+refusals/clobbers and excluded indirect forms. No manufacturer application
+program is included. The 4276806 new cases and all twelve earlier component
+consumers passed on one coherent optimized library; bits-reference.json pins
+sources, binaries, actual terminal exits and logs. Component results do not
+establish complete firmware/instrument operation, hardware bus-cycle equivalence
+or real-time throughput.
+
+Focused reproduction:
+
+  cmake --preset release
+  cmake --build --preset release --target cpu12-bits-test
+  ctest --test-dir build/release --output-on-failure -R '^bits$'

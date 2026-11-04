@@ -16,7 +16,8 @@ unary/shift operations, index counters, CCR masks and normal register
 transfers/exchanges also execute natively. Indexed/extended byte memory unary
 operations add native read/modify/write, write-only CLR and read-only TST.
 DBEQ/DBNE, IBEQ/IBNE and TBEQ/TBNE use native counter operations and
-conditional transfers while preserving every guest flag. No instruction interpreter or
+conditional transfers while preserving every guest flag. BSET/BCLR and
+BRSET/BRCLR add masked byte modifications and memory-conditioned branches. No instruction interpreter or
 Ghidra dependency is present. Unsupported instructions return an explicit fault
 without retirement. This is an initial ISA subset, not a complete CPU12
 emulator or a completed Blofeld integration.
@@ -28,7 +29,8 @@ owners outlive the core. The lightweight callback table is copied at
 construction. `Options::cache_entries` bounds native code storage; invalid
 bounds fail at setup.
 
-The captured `run_instruction(bytes)` API separates CPU semantics from the
+The captured `run_instruction(bytes)` API accepts at most six bytes and
+separates CPU semantics from the
 caller's fetch, clocks and board model. Interrupt entry, reset and waits remain
 required work, along with remaining ISA and bounded native regions. The current
 RAM/bus contract is described in [memory.txt](doc/memory.txt) and
@@ -38,7 +40,8 @@ flag semantics and the remaining interrupt-timing requirement.
 [Transfers](doc/transfer.txt) cover signed/fixed extensions and register
 overlap. [Memory unary operations](doc/memory-unary.txt) describe the real bus
 phases and deferred CPU publication. [Loop branches](doc/loop.txt) cover
-byte/word counters and signed nine-bit offsets. See [coverage](doc/coverage.txt) and the [full objective](doc/objective.txt).
+byte/word counters and signed nine-bit offsets. [Masked memory operations](doc/bits.txt)
+cover six-byte captures, address/mask tails and real bus phase behavior. See [coverage](doc/coverage.txt) and the [full objective](doc/objective.txt).
 
 ```sh
 cmake --preset release

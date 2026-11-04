@@ -8,6 +8,8 @@
 #include <span>
 
 namespace cpu12 {
+inline constexpr std::size_t maximum_capture_bytes = 6;
+
 struct Registers {
   std::uint16_t pc = 0, d = 0, x = 0, y = 0, sp = 0;
   std::uint8_t ccr = 0;

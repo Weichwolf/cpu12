@@ -99,17 +99,22 @@ Jit::~Jit() = default;
 bool Jit::execute(const std::span<const std::uint8_t> bytes,
                   Registers &registers,
                   NativeContext &context) {
-  constexpr unsigned length_shift = 32;
-  constexpr unsigned opcode_shift = 24;
-  constexpr unsigned postbyte_shift = 16;
+  constexpr unsigned length_shift = 48;
+  constexpr unsigned opcode_shift = 40;
+  constexpr unsigned postbyte_shift = 32;
+  constexpr unsigned high_shift = 24;
+  constexpr unsigned low_shift = 16;
   constexpr unsigned byte_shift = 8;
-  // The public entry already bounded the capture to 1..4 bytes. Include length
-  // so truncated or zero-padded captures cannot hit a valid native entry.
+  static_assert(maximum_capture_bytes * byte_shift <= length_shift);
+  // Include every raw byte and the exact length. Trailing masks/displacements
+  // and malformed padded captures must never hit another native entry.
   auto key = (static_cast<std::uint64_t>(bytes.size()) << length_shift) |
              (static_cast<std::uint64_t>(bytes[0]) << opcode_shift);
   if (bytes.size() > 1) { key |= static_cast<std::uint64_t>(bytes[1]) << postbyte_shift; }
-  if (bytes.size() > 2) { key |= static_cast<std::uint64_t>(bytes[2]) << byte_shift; }
-  if (bytes.size() > 3) { key |= bytes[3]; }
+  if (bytes.size() > 2) { key |= static_cast<std::uint64_t>(bytes[2]) << high_shift; }
+  if (bytes.size() > 3) { key |= static_cast<std::uint64_t>(bytes[3]) << low_shift; }
+  if (bytes.size() > 4) { key |= static_cast<std::uint64_t>(bytes[4]) << byte_shift; }
+  if (bytes.size() > 5) { key |= bytes[5]; }
   auto found = impl_->blocks.find(key);
   if (found == impl_->blocks.end()) {
     const auto instruction = decode(bytes);

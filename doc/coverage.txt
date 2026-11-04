@@ -15,6 +15,10 @@ Initial native implementation on x86-64/Linux:
 - TFR/EXG/SEX and assembler aliases:196 normal postbytes, signed/fixed extensions,
   A/B/D overlap and CCR X restriction;60 factory TMP2/TMP3 forms refuse visibly.
 - TAB/TBA preserve C/H/other flags and update N/Z/V.
+- BSET/BCLR/BRSET/BRCLR direct/extended/all 248 nonindirect indexed forms.
+- Complete address/mask/relative tails, read-only bit branches with unchanged
+  CCR, native byte modifications and precise external phase faults.
+- Six-byte captured inputs and complete raw byte/length native-cache keys.
 - DBEQ/DBNE, IBEQ/IBNE, TBEQ/TBNE for A/B/D/X/Y/SP with unchanged CCR,
   signed9 offsets, ignored bit3 aliases and explicit undocumented refusals.
 - Indexed/extended byte NEG/COM/INC/DEC/LSR/ROL/ROR/ASR/ASL/CLR/TST.
@@ -66,8 +70,10 @@ remains physically unmeasured. stack.txt records the distinction.
 No native throughput or real-time claim is made from correctness test duration.
 Broad QA is deferred until original Blofeld firmware runs in real time, as the
 user requested. No fuzzing was run. Current qualification is in
-loop-reference.json:15289347 loop cases and all eleven previous consumers
-use one coherent library. Historical memory-unary-reference.json pins 1538224
+bits-reference.json:4276806 bit/capture cases and all twelve previous
+consumers use one coherent library. The raw key packing also has one UNSAT
+injectivity proof and three SAT negative controls. Historical loop-reference.json
+pins 15289347 loop cases. Historical memory-unary-reference.json pins 1538224
 memory-unary cases. Historical transfer-reference.json pins
 24779786 transfer/exchange cases. Historical alu-reference.json pins the
 earlier carry/register qualification.

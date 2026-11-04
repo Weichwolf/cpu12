@@ -5,5 +5,5 @@
 #include "jit/code.hpp"
 
 namespace cpu12::detail {
-void memory_unary_instruction(Code &code, const Instruction &instruction, Ram ram);
+void memory_modify_instruction(Code &code, const Instruction &instruction, Ram ram);
 }
