@@ -1,5 +1,5 @@
 {
-  "scope": "Historical non-auto indexed qualification at qualified_revision; current coherent consumers and auto/LEA evidence are in auto-indexed-reference.json",
+  "scope": "Historical non-auto indexed qualification at qualified_revision; current coverage is recorded in coverage.txt",
   "parent_revision": "d1ed89bbd789182965f503cf497b995a9e007773",
   "source_sha256": {
     ".clang-tidy": "eac7eb8af904bc5486dacc53abd61563ebcf43c699b4c18bc5304cd2cd32a52a",

@@ -109,6 +109,44 @@ bool arithmetic_operand(Instruction &instruction, const std::span<const std::uin
   return true;
 }
 
+std::optional<Instruction> control(const std::span<const std::uint8_t> bytes) {
+  constexpr unsigned prefix = 0x18;
+  constexpr unsigned first_branch = 0x20;
+  constexpr unsigned last_branch = 0x2f;
+  constexpr unsigned indexed_jump = 5;
+  constexpr unsigned extended_jump = 6;
+  const auto opcode = bytes[0];
+  Instruction instruction{.opcode = opcode};
+  if (opcode == indexed_jump || opcode == extended_jump) {
+    instruction.kind = Kind::jump;
+    if (opcode == extended_jump) {
+      instruction.addressing = Addressing::extended;
+      if (!memory_operand(instruction, bytes)) { return {}; }
+    } else if (!decode_indexed(instruction, bytes)) {
+      return {};
+    }
+    return instruction;
+  }
+  const bool wide = opcode == prefix;
+  const unsigned length = wide ? 4U : 2U;
+  if (bytes.size() != length) { return {}; }
+  const auto operation = wide ? bytes[1] : opcode;
+  if (operation < first_branch || operation > last_branch) { return {}; }
+  constexpr unsigned byte_bits = 8;
+  constexpr unsigned byte_extension = 0xff00;
+  instruction.kind = Kind::branch;
+  instruction.length = static_cast<std::uint8_t>(length);
+  instruction.condition = static_cast<std::uint8_t>(operation - first_branch);
+  if (wide) {
+    instruction.operand =
+        static_cast<std::uint16_t>((static_cast<unsigned>(bytes[2]) << byte_bits) | bytes[3]);
+  } else {
+    instruction.operand =
+        static_cast<std::uint16_t>(bytes[1] < 0x80U ? bytes[1] : byte_extension | bytes[1]);
+  }
+  return instruction;
+}
+
 std::optional<Instruction> indexed_operation(Instruction instruction,
                                              const std::span<const std::uint8_t> bytes) {
   constexpr unsigned first_lea = 0x19;
@@ -137,6 +175,9 @@ std::optional<Instruction> decode(const std::span<const std::uint8_t> bytes) {
   constexpr unsigned nop = 0xa7;
   constexpr unsigned first_branch = 0x20;
   constexpr unsigned last_branch = 0x2f;
+  constexpr unsigned prefix = 0x18;
+  constexpr unsigned indexed_jump = 5;
+  constexpr unsigned extended_jump = 6;
   constexpr unsigned accumulator_b = 0x40;
   constexpr unsigned store_mask = 0xde;
   constexpr unsigned store_a = 0x5a;
@@ -146,14 +187,11 @@ std::optional<Instruction> decode(const std::span<const std::uint8_t> bytes) {
   if (opcode == nop && bytes.size() == 1) {
     return Instruction{.kind = Kind::nop, .opcode = opcode, .length = 1};
   }
-  Instruction instruction{.opcode = opcode};
-  if (opcode >= first_branch && opcode <= last_branch) {
-    if (bytes.size() != 2) { return {}; }
-    instruction.kind = Kind::branch;
-    instruction.operand = bytes[1];
-    instruction.length = 2;
-    return instruction;
+  if ((opcode >= first_branch && opcode <= last_branch) || opcode == prefix ||
+      opcode == indexed_jump || opcode == extended_jump) {
+    return control(bytes);
   }
+  Instruction instruction{.opcode = opcode};
   constexpr unsigned first_indexed_store = 0x6a;
   constexpr unsigned last_indexed_store = 0x6f;
   constexpr unsigned first_lea = 0x19;

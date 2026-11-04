@@ -1,0 +1,45 @@
+Native control transfers
+
+The captured API supports every short and long branch condition. A page-$18
+long branch captures four bytes: prefix, condition opcode, big-endian 16-bit
+offset. Its target is the current PC plus four plus the signed offset, modulo
+65536; a false condition advances by four. All CCR bits and non-PC registers
+are retained. Prefix length remains part of the native cache key. The actual
+opcode in a diagnostic is the captured first byte, including the page prefix.
+
+JMP uses extended or indexed addressing. An extended target is the captured
+16-bit address; an indexed target uses current X/Y/SP/PC and the existing
+constant, accumulator or auto-update address rules. PC-relative addressing
+uses the address after the entire instruction. Indirect forms read exactly
+one logical big-endian pointer, including ffff-to-zero wrap, before publishing
+the new PC. Neither form reads the target as a data operand. Auto updates
+retain flags and select the old or adjusted base for post or pre addressing.
+
+Known RAM pointer accesses are native. Real external pointer reads use the
+provided word callback. Refusal reports the actual address, instruction PC,
+opcode and word width, leaves CPU state unchanged, and latches against replay.
+Callbacks observe the original CPU boundary. This synchronous contract does
+not claim physical bus-error rollback or silicon prefetch timing.
+
+S12CPUV2 sections 3.8, 4.4.3.2 and the JMP/LBxx entries are the primary
+encoding and semantic references; reference-manifest.json pins the manual.
+The independent test uses the documented branch truth table, all CCR values,
+signed offset/PC boundaries, every indexed postbyte and every 16-bit dynamic
+X value at four directed offsets. It also checks actual indirect reads,
+refusal/no-replay, cached pointer changes and invalid page/prefix captures.
+All 631555 control cases and six existing consumers pass on the same coherent
+optimized library. control-reference.json pins source, archive, policy and
+actual executable/log hashes. No manufacturer program or other emulator
+implementation is used.
+
+JSR/BSR, stack operations, returns, other remaining ISA, reset/IRQ/waits,
+fetch/native regions, timing and board integration remain open. These
+component tests do not establish original boot, instrument behavior or real
+time. No fuzzing is part of this work; broad sanitizer validation remains
+deferred under the user's real-time-first policy.
+
+Focused reproduction:
+
+  cmake --preset release
+  cmake --build --preset release --target cpu12-control-test cpu12-native-test
+  ctest --test-dir build/release --output-on-failure -R '^(control|native)$'

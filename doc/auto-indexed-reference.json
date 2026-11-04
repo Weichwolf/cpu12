@@ -1,5 +1,5 @@
 {
-  "scope": "Native auto-index/LEA and cached capture frontend; coherent CPU12 consumers, not complete ISA or instrument acceptance",
+  "scope": "Historical native auto-index/LEA and cached capture qualification at qualified_revision; current coverage is recorded in coverage.txt",
   "parent_revision": "c95afd845ddba161359228875d672aa4bed83565",
   "source_sha256": {
     ".clang-tidy": "eac7eb8af904bc5486dacc53abd61563ebcf43c699b4c18bc5304cd2cd32a52a",
@@ -123,5 +123,6 @@
   "fuzz": false,
   "throughput_claim": false,
   "firmware_or_instrument_acceptance": false,
-  "extensive_sanitizer_regressions": "Deferred until original firmware runs in real time, per user instruction"
+  "extensive_sanitizer_regressions": "Deferred until original firmware runs in real time, per user instruction",
+  "qualified_revision": "37a58cb6816b91e32323ffbdc27a2a28c4052476"
 }

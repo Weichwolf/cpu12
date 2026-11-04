@@ -72,7 +72,7 @@ enum Encoding : std::uint8_t {
   subtract_high = 0xea,
   compare_low = 0xf8,
   compare_high = 0xfa,
-  jump = 0xe9,
+  jump_relative = 0xe9,
   ret = 0xc3,
   full_index = 0x0b,
   partial_index = 0x13
@@ -216,7 +216,7 @@ void memory_access(Code &code, const Ram ram, const Access access) {
   const auto high = outside(code, ram, false);
   const auto low = access.word ? outside(code, ram, true) : high;
   native_access(code, ram, access);
-  code.byte(jump); // jmp done
+  code.byte(jump_relative); // jmp done
   const auto done = code.relative32();
   code.bind(high);
   if (access.word) { code.bind(low); }
@@ -261,6 +261,22 @@ void indexed_write(Code &code, const Instruction &instruction, const Ram ram) {
   }
   memory_access(code, ram, {.word = instruction.word, .write = true});
   update_index(code, instruction);
+}
+
+void jump(Code &code, const Instruction &instruction, const Ram ram) {
+  constexpr auto pc_offset = static_cast<std::uint8_t>(offsetof(Registers, pc));
+  if (instruction.addressing == Addressing::extended) {
+    constexpr std::array<std::uint8_t, 3> store_immediate{0x66, 0xc7, 0x47};
+    code.raw(store_immediate);
+    code.byte(pc_offset);
+    code.u16(instruction.address);
+  } else {
+    resolve(code, instruction, ram);
+    update_index(code, instruction);
+    code.raw(store_address);
+    code.byte(pc_offset);
+  }
+  code.byte(ret);
 }
 
 void indexed_effective_address(Code &code, const Instruction &instruction) {

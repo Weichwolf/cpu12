@@ -17,7 +17,8 @@ enum class Kind : std::uint8_t {
   bit_test,
   branch,
   store,
-  effective_address
+  effective_address,
+  jump
 };
 
 enum class Addressing : std::uint8_t { immediate, direct, extended, indexed };
@@ -42,6 +43,7 @@ struct Instruction {
   bool accumulator_b = false;
   Addressing addressing = Addressing::immediate;
   std::uint16_t address = 0;
+  std::uint8_t condition = 0;
   bool word = false;
   WordTarget target = WordTarget::d;
   Indexed indexed{};

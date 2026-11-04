@@ -201,6 +201,7 @@ void arithmetic(Code &code, const Instruction &instruction, const Ram ram) {
       opcode = test_al;
       store = false;
       break;
+    case Kind::jump:
     case Kind::effective_address:
     case Kind::nop:
     case Kind::store:
@@ -338,6 +339,7 @@ WordEncoding word_operation(const Instruction &instruction) {
     case Kind::add: return add_ax;
     case Kind::subtract: return sub_ax;
     case Kind::compare: return cmp_ax;
+    case Kind::jump:
     case Kind::effective_address:
     case Kind::nop:
     case Kind::bit_and:
@@ -405,11 +407,9 @@ void word_instruction(Code &code, const Instruction &instruction, const Ram ram)
 }
 
 void branch(Code &code, const Instruction &instruction) {
-  constexpr unsigned branch_condition_mask = 15;
-  const auto condition = instruction.opcode & branch_condition_mask;
+  const auto condition = instruction.condition;
   const auto delta =
-      instruction.length +
-      static_cast<int>(std::bit_cast<std::int8_t>(static_cast<std::uint8_t>(instruction.operand)));
+      instruction.length + static_cast<int>(std::bit_cast<std::int16_t>(instruction.operand));
   if (condition < 2) {
     code.advance(condition == 0 ? delta : instruction.length);
     code.byte(ret);
@@ -434,7 +434,9 @@ void branch(Code &code, const Instruction &instruction) {
 std::vector<std::uint8_t> emit(const Instruction &instruction, const Ram ram) {
   Code code;
   code.raw(entry);
-  if (instruction.kind == Kind::effective_address) {
+  if (instruction.kind == Kind::jump) {
+    jump(code, instruction, ram);
+  } else if (instruction.kind == Kind::effective_address) {
     indexed_effective_address(code, instruction);
   } else if (instruction.word) {
     word_instruction(code, instruction, ram);

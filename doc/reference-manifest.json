@@ -8,7 +8,9 @@
     "used_sections": [
       "3.9 and Table3-2: indexed postbyte and offset semantics",
       "3.10.1: normal PC reference immediately following the current instruction",
-      "LDAA/B, STAA/B, word load/ALU/store instruction encoding entries"
+      "LDAA/B, STAA/B, word load/ALU/store instruction encoding entries",
+      "3.8 and 4.4.3.2: short/long relative branches and prefix",
+      "JMP, LBRA/LBRN and conditional LBxx instruction entries"
     ],
     "redistributed": false
   }

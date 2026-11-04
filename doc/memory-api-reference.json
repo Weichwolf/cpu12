@@ -1,5 +1,5 @@
 {
-  "scope": "Historical typed-memory API qualification at qualified_revision; current coherent CPU12 consumers are in indexed-reference.json",
+  "scope": "Historical typed-memory API qualification at qualified_revision; current coverage is recorded in coverage.txt",
   "parent_revision": "b0c0f8b887cab4342d4ed74c3025f3bf22f104d2",
   "source_sha256": {
     "include/cpu12/core.hpp": "f9ab8e063120425ca9babdb024d54f019a192ee186a29c089834643d086bb38f",

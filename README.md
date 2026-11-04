@@ -4,7 +4,7 @@ Independent CPU12/HC12 native JIT emulator core, written in C++23.
 GPL-3.0-only.
 
 The initial implementation compiles captured NOP, 8-bit immediate load/ALU and
-short conditional-branch instructions directly into x86-64/Linux host code.
+short/long conditional branches and JMP directly into x86-64/Linux host code.
 Direct/extended byte and word load, ALU and store instructions use native RAM
 access or explicit external bus callbacks. Indexed forms add dynamic X/Y/SP/PC,
 constant/accumulator offsets and indirect pointer accesses. Word operations
@@ -26,7 +26,8 @@ The captured `run_instruction(bytes)` API separates CPU semantics from the
 caller's fetch, clocks and board model. Interrupt entry, reset and waits remain
 required work, along with remaining ISA and bounded native regions. The current
 RAM/bus contract is described in [memory.txt](doc/memory.txt) and
-[indexed.txt](doc/indexed.txt). See [coverage](doc/coverage.txt) and the [full
+[indexed.txt](doc/indexed.txt); [control transfers](doc/control.txt) cover
+branch/JMP behavior. See [coverage](doc/coverage.txt) and the [full
 objective](doc/objective.txt).
 
 ```sh

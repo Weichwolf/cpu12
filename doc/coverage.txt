@@ -21,15 +21,16 @@ Initial native implementation on x86-64/Linux:
 - One explicit known RAM window with direct native byte/word/pointer access.
 - Real external read/write callbacks, precise fault context and no automatic replay.
 - Recursive execution and state/cache mutations are refused during callbacks.
-- BRA/BRN and all short unsigned/signed conditional branches.
+- BRA/BRN and all short/long unsigned/signed conditional branches.
+- Extended and all indexed JMP forms, including actual indirect pointer accesses.
 - Native N/Z/V/C/H effects where specified; other CCR bits and registers retained.
 - Captured-byte cache keys, bounded entry count and explicit cache invalidation.
 - W^X code pages and a typed assembly bridge into generated code.
 - Explicit unsupported input/ISA/host faults with original PC/opcode; no retirement.
 
-The independent directed test enumerates every A/B value and immediate operand
-for all 16 arithmetic/load/logic opcodes at three initial CCR values, plus all 16
-branch conditions, every CCR byte and five displacements. It checks complete
+The initial arithmetic/short-branch test enumerates every A/B value and immediate
+operand for all 16 arithmetic/load/logic opcodes at three initial CCR values,
+plus all 16 short conditions, every CCR byte and five displacements. It checks complete
 register state, PC wrap, cache-clear/NOP and no-effect refusals. No manufacturer
 program is used. This scope is distinct from an independently booting processor.
 
@@ -45,8 +46,9 @@ Open requirements:
 No native throughput or real-time claim is made from correctness test duration.
 Broad QA is deferred until original Blofeld firmware runs in real time, as the
 user requested. No fuzzing was run. Current qualification is in
-auto-indexed-reference.json: 292732 auto/LEA cases and all five previous
-native/byte/word/API/indexed consumers pass on the same coherent library.
+control-reference.json: long branches and JMP plus all six previous
+native/byte/word/API/indexed/auto consumers use the same coherent library.
+Historical auto-indexed-reference.json pins 292732 auto/LEA cases.
 Historical indexed-reference.json pins the earlier non-auto integration and
 its four directed SMT arithmetic proofs with two SAT negative controls.
 Earlier API, word, byte and initial native records retain their own source
