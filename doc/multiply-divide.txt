@@ -1,0 +1,55 @@
+Native multiplication and division
+
+MUL (12), EMUL (13), EMULS (18 13), IDIV (18 10), IDIVS (18 15), EDIV (11),
+EDIVS (18 14) and FDIV (18 11) compile directly into host integer instructions.
+No ISA helper, memory/peripheral callback or native temporary frame is used.
+The existing MUL;ADCA #0 rounding sequence uses the actual generated carry.
+
+MUL changes only C, from result bit 7. EMUL/EMULS produce Y:D, update N/Z
+from the entire 32-bit product and C from bit 15, and preserve V and upper CCR.
+Division updates the quotient and remainder as specified by the pinned
+S12CPUV2 entries. Unsigned/fractional 16-bit results retain N; signed/extended
+results derive N/Z from the 16-bit quotient. Normal results clear C/V.
+All operations preserve other registers, upper flags and instruction-boundary
+fault/state contracts; guest division by zero retires with its documented C
+status rather than becoming an unrelated host execution fault.
+
+Zero-divisor guards precede native DIV/IDIV. IDIVS uses a 32-bit host divide,
+so the guest 8000/ffff overflow can publish X=8000,D=0,V=1,C=0 without trapping.
+EDIVS uses a 64-bit host divide, including signed 32 minimum divided by -1;
+its guest 16-bit overflow preserves D/Y and sets V while clearing C. EDIV
+rejects an oversized quotient before dividing. A biased unsigned range check
+classifies EDIVS signed 16 quotients; a Z3 bit-vector proof covers every possible
+quotient, with two SAT negative controls. These are arithmetic bounds only,
+not proof of the entire CPU or hardware equivalence.
+
+Architecturally indeterminate fields have a deterministic, explicit policy.
+IDIV division by zero saturates X=ffff, retains the indeterminate D and sets
+C while clearing Z/V. FDIV overflow/zero saturates X=ffff, retains the
+indeterminate D, clears Z and sets V; C reports zero divisor. EDIV/EDIVS
+zero and IDIVS zero preserve their specified input registers and retain the
+undefined N/Z/V while setting C. EDIV/EDIVS overflow preserves D/Y and the
+undefined N/Z while setting V and clearing C. IDIVS 8000/ffff produces the
+low-word quotient and zero remainder; its undefined N/Z follow that low word.
+Keeping an indeterminate remainder or choosing undefined flags is core policy,
+not a silicon-measured fact. A firmware dependence on such fields requires
+additional compatibility evidence.
+
+Tests separately check all defined fields and the chosen policy for undefined
+ones. All MUL byte pairs/CCRs, full word domains against directed other
+operands, separate extended-dividend/divisor axes, all CCRs at boundary cases,
+PC wrapping, zero divisors and signed overflow are covered with independent
+integer expectations. No manufacturer application program is embedded.
+The 48287746 current cases and fourteen earlier coherent consumers passed.
+Of those new cases, 9438977 also check indeterminate policy; all cases check
+their specified fields. multiply-divide-reference.json pins current sources,
+binaries, actual exits, logs and the narrower arithmetic proof. Remaining ISA,
+reset/IRQ/waits, fetch/native regions, checkpoints,
+cycle budgets and Blofeld integration remain open. Component tests do not
+establish firmware boot, complete instrument operation or real-time throughput.
+
+Focused reproduction:
+
+  cmake --preset release
+  cmake --build --preset release --target cpu12-multiply-divide-test
+  ctest --test-dir build/release --output-on-failure -R '^multiply-divide$'

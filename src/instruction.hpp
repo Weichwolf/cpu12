@@ -31,7 +31,8 @@ enum class Kind : std::uint8_t {
   loop,
   memory_bits,
   bit_branch,
-  move
+  move,
+  multiply_divide
 };
 
 enum class RegisterOp : std::uint8_t {
@@ -69,6 +70,17 @@ enum class StackTarget : std::uint8_t { x, y, a, b, ccr, d, pc };
 
 enum class WordTarget : std::uint8_t { d, y, x, sp };
 
+enum class MathOp : std::uint8_t {
+  multiply_byte,
+  multiply_unsigned,
+  multiply_signed,
+  divide_unsigned,
+  divide_signed,
+  divide_extended,
+  divide_extended_signed,
+  divide_fractional
+};
+
 struct MoveOperand {
   Addressing addressing = Addressing::immediate;
   std::uint16_t value = 0;
@@ -90,7 +102,11 @@ struct Instruction {
   RegisterOp operation = RegisterOp::test;
   std::uint8_t bit_mask = 0;
   MoveOperand move_source{}, move_destination{};
+  MathOp math = MathOp::multiply_byte;
 };
+
+[[nodiscard]] std::optional<Instruction>
+decode_multiply_divide(std::span<const std::uint8_t> bytes);
 
 [[nodiscard]] std::optional<Instruction> decode_move(std::span<const std::uint8_t> bytes);
 

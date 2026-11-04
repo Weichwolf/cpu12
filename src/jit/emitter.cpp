@@ -10,6 +10,7 @@
 #include "jit/loop.hpp"
 #include "jit/memory_modify.hpp"
 #include "jit/move.hpp"
+#include "jit/multiply_divide.hpp"
 #include "jit/registers.hpp"
 #include "jit/stack.hpp"
 #include "jit/transfer.hpp"
@@ -241,6 +242,7 @@ void arithmetic(Code &code, const Instruction &instruction, const Ram ram) {
     case Kind::memory_bits:
     case Kind::bit_branch:
     case Kind::move:
+    case Kind::multiply_divide:
     case Kind::jump:
     case Kind::effective_address:
     case Kind::nop:
@@ -395,6 +397,7 @@ WordEncoding word_operation(const Instruction &instruction) {
     case Kind::memory_bits:
     case Kind::bit_branch:
     case Kind::move:
+    case Kind::multiply_divide:
     case Kind::jump:
     case Kind::effective_address:
     case Kind::nop:
@@ -490,7 +493,9 @@ void branch(Code &code, const Instruction &instruction) {
 std::vector<std::uint8_t> emit(const Instruction &instruction, const Ram ram) {
   Code code;
   code.raw(entry);
-  if (instruction.kind == Kind::move) {
+  if (instruction.kind == Kind::multiply_divide) {
+    multiply_divide_instruction(code, instruction);
+  } else if (instruction.kind == Kind::move) {
     move_instruction(code, instruction, ram);
   } else if (instruction.kind == Kind::loop) {
     loop_instruction(code, instruction);

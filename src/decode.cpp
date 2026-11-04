@@ -14,7 +14,8 @@ std::optional<Instruction> simple(const std::span<const std::uint8_t> bytes) {
   if (const auto instruction = decode_memory_unary(bytes)) { return instruction; }
   if (const auto instruction = decode_loop(bytes)) { return instruction; }
   if (const auto instruction = decode_bits(bytes)) { return instruction; }
-  return decode_move(bytes);
+  if (const auto instruction = decode_move(bytes)) { return instruction; }
+  return decode_multiply_divide(bytes);
 }
 
 bool memory_operand(Instruction &instruction, const std::span<const std::uint8_t> bytes) {
