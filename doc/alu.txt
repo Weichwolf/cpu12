@@ -33,7 +33,8 @@ index tests cover every 16-bit value at directed initial CCRs. CCR masks cover
 all old-CCR/mask combinations. The 4759688 ALU cases and eight existing
 consumers passed on one coherent optimized library; historical
 alu-reference.json pins that source and actual run hashes.
-transfer-reference.json records current consumers after register transfers.
+transfer-reference.json records the subsequent register-transfer integration;
+memory-unary-reference.json pins current consumers after memory unary operations.
 These component tests do not establish full CPU12 execution, original firmware
 boot, hardware equivalence or real time.
 Fuzzing is not automatic and was not requested. Extensive sanitizer matrices

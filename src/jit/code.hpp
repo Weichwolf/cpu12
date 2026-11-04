@@ -51,7 +51,7 @@ public:
     u16(static_cast<std::uint16_t>(delta));
   }
 
-  // Only indirect calls need to retain a resolved pointer across a real bus call.
+  // Preserve staged values across real external calls when an instruction needs them.
   // Sixteen bytes preserve SysV alignment; guest stack and CPU remain separate.
   void frame() {
     if (framed_) { throw std::logic_error("Native frame already exists"); }

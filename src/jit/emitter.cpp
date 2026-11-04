@@ -7,6 +7,7 @@
 #include "jit/code.hpp"
 #include "jit/flags.hpp"
 #include "jit/indexed.hpp"
+#include "jit/memory_unary.hpp"
 #include "jit/registers.hpp"
 #include "jit/stack.hpp"
 #include "jit/transfer.hpp"
@@ -158,7 +159,7 @@ void memory_write(Code &code, const Instruction &instruction, const Ram ram) {
 
 }
 
-void flags(Code &code, const FlagPolicy policy) {
+void flags(Code &code, const FlagPolicy policy, const bool publish) {
   code.raw(snapshot_flags); // seto r8b; lahf
   code.raw(old_ccr);        // movzx edx, old CCR
   code.raw(copy_ah);        // movzx esi, ah
@@ -172,7 +173,12 @@ void flags(Code &code, const FlagPolicy policy) {
   const auto changed = nzv | (policy.carry ? carry_mask : 0U) | (policy.half ? half_mask : 0U);
   code.raw(mask_old_ccr);
   code.byte(static_cast<std::uint8_t>(byte_mask ^ changed));
-  code.raw(store_ccr);
+  if (publish) {
+    code.raw(store_ccr);
+  } else {
+    constexpr std::array<std::uint8_t, 2> merge_old{0x09, 0xd0};
+    code.raw(merge_old);
+  }
 }
 
 void restore_carry(Code &code) {
@@ -228,6 +234,7 @@ void arithmetic(Code &code, const Instruction &instruction, const Ram ram) {
     case Kind::return_subroutine:
     case Kind::register_operation:
     case Kind::transfer:
+    case Kind::memory_unary:
     case Kind::jump:
     case Kind::effective_address:
     case Kind::nop:
@@ -377,6 +384,7 @@ WordEncoding word_operation(const Instruction &instruction) {
     case Kind::return_subroutine:
     case Kind::register_operation:
     case Kind::transfer:
+    case Kind::memory_unary:
     case Kind::jump:
     case Kind::effective_address:
     case Kind::nop:
@@ -472,7 +480,9 @@ void branch(Code &code, const Instruction &instruction) {
 std::vector<std::uint8_t> emit(const Instruction &instruction, const Ram ram) {
   Code code;
   code.raw(entry);
-  if (instruction.kind == Kind::transfer) {
+  if (instruction.kind == Kind::memory_unary) {
+    memory_unary_instruction(code, instruction, ram);
+  } else if (instruction.kind == Kind::transfer) {
     transfer_instruction(code, instruction);
   } else if (instruction.kind == Kind::register_operation) {
     register_instruction(code, instruction);

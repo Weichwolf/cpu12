@@ -26,7 +26,8 @@ enum class Kind : std::uint8_t {
   pull,
   return_subroutine,
   register_operation,
-  transfer
+  transfer,
+  memory_unary
 };
 
 enum class RegisterOp : std::uint8_t {
@@ -78,6 +79,8 @@ struct Instruction {
   StackTarget stack_target = StackTarget::d;
   RegisterOp operation = RegisterOp::test;
 };
+
+[[nodiscard]] std::optional<Instruction> decode_memory_unary(std::span<const std::uint8_t> bytes);
 
 [[nodiscard]] std::optional<Instruction> decode_transfer(std::span<const std::uint8_t> bytes);
 

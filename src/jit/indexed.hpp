@@ -4,10 +4,16 @@
 #include "instruction.hpp"
 #include "jit/code.hpp"
 
+#include <cstddef>
+
 namespace cpu12::detail {
 struct Access {
   bool word = false, write = false;
 };
+
+// Byte admission leaves the native offset in r10. These helpers emit code only.
+[[nodiscard]] std::size_t outside_byte_ram(Code &code, Ram ram);
+void native_data_access(Code &code, Ram ram, Access access);
 
 void data_access(Code &code, Ram ram, Access access);
 void indexed_address(Code &code, const Instruction &instruction, Ram ram);

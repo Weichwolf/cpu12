@@ -205,6 +205,14 @@ void native_access(Code &code, const Ram ram, const Access access) {
 
 }
 
+std::size_t outside_byte_ram(Code &code, const Ram ram) {
+  return outside(code, ram, false);
+}
+
+void native_data_access(Code &code, const Ram ram, const Access access) {
+  native_access(code, ram, access);
+}
+
 void data_access(Code &code, const Ram ram, const Access access) {
   if (ram.bytes.empty()) {
     bus_call(code, access);

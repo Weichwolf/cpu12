@@ -2,31 +2,18 @@
 #include "alu_model.hpp"
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
+#include "unary_model.hpp"
 
 #include <array>
 #include <cstdint>
 #include <exception>
 #include <iostream>
 #include <span>
-#include <stdexcept>
 
 namespace {
 using namespace cpu12;
 using namespace cpu12::test::alu;
-
-enum class Function : std::uint8_t {
-  negate,
-  complement,
-  increment,
-  decrement,
-  right,
-  rotate_left,
-  rotate_right,
-  signed_right,
-  left,
-  clear,
-  test
-};
+using namespace cpu12::test::unary;
 
 struct Operation {
   Byte opcode;
@@ -43,81 +30,6 @@ constexpr std::array functions{Function::negate,
                                Function::rotate_right,
                                Function::signed_right,
                                Function::left};
-
-struct Value {
-  unsigned data, flags;
-  bool store = true;
-};
-
-struct UnaryInput {
-  Function function;
-  unsigned data, ccr;
-  bool word;
-};
-
-Value expected(const UnaryInput input) {
-  constexpr unsigned byte_sign = 0x80;
-  constexpr unsigned word_sign = 0x8000;
-  const unsigned sign = input.word ? word_sign : byte_sign;
-  const auto range = sign * 2U;
-  const auto mask = range - 1U;
-  const auto source = input.data;
-  auto result = source;
-  unsigned changed = negative | zero | overflow | carry;
-  bool c = false;
-  bool v = false;
-  bool store = true;
-  switch (input.function) {
-    case Function::negate:
-      result = (range - source) & mask;
-      c = source != 0;
-      v = source == sign;
-      break;
-    case Function::complement:
-      result = mask - source;
-      c = true;
-      break;
-    case Function::increment:
-      result = (source + 1U) & mask;
-      v = source == sign - 1U;
-      changed ^= carry;
-      break;
-    case Function::decrement:
-      result = (source + mask) & mask;
-      v = source == sign;
-      changed ^= carry;
-      break;
-    case Function::right:
-      result = source / 2U;
-      c = source % 2U != 0;
-      break;
-    case Function::rotate_left:
-      result = ((source * 2U) + (input.ccr & carry)) & mask;
-      c = source >= sign;
-      break;
-    case Function::rotate_right:
-      result = (source / 2U) + ((input.ccr & carry) != 0 ? sign : 0U);
-      c = source % 2U != 0;
-      break;
-    case Function::signed_right:
-      result = (source / 2U) + (source >= sign ? sign : 0U);
-      c = source % 2U != 0;
-      break;
-    case Function::left:
-      result = (source * 2U) & mask;
-      c = source >= sign;
-      break;
-    case Function::clear: result = 0; break;
-    case Function::test: store = false; break;
-    default: throw std::runtime_error("Unsupported independently authored unary expectation");
-  }
-  if (input.function >= Function::right && input.function <= Function::left) {
-    v = (result >= sign) != c;
-  }
-  const unsigned flags = (result >= sign ? negative : 0U) | (result == 0 ? zero : 0U) |
-                         (v ? overflow : 0U) | (c ? carry : 0U);
-  return {.data = result, .flags = (input.ccr & (byte_mask ^ changed)) | flags, .store = store};
-}
 
 struct Case {
   Operation operation;

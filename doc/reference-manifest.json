@@ -16,7 +16,8 @@
       "ADCA/B and SBCA/B entries: carry/borrow, signed overflow and half-carry",
       "Inherent NEG/COM/INC/DEC/LSR/ROL/ROR/ASR/ASL/CLR/TST and LSRD/ASLD flag rules",
       "INX/DEX/INY/DEY and ANDCC/ORCC entries; ANDCC IRQ delay remains future timing work",
-      "TFR/EXG, SEX, TAB/TBA entries and TableA-5: normal selector encodings, ignored bit3, mixed widths, fixed prefixes and overlapping registers"
+      "TFR/EXG, SEX, TAB/TBA entries and TableA-5: normal selector encodings, ignored bit3, mixed widths, fixed prefixes and overlapping registers",
+      "Indexed/extended NEG/COM/INC/DEC/LSR/ROL/ROR/ASR/ASL/CLR/TST encodings and flags; CLR write-only and TST read-only access semantics"
     ],
     "redistributed": false
   }

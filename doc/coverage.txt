@@ -15,6 +15,9 @@ Initial native implementation on x86-64/Linux:
 - TFR/EXG/SEX and assembler aliases:196 normal postbytes, signed/fixed extensions,
   A/B/D overlap and CCR X restriction;60 factory TMP2/TMP3 forms refuse visibly.
 - TAB/TBA preserve C/H/other flags and update N/Z/V.
+- Indexed/extended byte NEG/COM/INC/DEC/LSR/ROL/ROR/ASR/ASL/CLR/TST.
+- Write-only CLR/read-only TST and native RAM RMW; external effects with staged
+  flags/index/PC and precise pointer/read/write refusal without replay.
 - Direct/extended byte load/ALU/store instructions, preserving all other registers.
 - Immediate/direct/extended LDD/LDX/LDY/LDS, CPD/CPX/CPY/CPS, ADDD/SUBD.
 - Direct/extended STD/STX/STY/STS, correct word NZVC and unchanged H.
@@ -61,8 +64,9 @@ remains physically unmeasured. stack.txt records the distinction.
 No native throughput or real-time claim is made from correctness test duration.
 Broad QA is deferred until original Blofeld firmware runs in real time, as the
 user requested. No fuzzing was run. Current qualification is in
-transfer-reference.json:24779786 transfer/exchange cases and all nine previous
-consumers use one coherent library. Historical alu-reference.json pins the
+memory-unary-reference.json:1538224 memory-unary cases and all ten previous
+consumers use one coherent library. Historical transfer-reference.json pins
+24779786 transfer/exchange cases. Historical alu-reference.json pins the
 earlier carry/register qualification.
 Historical stack-reference.json pins stack/call qualification.
 Historical control-reference.json pins long-branch/JMP qualification.

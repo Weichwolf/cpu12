@@ -13,7 +13,8 @@ feature; unsupported hosts refuse explicitly. Arithmetic, CCR changes and
 branch decisions execute natively. Stack save/restore, JSR/BSR and RTS also
 compile to native memory and control transfers. Carry arithmetic, inherent
 unary/shift operations, index counters, CCR masks and normal register
-transfers/exchanges also execute natively. No instruction interpreter or
+transfers/exchanges also execute natively. Indexed/extended byte memory unary
+operations add native read/modify/write, write-only CLR and read-only TST. No instruction interpreter or
 Ghidra dependency is present. Unsupported instructions return an explicit fault
 without retirement. This is an initial ISA subset, not a complete CPU12
 emulator or a completed Blofeld integration.
@@ -33,7 +34,8 @@ RAM/bus contract is described in [memory.txt](doc/memory.txt) and
 [stack/subroutines](doc/stack.txt). [Register/carry ALU](doc/alu.txt) records
 flag semantics and the remaining interrupt-timing requirement.
 [Transfers](doc/transfer.txt) cover signed/fixed extensions and register
-overlap. See [coverage](doc/coverage.txt) and the [full objective](doc/objective.txt).
+overlap. [Memory unary operations](doc/memory-unary.txt) describe the real bus
+phases and deferred CPU publication. See [coverage](doc/coverage.txt) and the [full objective](doc/objective.txt).
 
 ```sh
 cmake --preset release

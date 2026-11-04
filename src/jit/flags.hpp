@@ -7,6 +7,6 @@ struct FlagPolicy {
   bool carry = false, overflow = false, half = false;
 };
 
-void flags(Code &code, FlagPolicy policy);
+void flags(Code &code, FlagPolicy policy, bool publish = true);
 void restore_carry(Code &code);
 }

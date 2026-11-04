@@ -57,7 +57,7 @@ std::array<std::uint8_t, 2> encoding(const RegisterOp operation) {
   return native[index];
 }
 
-void shift_flags(Code &code, const bool word) {
+void shift_flags(Code &code, const bool word, const bool publish) {
   // x86 rotations retain N/Z and right shifts define V differently. Derive the
   // CPU12 relation V=N xor C from the actual result and saved outgoing carry.
   code.raw(carry_out);
@@ -81,7 +81,11 @@ void shift_flags(Code &code, const bool word) {
   code.raw(load_ccr);
   code.raw(preserve_upper);
   code.raw(merge_carry);
-  code.raw(store_ccr);
+  if (publish) {
+    code.raw(store_ccr);
+  } else {
+    code.raw(copy_nz);
+  }
 }
 
 void unary(Code &code, const Instruction &instruction) {
@@ -94,18 +98,7 @@ void unary(Code &code, const Instruction &instruction) {
   const auto offset =
       static_cast<std::uint8_t>(d_offset + (instruction.word || instruction.accumulator_b ? 0 : 1));
   code.byte(offset);
-  if (operation == RegisterOp::rotate_left || operation == RegisterOp::rotate_right) {
-    restore_carry(code);
-  }
-  auto native = encoding(operation);
-  if (instruction.word) {
-    constexpr std::uint8_t word_prefix = 0x66;
-    constexpr std::uint8_t word_shift = 0xd1;
-    code.byte(word_prefix);
-    native[0] = word_shift;
-  }
-  code.raw(native);
-  if (operation == RegisterOp::complement) { code.raw(test_byte); }
+  unary_operation(code, instruction);
   if (operation != RegisterOp::test) {
     if (instruction.word) {
       code.raw(store_word);
@@ -114,16 +107,7 @@ void unary(Code &code, const Instruction &instruction) {
     }
     code.byte(offset);
   }
-  if (shift(operation)) {
-    shift_flags(code, instruction.word);
-  } else {
-    const bool inc_dec = operation == RegisterOp::increment || operation == RegisterOp::decrement;
-    flags(code, {.carry = !inc_dec, .overflow = inc_dec || operation == RegisterOp::negate});
-    if (operation == RegisterOp::complement) {
-      constexpr std::array<std::uint8_t, 4> force_carry{0x80, 0x4f, ccr_offset, 0x01};
-      code.raw(force_carry);
-    }
-  }
+  unary_flags(code, instruction);
 }
 
 void index(Code &code, const Instruction &instruction) {
@@ -158,6 +142,42 @@ void ccr(Code &code, const Instruction &instruction) {
   code.byte(static_cast<std::uint8_t>(conjunction ? instruction.operand
                                                   : instruction.operand & retain_x));
 }
+}
+
+void unary_operation(Code &code, const Instruction &instruction) {
+  const auto operation = instruction.operation;
+  if (operation == RegisterOp::rotate_left || operation == RegisterOp::rotate_right) {
+    restore_carry(code);
+  }
+  auto native = encoding(operation);
+  if (instruction.word) {
+    constexpr std::uint8_t word_prefix = 0x66;
+    constexpr std::uint8_t word_shift = 0xd1;
+    code.byte(word_prefix);
+    native[0] = word_shift;
+  }
+  code.raw(native);
+  if (operation == RegisterOp::complement) { code.raw(test_byte); }
+}
+
+void unary_flags(Code &code, const Instruction &instruction, const bool publish) {
+  const auto operation = instruction.operation;
+  if (shift(operation)) {
+    shift_flags(code, instruction.word, publish);
+  } else {
+    const bool inc_dec = operation == RegisterOp::increment || operation == RegisterOp::decrement;
+    flags(
+        code, {.carry = !inc_dec, .overflow = inc_dec || operation == RegisterOp::negate}, publish);
+    if (operation == RegisterOp::complement) {
+      constexpr std::array<std::uint8_t, 4> force_carry{0x80, 0x4f, ccr_offset, 0x01};
+      if (publish) {
+        code.raw(force_carry);
+      } else {
+        constexpr std::array<std::uint8_t, 2> force_candidate_carry{0x0c, 0x01};
+        code.raw(force_candidate_carry);
+      }
+    }
+  }
 }
 
 void register_instruction(Code &code, const Instruction &instruction) {
