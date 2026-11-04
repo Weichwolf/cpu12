@@ -45,8 +45,9 @@ wrapping, all indexed call postbytes, actual pointer/stack aliasing, external
 byte/word refusals, partial writes, RAM seams, callback register clobbers and
 latched no-replay. An authored nested JSR/BSR/save/restore/RTS program checks
 every intermediate architectural state and real return-stack bytes. The 2328433
-stack/call cases and seven existing consumers pass on one coherent optimized
-library; stack-reference.json pins source, actual ELF and run-log hashes. This
+stack/call cases and seven existing consumers passed on one coherent optimized
+library; historical stack-reference.json pins that source and actual run hashes.
+alu-reference.json records current consumers after carry/register support. This
 is component execution, not original Blofeld boot, full ISA or instrument proof.
 Remaining ISA, banked CALL/RTC, RTI/reset/IRQ/waits, checkpoints, fetch/native
 regions, timing and Blofeld integration are still required. No fuzzing is part

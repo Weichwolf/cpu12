@@ -9,7 +9,9 @@ enum class Kind : std::uint8_t {
   nop,
   load,
   add,
+  add_carry,
   subtract,
+  subtract_carry,
   compare,
   bit_and,
   bit_or,
@@ -22,7 +24,26 @@ enum class Kind : std::uint8_t {
   call,
   push,
   pull,
-  return_subroutine
+  return_subroutine,
+  register_operation
+};
+
+enum class RegisterOp : std::uint8_t {
+  negate,
+  complement,
+  increment,
+  decrement,
+  logical_right,
+  rotate_left,
+  rotate_right,
+  arithmetic_right,
+  arithmetic_left,
+  clear,
+  test,
+  index_increment,
+  index_decrement,
+  ccr_and,
+  ccr_or
 };
 
 enum class Addressing : std::uint8_t { immediate, direct, extended, indexed, relative };
@@ -54,7 +75,10 @@ struct Instruction {
   WordTarget target = WordTarget::d;
   Indexed indexed{};
   StackTarget stack_target = StackTarget::d;
+  RegisterOp operation = RegisterOp::test;
 };
+
+[[nodiscard]] std::optional<Instruction> decode_register(std::span<const std::uint8_t> bytes);
 
 [[nodiscard]] bool decode_indexed(Instruction &instruction, std::span<const std::uint8_t> bytes);
 

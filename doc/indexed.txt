@@ -38,7 +38,7 @@ rollback.
 
 The earlier native auto/LEA integration passed 292732 cases and five existing
 consumers, including 168432 non-auto indexed cases, on one coherent library.
-stack-reference.json records the current consumers after stack/call support.
+alu-reference.json records current consumers after carry/register support.
 All CCR values, destination/source overlap, wrapping, indirect effects, cache
 length collisions and latched refusals have independent
 expectations. auto-indexed-reference.json pins that integration's source, ELF

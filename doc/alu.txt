@@ -1,0 +1,44 @@
+Native register and carry ALU operations
+
+ADC/SBC use the actual guest C bit after address calculation, automatic index
+updates and any real external read callback. ADCA/B update H/N/Z/V/C; SBCA/B
+update N/Z/V/C and retain H. Immediate, direct, extended and every existing
+indexed addressing form share the native arithmetic path. Unknown accesses
+retain the original strict fault and no-replay contracts.
+
+Inherent A/B operations cover NEG, COM, INC, DEC, LSR, ROL, ROR, ASR, ASL,
+CLR and TST. LSRD and ASLD operate on the entire 16-bit D accumulator. The
+native shift/rotate path saves the actual outgoing carry and derives CPU12
+N/Z and V=N xor C from the result. It does not reuse incompatible x86 right-
+shift or rotation flag rules. Other unary operations retain H; INC/DEC retain
+C, COM sets C, and CLR/TST clear C as specified.
+
+INX/DEX/INY/DEY change only the selected 16-bit index and Z. ANDCC clears
+selected bits. ORCC sets selected bits except X, which it cannot raise.
+The captured API currently implements register effects only: ANDCC's interrupt
+recognition delay, IRQ arbitration, waits, reset, fetch and cycle budgets
+remain explicit future requirements, alongside the remaining ISA.
+
+All instruction and template selection occurs during compilation. Warm register
+and known-RAM execution uses generated host operations; only genuine external
+memory accesses call the supplied owner. Shared flag emission is a compilation
+helper, not a runtime instruction interpreter. Source references are the
+S12CPUV2 ADC/SBC, unary, index and ANDCC/ORCC entries pinned by
+reference-manifest.json. No manufacturer program is part of these tests.
+
+Independent arithmetic expectations enumerate both incoming carry values,
+byte operands, unchanged upper flags, native addressing and external refusals.
+Unary byte tests cover all source values and all CCR values; word shift and
+index tests cover every 16-bit value at directed initial CCRs. CCR masks cover
+all old-CCR/mask combinations. The 4759688 ALU cases and eight existing
+consumers pass on one coherent optimized library; alu-reference.json pins current source, archive, actual ELF
+and run-log hashes. These component tests do not establish full CPU12 execution,
+original firmware boot, hardware equivalence or real time.
+Fuzzing is not automatic and was not requested. Extensive sanitizer matrices
+remain deferred until real-time Blofeld execution under the user policy.
+
+Focused reproduction:
+
+  cmake --preset release
+  cmake --build --preset release --target cpu12-alu-test
+  ctest --test-dir build/release --output-on-failure -R '^alu$'

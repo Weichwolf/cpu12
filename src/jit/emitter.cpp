@@ -5,7 +5,9 @@
 #include "cpu12/memory.hpp"
 #include "instruction.hpp"
 #include "jit/code.hpp"
+#include "jit/flags.hpp"
 #include "jit/indexed.hpp"
+#include "jit/registers.hpp"
 #include "jit/stack.hpp"
 #include "runtime.hpp"
 
@@ -52,6 +54,8 @@ enum Encoding : std::uint8_t {
   test_al_cl = 0x84,
   load_al = 0xb0,
   add_al = 0x04,
+  adc_al = 0x14,
+  sbb_al = 0x1c,
   sub_al = 0x2c,
   cmp_al = 0x3c,
   and_al = 0x24,
@@ -151,9 +155,7 @@ void memory_write(Code &code, const Instruction &instruction, const Ram ram) {
   bus_call(code, instruction, true);
 }
 
-struct FlagPolicy {
-  bool carry = false, overflow = false, half = false;
-};
+}
 
 void flags(Code &code, const FlagPolicy policy) {
   code.raw(snapshot_flags); // seto r8b; lahf
@@ -172,6 +174,14 @@ void flags(Code &code, const FlagPolicy policy) {
   code.raw(store_ccr);
 }
 
+void restore_carry(Code &code) {
+  code.raw(old_ccr);
+  constexpr std::array<std::uint8_t, 2> to_carry{0xd1, 0xea};
+  code.raw(to_carry);
+}
+
+namespace {
+
 void arithmetic(Code &code, const Instruction &instruction, const Ram ram) {
   const bool immediate = instruction.addressing == Addressing::immediate;
   if (!immediate) { memory_read(code, instruction, ram); }
@@ -186,6 +196,14 @@ void arithmetic(Code &code, const Instruction &instruction, const Ram ram) {
     case Kind::add:
       opcode = add_al;
       policy = {.carry = true, .overflow = true, .half = true};
+      break;
+    case Kind::add_carry:
+      opcode = adc_al;
+      policy = {.carry = true, .overflow = true, .half = true};
+      break;
+    case Kind::subtract_carry:
+      opcode = sbb_al;
+      policy = {.carry = true, .overflow = true};
       break;
     case Kind::subtract:
       opcode = sub_al;
@@ -207,12 +225,16 @@ void arithmetic(Code &code, const Instruction &instruction, const Ram ram) {
     case Kind::push:
     case Kind::pull:
     case Kind::return_subroutine:
+    case Kind::register_operation:
     case Kind::jump:
     case Kind::effective_address:
     case Kind::nop:
     case Kind::store:
     case Kind::branch:
     default: throw std::logic_error("Invalid native arithmetic kind");
+  }
+  if (instruction.kind == Kind::add_carry || instruction.kind == Kind::subtract_carry) {
+    restore_carry(code);
   }
   if (immediate) {
     code.byte(opcode);
@@ -345,10 +367,13 @@ WordEncoding word_operation(const Instruction &instruction) {
     case Kind::add: return add_ax;
     case Kind::subtract: return sub_ax;
     case Kind::compare: return cmp_ax;
+    case Kind::add_carry:
+    case Kind::subtract_carry:
     case Kind::call:
     case Kind::push:
     case Kind::pull:
     case Kind::return_subroutine:
+    case Kind::register_operation:
     case Kind::jump:
     case Kind::effective_address:
     case Kind::nop:
@@ -444,7 +469,9 @@ void branch(Code &code, const Instruction &instruction) {
 std::vector<std::uint8_t> emit(const Instruction &instruction, const Ram ram) {
   Code code;
   code.raw(entry);
-  if (instruction.kind == Kind::call) {
+  if (instruction.kind == Kind::register_operation) {
+    register_instruction(code, instruction);
+  } else if (instruction.kind == Kind::call) {
     subroutine_call(code, instruction, ram);
   } else if (instruction.kind == Kind::push || instruction.kind == Kind::pull ||
              instruction.kind == Kind::return_subroutine) {

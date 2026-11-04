@@ -23,6 +23,8 @@ bool arithmetic_kind(Instruction &instruction) {
   enum Opcode : std::uint8_t {
     load_a = 0x86,
     add_a = 0x8b,
+    adc_a = 0x89,
+    sbc_a = 0x82,
     sub_a = 0x80,
     cmp_a = 0x81,
     and_a = 0x84,
@@ -35,6 +37,8 @@ bool arithmetic_kind(Instruction &instruction) {
   switch (instruction.opcode & arithmetic_mask) {
     case load_a: instruction.kind = Kind::load; break;
     case add_a: instruction.kind = Kind::add; break;
+    case adc_a: instruction.kind = Kind::add_carry; break;
+    case sbc_a: instruction.kind = Kind::subtract_carry; break;
     case sub_a: instruction.kind = Kind::subtract; break;
     case cmp_a: instruction.kind = Kind::compare; break;
     case and_a: instruction.kind = Kind::bit_and; break;
@@ -242,7 +246,6 @@ std::optional<Instruction> indexed_operation(Instruction instruction,
 }
 
 std::optional<Instruction> decode(const std::span<const std::uint8_t> bytes) {
-  constexpr unsigned nop = 0xa7;
   constexpr unsigned first_branch = 0x20;
   constexpr unsigned last_branch = 0x2f;
   constexpr unsigned prefix = 0x18;
@@ -255,9 +258,7 @@ std::optional<Instruction> decode(const std::span<const std::uint8_t> bytes) {
   constexpr unsigned extended_store = 0x20;
   if (bytes.empty()) { return {}; }
   const auto opcode = bytes[0];
-  if (opcode == nop && bytes.size() == 1) {
-    return Instruction{.kind = Kind::nop, .opcode = opcode, .length = 1};
-  }
+  if (const auto instruction = decode_register(bytes)) { return instruction; }
   if ((opcode >= first_branch && opcode <= last_branch) ||
       (opcode >= first_jump && opcode <= bsr) || (opcode >= first_call && opcode <= prefix)) {
     return control(bytes);

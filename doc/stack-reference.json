@@ -1,5 +1,5 @@
 {
-  "scope": "Native stack/subroutine and coherent CPU12 consumers; incomplete ISA and no original firmware or instrument acceptance",
+  "scope": "Historical native stack/subroutine qualification at qualified_revision; current coverage is recorded in coverage.txt",
   "parent_revision": "6c582478f34e56cfeb8e1be527a198b762a12b3c",
   "source_sha256": {
     ".clang-format": "fd267d78d4415894f55822b698ba496ce856c5308338a6db6e1c98c1441de9fd",
@@ -171,5 +171,6 @@
   "fuzz": false,
   "throughput_claim": false,
   "firmware_or_instrument_acceptance": false,
-  "extensive_sanitizer_regressions": "Deferred until original firmware runs in real time, per user instruction"
+  "extensive_sanitizer_regressions": "Deferred until original firmware runs in real time, per user instruction",
+  "qualified_revision": "e214b60096bd46744214068d4d5caa2f108847e2"
 }

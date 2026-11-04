@@ -8,6 +8,10 @@ board time to its owner.
 Initial native implementation on x86-64/Linux:
 - Captured NOP.
 - Immediate LDAA/B, ADDA/B, SUBA/B, CMPA/B, ANDA/B, ORAA/B, EORA/B, BITA/B.
+- ADCA/B and SBCA/B in immediate/direct/extended/all existing indexed forms.
+- Inherent A/B NEG/COM/INC/DEC/LSR/ROL/ROR/ASR/ASL/CLR/TST and D shifts.
+- CPU12 right-shift/rotate V=N xor C, with complete CCR/operand expectations.
+- INX/DEX/INY/DEY update only Z; ANDCC/ORCC retain the software X-mask limit.
 - Direct/extended byte load/ALU/store instructions, preserving all other registers.
 - Immediate/direct/extended LDD/LDX/LDY/LDS, CPD/CPX/CPY/CPS, ADDD/SUBD.
 - Direct/extended STD/STX/STY/STS, correct word NZVC and unchanged H.
@@ -41,7 +45,8 @@ Open requirements:
 - The remaining ISA and its addressing/control/stack forms.
 - Additional memory-window types and multi-byte/per-instruction access boundaries.
 - Native regions, fetch ownership/code invalidation and event/timing budgets.
-- Reset, interrupt priorities/entry/return, wait/stop and complete checkpoints.
+- Reset, interrupt priorities/entry/return, ANDCC IRQ-recognition delay,
+  wait/stop and complete checkpoints.
 - Integration and state ownership with blofeld-emu; no emulator dependency pin yet.
 - Real firmware startup, actual instrument behavior and whole-emulator throughput.
 - Other host architectures, extensive sanitizer matrices and broader regression.
@@ -53,8 +58,9 @@ remains physically unmeasured. stack.txt records the distinction.
 No native throughput or real-time claim is made from correctness test duration.
 Broad QA is deferred until original Blofeld firmware runs in real time, as the
 user requested. No fuzzing was run. Current qualification is in
-stack-reference.json: 2328433 stack/call cases and all seven previous
-native/byte/word/API/indexed/auto/control consumers use the same coherent library.
+alu-reference.json: 4759688 carry/register cases and all eight previous
+native/byte/word/API/indexed/auto/control/stack consumers use one coherent library.
+Historical stack-reference.json pins stack/call qualification.
 Historical control-reference.json pins long-branch/JMP qualification.
 Historical auto-indexed-reference.json pins 292732 auto/LEA cases.
 Historical indexed-reference.json pins the earlier non-auto integration and

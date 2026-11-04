@@ -12,7 +12,10 @@
       "3.8 and 4.4.3.2: short/long relative branches and prefix",
       "JMP, LBRA/LBRN and conditional LBxx instruction entries",
       "4.4.2 and BSR/JSR/RTS entries: subroutines and return stack",
-      "PSHA/B/C/D/X/Y and PULA/B/C/D/X/Y entries, including PULC X-mask restriction"
+      "PSHA/B/C/D/X/Y and PULA/B/C/D/X/Y entries, including PULC X-mask restriction",
+      "ADCA/B and SBCA/B entries: carry/borrow, signed overflow and half-carry",
+      "Inherent NEG/COM/INC/DEC/LSR/ROL/ROR/ASR/ASL/CLR/TST and LSRD/ASLD flag rules",
+      "INX/DEX/INY/DEY and ANDCC/ORCC entries; ANDCC IRQ delay remains future timing work"
     ],
     "redistributed": false
   }

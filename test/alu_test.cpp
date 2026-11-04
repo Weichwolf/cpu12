@@ -1,0 +1,275 @@
+// SPDX-License-Identifier: GPL-3.0-only
+#include "alu_model.hpp"
+#include "cpu12/core.hpp"
+#include "cpu12/memory.hpp"
+
+#include <array>
+#include <cstdint>
+#include <exception>
+#include <iostream>
+#include <span>
+#include <stdexcept>
+
+namespace {
+using namespace cpu12;
+using namespace cpu12::test::alu;
+
+enum class Function : std::uint8_t {
+  negate,
+  complement,
+  increment,
+  decrement,
+  right,
+  rotate_left,
+  rotate_right,
+  signed_right,
+  left,
+  clear,
+  test
+};
+
+struct Operation {
+  Byte opcode;
+  Function function;
+  bool b = false, word = false;
+};
+
+constexpr std::array functions{Function::negate,
+                               Function::complement,
+                               Function::increment,
+                               Function::decrement,
+                               Function::right,
+                               Function::rotate_left,
+                               Function::rotate_right,
+                               Function::signed_right,
+                               Function::left};
+
+struct Value {
+  unsigned data, flags;
+  bool store = true;
+};
+
+struct UnaryInput {
+  Function function;
+  unsigned data, ccr;
+  bool word;
+};
+
+Value expected(const UnaryInput input) {
+  constexpr unsigned byte_sign = 0x80;
+  constexpr unsigned word_sign = 0x8000;
+  const unsigned sign = input.word ? word_sign : byte_sign;
+  const auto range = sign * 2U;
+  const auto mask = range - 1U;
+  const auto source = input.data;
+  auto result = source;
+  unsigned changed = negative | zero | overflow | carry;
+  bool c = false;
+  bool v = false;
+  bool store = true;
+  switch (input.function) {
+    case Function::negate:
+      result = (range - source) & mask;
+      c = source != 0;
+      v = source == sign;
+      break;
+    case Function::complement:
+      result = mask - source;
+      c = true;
+      break;
+    case Function::increment:
+      result = (source + 1U) & mask;
+      v = source == sign - 1U;
+      changed ^= carry;
+      break;
+    case Function::decrement:
+      result = (source + mask) & mask;
+      v = source == sign;
+      changed ^= carry;
+      break;
+    case Function::right:
+      result = source / 2U;
+      c = source % 2U != 0;
+      break;
+    case Function::rotate_left:
+      result = ((source * 2U) + (input.ccr & carry)) & mask;
+      c = source >= sign;
+      break;
+    case Function::rotate_right:
+      result = (source / 2U) + ((input.ccr & carry) != 0 ? sign : 0U);
+      c = source % 2U != 0;
+      break;
+    case Function::signed_right:
+      result = (source / 2U) + (source >= sign ? sign : 0U);
+      c = source % 2U != 0;
+      break;
+    case Function::left:
+      result = (source * 2U) & mask;
+      c = source >= sign;
+      break;
+    case Function::clear: result = 0; break;
+    case Function::test: store = false; break;
+    default: throw std::runtime_error("Unsupported independently authored unary expectation");
+  }
+  if (input.function >= Function::right && input.function <= Function::left) {
+    v = (result >= sign) != c;
+  }
+  const unsigned flags = (result >= sign ? negative : 0U) | (result == 0 ? zero : 0U) |
+                         (v ? overflow : 0U) | (c ? carry : 0U);
+  return {.data = result, .flags = (input.ccr & (byte_mask ^ changed)) | flags, .store = store};
+}
+
+struct Case {
+  Operation operation;
+  unsigned value, flags;
+};
+
+void unary_case(Core &core, const Case point) {
+  const auto op = point.operation;
+  auto before = seed;
+  before.ccr = static_cast<Byte>(point.flags);
+  if (op.word) {
+    before.d = static_cast<std::uint16_t>(point.value);
+  } else {
+    before = accumulator(before, op.b, point.value);
+  }
+  const auto prediction =
+      expected({.function = op.function, .data = point.value, .ccr = point.flags, .word = op.word});
+  auto wanted = before;
+  wanted.pc = 0;
+  wanted.ccr = static_cast<Byte>(prediction.flags);
+  if (prediction.store) {
+    if (op.word) {
+      wanted.d = static_cast<std::uint16_t>(prediction.data);
+    } else {
+      wanted = accumulator(wanted, op.b, prediction.data);
+    }
+  }
+  retired(core, std::array{op.opcode}, before, wanted);
+}
+
+void byte_domain(Core &core, const Operation operation) {
+  for (unsigned value = 0; value <= byte_mask; ++value) {
+    for (unsigned flags = 0; flags <= byte_mask; ++flags) {
+      unary_case(core, {.operation = operation, .value = value, .flags = flags});
+    }
+  }
+}
+
+void byte_operations(Core &core) {
+  constexpr unsigned first_a = 0x40;
+  constexpr unsigned first_b = 0x50;
+  for (unsigned index = 0; index < functions.size(); ++index) {
+    byte_domain(core, {.opcode = static_cast<Byte>(first_a + index), .function = functions[index]});
+    byte_domain(
+        core,
+        {.opcode = static_cast<Byte>(first_b + index), .function = functions[index], .b = true});
+  }
+  constexpr std::array<Operation, 4> other{
+      {{.opcode = 0x87, .function = Function::clear},
+       {.opcode = 0xc7, .function = Function::clear, .b = true},
+       {.opcode = 0x97, .function = Function::test},
+       {.opcode = 0xd7, .function = Function::test, .b = true}}};
+  for (const auto operation : other) { byte_domain(core, operation); }
+}
+
+void word_operations(Core &core) {
+  constexpr std::array<Operation, 2> operations{
+      {{.opcode = 0x49, .function = Function::right, .word = true},
+       {.opcode = 0x59, .function = Function::left, .word = true}}};
+  constexpr std::array<unsigned, 4> flags{0, 1, 0xfe, 0xff};
+  constexpr unsigned word_values = 65536;
+  for (const auto operation : operations) {
+    for (unsigned value = 0; value < word_values; ++value) {
+      for (const auto ccr : flags) {
+        unary_case(core, {.operation = operation, .value = value, .flags = ccr});
+      }
+    }
+  }
+}
+
+void index_operations(Core &core) {
+  struct Index {
+    Byte opcode;
+    std::uint16_t Registers::*field;
+    int delta;
+  };
+
+  constexpr std::array<Index, 4> operations{{{.opcode = 8, .field = &Registers::x, .delta = 1},
+                                             {.opcode = 9, .field = &Registers::x, .delta = -1},
+                                             {.opcode = 2, .field = &Registers::y, .delta = 1},
+                                             {.opcode = 3, .field = &Registers::y, .delta = -1}}};
+  constexpr std::array<unsigned, 4> flags{0, 0xff, 0xaa, 0x55};
+  constexpr unsigned word_values = 65536;
+  for (const auto operation : operations) {
+    for (unsigned value = 0; value < word_values; ++value) {
+      for (const auto ccr : flags) {
+        auto before = seed;
+        before.ccr = static_cast<Byte>(ccr);
+        before.*operation.field = static_cast<std::uint16_t>(value);
+        auto wanted = before;
+        wanted.pc = 0;
+        wanted.*operation.field =
+            static_cast<std::uint16_t>(static_cast<int>(value) + operation.delta);
+        wanted.ccr = static_cast<Byte>((ccr & (byte_mask ^ zero)) |
+                                       (wanted.*operation.field == 0 ? zero : 0U));
+        retired(core, std::array{operation.opcode}, before, wanted);
+      }
+    }
+  }
+}
+
+void ccr_operations(Core &core) {
+  constexpr std::array<Byte, 2> opcodes{0x10, 0x14};
+  constexpr unsigned x_mask = 0x40;
+  for (const auto opcode : opcodes) {
+    for (unsigned mask = 0; mask <= byte_mask; ++mask) {
+      for (unsigned value = 0; value <= byte_mask; ++value) {
+        auto before = seed;
+        before.ccr = static_cast<Byte>(value);
+        auto wanted = before;
+        wanted.pc = 1;
+        wanted.ccr = static_cast<Byte>(
+            opcode == opcodes[0] ? value & mask : value | (mask & (byte_mask ^ x_mask)));
+        retired(core, std::array{opcode, static_cast<Byte>(mask)}, before, wanted);
+      }
+    }
+  }
+}
+
+void refusals(Core &core) {
+  constexpr std::array<Byte, 4> unary{0x40, 0, 0, 0};
+  constexpr std::array<Byte, 4> mask{0x14, 0, 0, 0};
+  for (const auto input : {unary, mask}) {
+    const unsigned valid = input[0] == unary[0] ? 1 : 2;
+    for (unsigned length = 1; length <= input.size(); ++length) {
+      if (length == valid) { continue; }
+      const auto before = core.registers();
+      require(core.run_instruction(std::span(input).first(length)).fault ==
+                      Fault::unsupported_instruction &&
+                  core.registers() == before,
+              "Incomplete/padded inherent and CCR instructions cannot reuse valid native captures");
+    }
+  }
+}
+}
+
+int main() {
+  try {
+    Core core;
+    byte_operations(core);
+    word_operations(core);
+    index_operations(core);
+    ccr_operations(core);
+    refusals(core);
+    require(core.statistics().read_callbacks == 0 && core.statistics().write_callbacks == 0,
+            "Inherent ALU and CCR operations execute without external bus access or ISA helpers");
+    carry_operations();
+    std::cout << "Verified " << checked
+              << " native carry/unary/shift/index/CCR cases, independent flags, RAM addressing "
+                 "and explicit external faults.\n";
+  } catch (const std::exception &error) {
+    std::cerr << error.what() << '\n';
+    return 1;
+  }
+}
