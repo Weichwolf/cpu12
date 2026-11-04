@@ -1,5 +1,5 @@
 {
-  "scope": "Current coherent CPU12 Memory/Core/Io/Options API and native byte/word consumers; incomplete ISA and no instrument acceptance",
+  "scope": "Historical typed-memory API qualification at qualified_revision; current coherent CPU12 consumers are in indexed-reference.json",
   "parent_revision": "b0c0f8b887cab4342d4ed74c3025f3bf22f104d2",
   "source_sha256": {
     "include/cpu12/core.hpp": "f9ab8e063120425ca9babdb024d54f019a192ee186a29c089834643d086bb38f",
@@ -73,5 +73,6 @@
   "fuzz": false,
   "firmware_or_instrument_acceptance": false,
   "throughput_claim": false,
-  "extensive_sanitizer_regressions": "Deferred until original firmware runs in real time, per user instruction"
+  "extensive_sanitizer_regressions": "Deferred until original firmware runs in real time, per user instruction",
+  "qualified_revision": "d1ed89bbd789182965f503cf497b995a9e007773"
 }

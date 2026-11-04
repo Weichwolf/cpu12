@@ -1,0 +1,233 @@
+// SPDX-License-Identifier: GPL-3.0-only
+#include "jit/indexed.hpp"
+
+#include "cpu12/core.hpp"
+#include "cpu12/memory.hpp"
+#include "instruction.hpp"
+#include "jit/code.hpp"
+#include "runtime.hpp"
+
+#include <array>
+#include <cstddef>
+#include <cstdint>
+
+namespace cpu12::detail {
+namespace {
+constexpr std::array<std::uint8_t, 4> base_offsets{
+    static_cast<std::uint8_t>(offsetof(Registers, x)),
+    static_cast<std::uint8_t>(offsetof(Registers, y)),
+    static_cast<std::uint8_t>(offsetof(Registers, sp)),
+    static_cast<std::uint8_t>(offsetof(Registers, pc))};
+constexpr std::array<std::uint8_t, 4> word_offsets{
+    static_cast<std::uint8_t>(offsetof(Registers, d)),
+    static_cast<std::uint8_t>(offsetof(Registers, y)),
+    static_cast<std::uint8_t>(offsetof(Registers, x)),
+    static_cast<std::uint8_t>(offsetof(Registers, sp))};
+constexpr auto d_offset = static_cast<std::uint8_t>(offsetof(Registers, d));
+constexpr unsigned word_mask = 0xffff;
+
+// Intel-order templates. Variable register offsets, RAM pointers and values
+// are emitted separately. Template selection and patching occur during compilation.
+constexpr std::array<std::uint8_t, 4> load_base{0x44, 0x0f, 0xb7, 0x4f};
+constexpr std::array<std::uint8_t, 3> add_address{0x41, 0x81, 0xc1};
+constexpr std::array<std::uint8_t, 2> load_offset_prefix{0x44, 0x0f};
+constexpr std::array<std::uint8_t, 4> pc_accumulator{0x47, 0x8d, 0x4c, 0x11};
+constexpr std::array<std::uint8_t, 3> add_accumulator{0x45, 0x01, 0xd1};
+constexpr std::array<std::uint8_t, 3> mask_address{0x41, 0x81, 0xe1};
+constexpr std::array<std::uint8_t, 1> argument_prefix{0x0f};
+constexpr std::array<std::uint8_t, 9> call_enter{
+    0x57, 0x56, 0x48, 0x83, 0xec, 0x08, 0x48, 0x89, 0xf7};
+constexpr std::array<std::uint8_t, 3> call_address{0x44, 0x89, 0xce};
+constexpr std::array<std::uint8_t, 2> absolute_pointer{0x49, 0xbb};
+constexpr std::array<std::uint8_t, 3> call_absolute{0x41, 0xff, 0xd3};
+constexpr std::array<std::uint8_t, 6> call_leave{0x48, 0x83, 0xc4, 0x08, 0x5e, 0x5f};
+constexpr std::array<std::uint8_t, 5> write_status{0x85, 0xc0, 0x75, 0x01, 0xc3};
+constexpr std::array<std::uint8_t, 5> read_status{0x75, 0x01, 0xc3, 0x89, 0xc1};
+constexpr std::array<std::uint8_t, 4> next_address{0x45, 0x8d, 0x41, 0x01};
+constexpr std::array<std::uint8_t, 3> mask_low{0x41, 0x81, 0xe0};
+constexpr std::array<std::uint8_t, 3> move_address{0x45, 0x89, 0xca};
+constexpr std::array<std::uint8_t, 2> immediate_prefix{0x41, 0x81};
+constexpr std::array<std::uint8_t, 2> outside_jump{0x0f, 0x83};
+constexpr std::array<std::uint8_t, 5> high_value{0x89, 0xc2, 0xc1, 0xea, 0x08};
+constexpr std::array<std::uint8_t, 3> high_write_prefix{0x43, 0x88, 0x14};
+constexpr std::array<std::uint8_t, 3> byte_write_prefix{0x43, 0x88, 0x04};
+constexpr std::array<std::uint8_t, 4> low_write{0x43, 0x88, 0x04, 0x03};
+constexpr std::array<std::uint8_t, 4> high_read_prefix{0x43, 0x0f, 0xb6, 0x0c};
+constexpr std::array<std::uint8_t, 3> shift_high{0xc1, 0xe1, 0x08};
+constexpr std::array<std::uint8_t, 5> low_read{0x47, 0x0f, 0xb6, 0x04, 0x03};
+constexpr std::array<std::uint8_t, 3> merge_word{0x44, 0x09, 0xc1};
+constexpr std::array<std::uint8_t, 3> pointer_result{0x41, 0x89, 0xc9};
+
+enum Encoding : std::uint8_t {
+  byte_extend = 0xb6,
+  word_extend = 0xb7,
+  offset_operand = 0x57,
+  source_operand = 0x47,
+  write_argument = 0xd0,
+  compare_result = 0x3d,
+  subtract_low = 0xe8,
+  subtract_high = 0xea,
+  compare_low = 0xf8,
+  compare_high = 0xfa,
+  jump = 0xe9,
+  full_index = 0x0b,
+  partial_index = 0x13
+};
+
+struct Access {
+  bool word = false, write = false;
+};
+
+void effective_address(Code &code, const Instruction &instruction) {
+  const auto &indexed = instruction.indexed;
+  code.raw(load_base);
+  code.byte(base_offsets[static_cast<unsigned>(indexed.base)]);
+  const unsigned pc_adjustment = indexed.base == IndexBase::pc ? instruction.length : 0;
+  if (indexed.offset == IndexOffset::constant) {
+    const auto displacement = (indexed.displacement + pc_adjustment) & word_mask;
+    if (displacement == 0) { return; }
+    code.raw(add_address);
+    code.u32(displacement);
+  } else {
+    const bool word = indexed.offset == IndexOffset::d;
+    code.raw(load_offset_prefix);
+    code.byte(word ? word_extend : byte_extend);
+    code.byte(offset_operand);
+    code.byte(static_cast<std::uint8_t>(d_offset + (indexed.offset == IndexOffset::a ? 1 : 0)));
+    if (pc_adjustment != 0) {
+      code.raw(pc_accumulator);
+      code.byte(static_cast<std::uint8_t>(pc_adjustment));
+    } else {
+      code.raw(add_accumulator);
+    }
+  }
+  code.raw(mask_address);
+  code.u32(word_mask);
+}
+
+void bus_call(Code &code, const Access access) {
+  if (access.write) {
+    code.raw(argument_prefix);
+    code.byte(access.word ? word_extend : byte_extend);
+    code.byte(write_argument); // movzx edx, ax/al
+  }
+  // Save state/context, align SysV stack, then pass context and actual r9 address.
+  code.raw(call_enter);
+  code.raw(call_address);
+  code.raw(absolute_pointer);
+  if (access.write) {
+    code.u64(access.word ? reinterpret_cast<std::uintptr_t>(&write_word)
+                         : reinterpret_cast<std::uintptr_t>(&write_byte));
+  } else {
+    code.u64(access.word ? reinterpret_cast<std::uintptr_t>(&read_word)
+                         : reinterpret_cast<std::uintptr_t>(&read_byte));
+  }
+  code.raw(call_absolute);
+  code.raw(call_leave);
+  if (access.write) {
+    code.raw(write_status);
+  } else {
+    code.byte(compare_result); // cmp eax, failed_read/failed_word_read
+    code.u32(access.word ? failed_word_read : failed_read);
+    code.raw(read_status);
+  }
+}
+
+void offset(Code &code, const Ram ram, const bool low) {
+  if (low) {
+    code.raw(next_address); // lea r8d, [r9+1]
+    code.raw(mask_low);
+    code.u32(word_mask);
+  } else {
+    code.raw(move_address); // mov r10d, r9d
+  }
+  if (ram.first != 0) {
+    code.raw(immediate_prefix);
+    code.byte(low ? subtract_low : subtract_high);
+    code.u32(ram.first);
+  }
+}
+
+std::size_t outside(Code &code, const Ram ram, const bool low) {
+  offset(code, ram, low);
+  code.raw(immediate_prefix);
+  code.byte(low ? compare_low : compare_high);
+  code.u32(static_cast<std::uint32_t>(ram.bytes.size()));
+  code.raw(outside_jump); // jae actual owner
+  return code.relative32();
+}
+
+void native_access(Code &code, const Ram ram, const Access access) {
+  const auto high_sib = static_cast<std::uint8_t>(
+      ram.first == 0 && ram.bytes.size() == address_bytes ? full_index : partial_index);
+  code.raw(absolute_pointer);
+  code.u64(reinterpret_cast<std::uintptr_t>(ram.bytes.data()));
+  if (access.write) {
+    if (access.word) {
+      code.raw(high_value);
+      code.raw(high_write_prefix);
+      code.byte(high_sib);
+      code.raw(low_write);
+    } else {
+      code.raw(byte_write_prefix);
+      code.byte(high_sib);
+    }
+  } else {
+    code.raw(high_read_prefix);
+    code.byte(high_sib);
+    if (access.word) {
+      code.raw(shift_high);
+      code.raw(low_read);
+      code.raw(merge_word);
+    }
+  }
+}
+
+void memory_access(Code &code, const Ram ram, const Access access) {
+  if (ram.bytes.empty()) {
+    bus_call(code, access);
+    return;
+  }
+  if (ram.first == 0 && ram.bytes.size() == address_bytes) {
+    if (access.word) { offset(code, ram, true); }
+    native_access(code, ram, access);
+    return;
+  }
+  const auto high = outside(code, ram, false);
+  const auto low = access.word ? outside(code, ram, true) : high;
+  native_access(code, ram, access);
+  code.byte(jump); // jmp done
+  const auto done = code.relative32();
+  code.bind(high);
+  if (access.word) { code.bind(low); }
+  bus_call(code, access);
+  code.bind(done);
+}
+
+void resolve(Code &code, const Instruction &instruction, const Ram ram) {
+  effective_address(code, instruction);
+  if (instruction.indexed.indirect) {
+    memory_access(code, ram, {.word = true});
+    code.raw(pointer_result); // mov r9d, ecx
+  }
+}
+}
+
+void indexed_read(Code &code, const Instruction &instruction, const Ram ram) {
+  resolve(code, instruction, ram);
+  memory_access(code, ram, {.word = instruction.word});
+}
+
+void indexed_write(Code &code, const Instruction &instruction, const Ram ram) {
+  resolve(code, instruction, ram);
+  // The indirect pointer access can use a real ABI callback, so load the source
+  // only after resolving it. CPU registers are unchanged until accepted access.
+  code.raw(argument_prefix);
+  code.byte(instruction.word ? word_extend : byte_extend);
+  code.byte(source_operand);
+  code.byte(instruction.word
+                ? word_offsets[static_cast<unsigned>(instruction.target)]
+                : static_cast<std::uint8_t>(d_offset + (instruction.accumulator_b ? 0 : 1)));
+  memory_access(code, ram, {.word = instruction.word, .write = true});
+}
+}

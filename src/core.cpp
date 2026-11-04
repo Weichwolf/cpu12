@@ -73,7 +73,7 @@ RunResult Core::run_instruction(const std::span<const std::uint8_t> bytes) {
     result.fault = Fault::unsupported_host;
     return result;
   }
-  if (bytes.empty() || bytes.size() > 3) {
+  if (bytes.empty() || bytes.size() > 4) {
     result.fault = Fault::invalid_input;
     return result;
   }

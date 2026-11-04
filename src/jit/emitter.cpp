@@ -4,6 +4,8 @@
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
 #include "instruction.hpp"
+#include "jit/code.hpp"
+#include "jit/indexed.hpp"
 #include "runtime.hpp"
 
 #include <array>
@@ -16,7 +18,6 @@
 
 namespace cpu12::detail {
 namespace {
-constexpr auto pc_offset = static_cast<std::uint8_t>(offsetof(Registers, pc));
 constexpr auto d_offset = static_cast<std::uint8_t>(offsetof(Registers, d));
 constexpr auto ccr_offset = static_cast<std::uint8_t>(offsetof(Registers, ccr));
 constexpr unsigned byte_mask = 0xff;
@@ -25,7 +26,6 @@ static_assert(offsetof(Registers, ccr) < 128);
 // Instruction templates, in Intel byte order. Only marked immediates/offsets
 // are supplied separately; all generated register accesses use the one state.
 constexpr std::array<std::uint8_t, 4> entry{0xf3, 0x0f, 0x1e, 0xfa};
-constexpr std::array<std::uint8_t, 4> pc_add{0x66, 0x81, 0x47, pc_offset};
 constexpr std::array<std::uint8_t, 5> snapshot_flags{0x41, 0x0f, 0x90, 0xc0, 0x9f};
 constexpr std::array<std::uint8_t, 4> old_ccr{0x0f, 0xb6, 0x57, ccr_offset};
 constexpr std::array<std::uint8_t, 3> copy_ah{0x0f, 0xb6, 0xf4};
@@ -58,36 +58,6 @@ enum Encoding : std::uint8_t {
   test_al = 0xa8,
   jz = 0x74,
   jnz = 0x75
-};
-
-class Code {
-public:
-  std::vector<std::uint8_t> bytes;
-
-  void raw(const std::span<const std::uint8_t> values) {
-    bytes.insert(bytes.end(), values.begin(), values.end());
-  }
-
-  void byte(const std::uint8_t value) { bytes.push_back(value); }
-
-  void u32(const std::uint32_t value) {
-    for (unsigned shift = 0; shift < sizeof(value) * byte_bits; shift += byte_bits) {
-      byte(static_cast<std::uint8_t>((value >> shift) & byte_mask));
-    }
-  }
-
-  void u64(const std::uint64_t value) {
-    for (unsigned shift = 0; shift < sizeof(value) * byte_bits; shift += byte_bits) {
-      byte(static_cast<std::uint8_t>((value >> shift) & byte_mask));
-    }
-  }
-
-  void advance(const int delta) {
-    const auto value = static_cast<std::uint16_t>(delta);
-    raw(pc_add);
-    byte(static_cast<std::uint8_t>(value & byte_mask));
-    byte(static_cast<std::uint8_t>(value >> byte_bits));
-  }
 };
 
 // All call templates retain state/context registers and SysV stack alignment.
@@ -151,6 +121,10 @@ void bus_call(Code &code, const Instruction &instruction, const bool write) {
 }
 
 void memory_read(Code &code, const Instruction &instruction, const Ram ram) {
+  if (instruction.addressing == Addressing::indexed) {
+    indexed_read(code, instruction, ram);
+    return;
+  }
   if (const auto *pointer = ram_pointer(ram, instruction.address)) {
     code.raw(absolute_r11);
     code.u64(reinterpret_cast<std::uintptr_t>(pointer));
@@ -162,6 +136,10 @@ void memory_read(Code &code, const Instruction &instruction, const Ram ram) {
 }
 
 void memory_write(Code &code, const Instruction &instruction, const Ram ram) {
+  if (instruction.addressing == Addressing::indexed) {
+    indexed_write(code, instruction, ram);
+    return;
+  }
   if (const auto *pointer = ram_pointer(ram, instruction.address)) {
     code.raw(absolute_r11);
     code.u64(reinterpret_cast<std::uintptr_t>(pointer));
@@ -256,8 +234,10 @@ void arithmetic(Code &code, const Instruction &instruction, const Ram ram) {
 
 void store(Code &code, const Instruction &instruction, const Ram ram) {
   const auto offset = static_cast<std::uint8_t>(d_offset + (instruction.accumulator_b ? 0 : 1));
-  code.raw(load_accumulator);
-  code.byte(offset);
+  if (instruction.addressing != Addressing::indexed) {
+    code.raw(load_accumulator);
+    code.byte(offset);
+  }
   memory_write(code, instruction, ram);
   // Successful bus writes retain CPU state; reload the source after the ABI call.
   code.raw(load_accumulator);
@@ -302,6 +282,10 @@ void pointer_constant(Code &code, const std::uint8_t *pointer) {
 }
 
 void word_memory_read(Code &code, const Instruction &instruction, const Ram ram) {
+  if (instruction.addressing == Addressing::indexed) {
+    indexed_read(code, instruction, ram);
+    return;
+  }
   const auto next = static_cast<std::uint16_t>(static_cast<unsigned>(instruction.address) + 1U);
   const auto *high = ram_pointer(ram, instruction.address);
   const auto *low = ram_pointer(ram, next);
@@ -324,6 +308,10 @@ void word_memory_read(Code &code, const Instruction &instruction, const Ram ram)
 }
 
 void word_memory_write(Code &code, const Instruction &instruction, const Ram ram) {
+  if (instruction.addressing == Addressing::indexed) {
+    indexed_write(code, instruction, ram);
+    return;
+  }
   const auto next = static_cast<std::uint16_t>(static_cast<unsigned>(instruction.address) + 1U);
   const auto *high = ram_pointer(ram, instruction.address);
   const auto *low = ram_pointer(ram, next);
@@ -378,8 +366,10 @@ WordEncoding word_register_operation(const WordEncoding opcode) {
 void word_instruction(Code &code, const Instruction &instruction, const Ram ram) {
   const auto offset = word_offsets[static_cast<unsigned>(instruction.target)];
   if (instruction.kind == Kind::store) {
-    code.raw(load_register_word);
-    code.byte(offset);
+    if (instruction.addressing != Addressing::indexed) {
+      code.raw(load_register_word);
+      code.byte(offset);
+    }
     word_memory_write(code, instruction, ram);
     code.raw(load_register_word);
     code.byte(offset);

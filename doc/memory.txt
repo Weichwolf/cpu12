@@ -9,9 +9,9 @@ lifetime. Its last byte cannot exceed ffff. Empty RAM declares no storage. The
 core never supplies zero for unknown memory or silently accepts an unhandled
 write.
 
-Captured direct/extended LDAA/B and the supported byte ALU instructions perform
-one read. STAA/B performs one write and no implicit destination read. The
-native RAM path embeds the validated host byte address; cached code reads
+Captured direct/extended/indexed LDAA/B and the supported byte ALU instructions
+perform one read. STAA/B performs one write and no implicit destination read.
+The native RAM path embeds the validated host byte address; cached code reads
 current data, not captured values. Full opcode/operand bytes distinguish cache
 entries. Word operations use big-endian values. Fully known RAM words execute
 natively, including unaligned addresses and ffff-to-zero wrapping. A word not
@@ -50,10 +50,10 @@ existing 3,166,209 native instruction cases pass on the new coherent library.
 The new word matrix checks every left operand against eight directed partner
 values across immediate/direct/extended arithmetic, every memory load/store
 value, all four register targets, wide-callback refusals/partial effects, RAM
-wrapping and full immediate cache keys. The four current Release consumers,
-including the public Memory API check, are pinned in memory-api-reference.json.
-The earlier word-family qualification is retained in word-reference.json. These
-are CPU component checks, not original firmware boot, complete ISA, whole
-instrument, physical-device or real-time acceptance. No fuzzing or broad
-sanitizer campaign was run; the user's real-time-first validation policy
-applies.
+wrapping and full immediate cache keys. The five current Release consumers,
+including indexed addressing and the public Memory API check, are pinned in
+indexed-reference.json. Historical API and word qualifications remain
+separately pinned. These are CPU component checks, not original firmware boot,
+complete ISA, whole instrument, physical-device or real-time acceptance. No
+fuzzing or broad sanitizer campaign was run; the user's real-time-first
+validation policy applies.

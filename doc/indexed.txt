@@ -1,0 +1,56 @@
+Native indexed addressing — focused Release qualification
+
+The captured CPU12 entry accepts up to four bytes. Native indexed byte
+load/ALU/ store and D/X/Y/SP word load/compare/add/sub/store forms share the
+existing flag and retirement implementation. Captured opcode, complete postbyte
+and all offset bits distinguish native entries; PC and base-register values
+remain dynamic.
+
+Implemented layouts use X, Y, SP or PC with signed 5-/9-bit constants, wrapping
+16-bit constants, unsigned A/B/D accumulator offsets, 16-bit constant indirect
+and D indirect addresses. PC denotes the address after the complete captured
+instruction. The 160 corresponding postbytes are decoded; the 96 automatic
+pre/post-update forms still refuse explicitly before changing CPU or memory.
+Their source/destination overlap and architectural update order need separate
+qualification. Remaining ISA, fetch/reset/IRQ/wait and board integration are
+open.
+
+Generated x64 computes the effective address and accesses known RAM directly.
+The full 64-KiB layout omits impossible bounds checks; partial windows use
+unsigned bounds for both bytes of a word. A word crossing a window boundary
+delegates its entire logical request to the supplied owner, including known RAM
+portions. Words and indirect pointers are big-endian and wrap from ffff to
+zero. An indirect access first reads the logical word pointer, then the
+addressed operand.
+
+Only actual external accesses call real noexcept bus callbacks. A failed
+pointer read never accesses the operand. A failed operand retains an already
+accepted pointer-read side effect; CPU state remains unchanged, and the latched
+fault prevents replay. Diagnostic address and width identify the actual failing
+phase. Indirect stores reload their CPU source after a possible pointer
+callback. No arithmetic/address interpreter or silently successful bus fallback
+is added.
+
+The authored matrix varies every implemented postbyte, directed extensions,
+distinct base-register/PC boundaries, byte/word operations and data extremes.
+Independent arithmetic expectations check complete registers and CCR, not a
+round trip. Additional checks cover native/external runtime address changes in
+one cached entry, word seams, indirect callbacks and precise latched refusals.
+LLVM disassembly has independently confirmed the new x64 address/load/store
+encodings. test/indexed_window.smt2 proves unsigned interval admission, wrapped
+word offsets and folded PC-relative arithmetic; four claims are unsat and two
+deliberately incorrect guards are sat. Neither inspection establishes CPU
+runtime correctness. The optimized native matrix passes 168432 independent
+cases. All four existing native/byte/word/API consumers pass on the same
+coherent library. Source, ELF and receipt identities are pinned in indexed-
+reference.json. These are component checks, not original startup, complete MCU
+integration or realtime acceptance. Fuzzing and broad sanitizer campaigns are
+excluded from this focused work. Primary reference identity and sections are in
+reference-manifest.json.
+
+Focused reproduction after build admission:
+
+  cmake --preset release
+  cmake --build --preset release --target cpu12-indexed-test
+  ctest --test-dir build/release --output-on-failure -R "^indexed$"
+  z3 -smt2 test/indexed_window.smt2

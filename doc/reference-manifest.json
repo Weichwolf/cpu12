@@ -1,0 +1,15 @@
+[
+  {
+    "file": "HCS12COREUG.pdf",
+    "source": "https://www.nxp.com/docs/en/data-sheet/HCS12COREUG.pdf",
+    "bytes": 8246322,
+    "sha256": "4ff8ce8ad0d5fb1eea307f813a79b0f11e0d1c196db38b005c1b7ed24d42b70e",
+    "module": "S12CPUV2 Reference Manual Rev.4.0, March 2006",
+    "used_sections": [
+      "3.9 and Table3-2: indexed postbyte and offset semantics",
+      "3.10.1: normal PC reference immediately following the current instruction",
+      "LDAA/B, STAA/B, word load/ALU/store instruction encoding entries"
+    ],
+    "redistributed": false
+  }
+]

@@ -97,10 +97,16 @@ Jit::Jit(const Ram ram, const Options options) : impl_(std::make_unique<Impl>())
 Jit::~Jit() = default;
 
 void Jit::execute(const Instruction &instruction, Registers &registers, NativeContext &context) {
-  constexpr unsigned opcode_shift = 16;
+  constexpr unsigned opcode_shift = 24;
+  constexpr unsigned postbyte_shift = 16;
   const auto operand = static_cast<std::uint32_t>(
       instruction.addressing == Addressing::immediate ? instruction.operand : instruction.address);
-  const auto key = (static_cast<std::uint32_t>(instruction.opcode) << opcode_shift) | operand;
+  const auto captured =
+      instruction.addressing == Addressing::indexed
+          ? (static_cast<std::uint32_t>(instruction.indexed.postbyte) << postbyte_shift) |
+                instruction.indexed.displacement
+          : operand;
+  const auto key = (static_cast<std::uint32_t>(instruction.opcode) << opcode_shift) | captured;
   auto found = impl_->blocks.find(key);
   if (found == impl_->blocks.end()) {
     if (impl_->blocks.size() == impl_->cache_entries) { clear(); }

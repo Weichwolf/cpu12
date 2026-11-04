@@ -99,7 +99,7 @@ bool arithmetic_operand(Instruction &instruction, const std::span<const std::uin
   constexpr unsigned indexed_mode = 0x20;
   constexpr unsigned extended_mode = 0x30;
   const auto mode = instruction.opcode & addressing_mask;
-  if (mode == indexed_mode) { return false; }
+  if (mode == indexed_mode) { return decode_indexed(instruction, bytes); }
   if (mode == 0) {
     if (!immediate_operand(instruction, bytes)) { return false; }
   } else {
@@ -130,6 +130,17 @@ std::optional<Instruction> decode(const std::span<const std::uint8_t> bytes) {
     instruction.kind = Kind::branch;
     instruction.operand = bytes[1];
     instruction.length = 2;
+    return instruction;
+  }
+  constexpr unsigned first_indexed_store = 0x6a;
+  constexpr unsigned last_indexed_store = 0x6f;
+  constexpr unsigned first_word_store = 0x6c;
+  if (opcode >= first_indexed_store && opcode <= last_indexed_store) {
+    instruction.kind = Kind::store;
+    instruction.word = opcode >= first_word_store;
+    instruction.target = static_cast<WordTarget>(opcode & 3U);
+    instruction.accumulator_b = (opcode & 1U) != 0;
+    if (!decode_indexed(instruction, bytes)) { return {}; }
     return instruction;
   }
   if (word_store(instruction)) {
