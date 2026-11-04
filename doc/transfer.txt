@@ -1,0 +1,46 @@
+Native register transfers and exchanges
+
+The normal B7 register selectors are A/B/CCR/D/X/Y/SP. Bit7 selects exchange;
+bit3 is ignored. All 196 normal raw postbytes execute natively. The remaining
+60 postbytes select factory-only TMP2/TMP3 registers and explicitly refuse;
+the core does not invent temporary state or report successful retirement.
+
+TFR reads the source before writing the destination. A byte transferred into
+a word is sign-extended; a word transferred into a byte uses its low byte.
+This includes SEX and assembler aliases such as TPA/TAP and TSX/TXS/TSY/TYS.
+Exchanges read both original values before either write. With a byte source
+and word destination, the word receives a zero-extended byte. With a word
+source and byte destination, the word receives the original destination byte
+with a fixed high byte: 00 for A, FF for B/CCR. This is not sign extension.
+The write order also reproduces the documented overlapping A/B/D outcomes.
+
+CCR writes retain the software X-mask restriction: an initially clear X cannot
+be raised. Other status bits remain unchanged unless CCR receives a transferred
+value. Separate TAB/TBA encodings (18 0E/0F) copy A/B and update N/Z/V, clearing
+V and retaining C/H and other status bits. Instruction/selector/template
+choices occur during compilation. Warm execution has no ISA helper, external
+bus access or temporary host frame.
+
+S12CPUV2 TFR/EXG, SEX, TAB/TBA entries and Table A-5 are the primary references;
+reference-manifest.json pins the manual. Independent mathematical expectations
+cover source and destination value domains, all byte CCR values and both raw
+bit3 encodings. Literal manual examples separately pin signed versus fixed
+extensions and the overlapping D/A/B/CCR cases. All 24779786 new transfer cases
+and nine previous consumers pass on one coherent optimized library;
+transfer-reference.json pins current source, archive, actual ELF and run-log
+hashes. Unsupported factory postbytes and malformed cached captures retain
+original CPU state, make no bus access, compile no code and retire nothing.
+
+This is captured-instruction component evidence. Remaining ISA, factory
+registers, reset/IRQ/waits, checkpoints, fetch/native regions and cycle budgets
+remain open. In particular, interrupt recognition around software CCR writes
+has no timing implementation in this API. No original firmware, physical
+hardware, complete instrument or throughput acceptance follows from this test.
+Fuzzing was not requested or run; extensive sanitizer work remains deferred
+until real-time Blofeld execution under the user's policy.
+
+Focused reproduction:
+
+  cmake --preset release
+  cmake --build --preset release --target cpu12-transfer-test
+  ctest --test-dir build/release --output-on-failure -R '^transfer$'

@@ -1,0 +1,192 @@
+{
+  "scope": "Native transfers/exchanges and coherent CPU12 consumers; incomplete ISA and no original firmware or instrument acceptance",
+  "parent_revision": "1ae7d3f3c3f0f3fbaedc5b75678d9fa98db50841",
+  "source_sha256": {
+    ".clang-format": "fd267d78d4415894f55822b698ba496ce856c5308338a6db6e1c98c1441de9fd",
+    ".clang-tidy": "eac7eb8af904bc5486dacc53abd61563ebcf43c699b4c18bc5304cd2cd32a52a",
+    "CMakeLists.txt": "97a46ca5f0878f0e9e84867f28eb11b74c8e9bf23dfff16616f7f8dc0f7c8779",
+    "CMakePresets.json": "652277ed68b60ac3f6ad7c2ac445c7ee04cdb067e21a466afb6d416341aedf24",
+    "cmake/CompilerCache.cmake": "a08a035c909340c226f4f0fa02e51ad2bf420d7ec23d8abafdc565efcfe7fac0",
+    "cmake/Hardening.cmake": "f38d46ea3fee29d47d2907672d47b3e1e4718b43ce41b8b3194db415be934f6a",
+    "cmake/Quality.cmake": "d7dd7cc6656e54292ff57e69e989d2352ac974521ac2382c8631273a86403dfe",
+    "include/cpu12/core.hpp": "f9ab8e063120425ca9babdb024d54f019a192ee186a29c089834643d086bb38f",
+    "include/cpu12/memory.hpp": "12f1cf3691a04d8c67491615bd76a3cd85d4caf883484a46c6456d37aa600dfb",
+    "src/core.cpp": "090efd99067fbf2eb90f12850f7c3d528c9dee643ae0f20fc24f003bef067906",
+    "src/decode.cpp": "abb4a4309de84bdef14075af53ca84a4874a51ab87f82c6bc5e84db2bcb8c6f1",
+    "src/indexed.cpp": "8b835da4ef2de92b99001d689f360231f12fc755198fdc823465840126a1279f",
+    "src/instruction.hpp": "451212ed783f1195e8335805b9a81f8a884be033230c9333879128ccc107496f",
+    "src/jit/code.hpp": "a8289b2afbe08377c2a7f6e78fafa8152802024c324da777df62b853f8d83053",
+    "src/jit/emitter.cpp": "4248152c632c4957f6ea344d8f4117c8e24e2b6f76943e8af5662987934b119e",
+    "src/jit/emitter.hpp": "d21fc355abcea691af40414310e8e49fc6d1672da963d7f768c37a664c67e78f",
+    "src/jit/flags.hpp": "20596fd9005275eee46cc7075d752ab18860274fd5edcc94e1e0ca6a1c862633",
+    "src/jit/indexed.cpp": "d7e760589dcda0df4a91b60841c0dce2810a0d9bc86a2da6bde09bb47cb59d57",
+    "src/jit/indexed.hpp": "c88dd6744601bfccb0d5abe28d409cbf1db969a783bbe44f881df90244acbfcf",
+    "src/jit/registers.cpp": "170535203e72b0c09cf95662afa081d48cfec6d5ea502f332b4cdf28ed4d1997",
+    "src/jit/registers.hpp": "a34020ce622205ae9857a35222580941145686de558c5ea6afee5fb30c6358f1",
+    "src/jit/stack.cpp": "36d561c26eb971474596d7b1d1efa859f96ad2b938941f91aa2c01fc79069544",
+    "src/jit/stack.hpp": "132a71dc8771cc507c306ab374cb99882580aea2d000ab0b89d865fb32301405",
+    "src/jit/transfer.cpp": "93584fe25489347e0ca7478f9b7276b286d87cb949ca1a368ab26aa2523ca770",
+    "src/jit/transfer.hpp": "d1333f93c29a6c86e8156ca220bd6e129de43df1b6a3d2d3b5d4af724e7ec703",
+    "src/jit.cpp": "21e9e7c1e4477796b9b33f2e241f92ad7fed029daf8fe941a257bbd52d79896f",
+    "src/jit.hpp": "8ab39726da16e2a8387ae8bda281a5016efb0b6bd31b274e2365c5ee53ebf31e",
+    "src/registers.cpp": "882fa97f407b8aee82daa5c37a85934aa4578d6c420afca860a6439dba03cdff",
+    "src/runtime.cpp": "1400d55e57ee53e872709d008c0c5407da4316d6816074cb4ad7c4abbe6761f7",
+    "src/runtime.hpp": "cd5e00e9e007ac859216216bece87e60624fbfdb2b9c7ace1dfd32e393cfc131",
+    "src/transfer.cpp": "3e56faccd20943a530f697b0d53e28a3da7c38c37f833ab687840498928e9591",
+    "test/alu_model.hpp": "67b8a6fc77fd07d60c814d093a45b6ee8bba5d4ab654d3d0c6da4560ad3ced4d",
+    "test/alu_test.cpp": "b5c968aad01fa2c140108124f76167e0ec109928fdc72f757d854bce2c1b08ed",
+    "test/auto_indexed_test.cpp": "51616bbf4ceec06e1470b16effadf0903d164c52f1a613f1f7038f3f09af3ab0",
+    "test/carry_test.cpp": "57befb8dc410c53445a9731a7d41d5b8f9ce91910df19a1c4af7570e721d6ec8",
+    "test/control_test.cpp": "1a9507f35c6bebc8cbaed3d5155f8bc5d668752f200103f220bf28544796c4a4",
+    "test/indexed_model.hpp": "d5c0333c71baf65c8cd56ccca3c141a8e7de7090856e352285e66f95d41ee7d3",
+    "test/indexed_test.cpp": "e5d639365771a78ee14d61e80f49dedb121644492750bc8be240c7e223eb6039",
+    "test/memory_api_test.cpp": "e911985af3cd52d04e52f94430c4224b3c17283094d98bd043acaa1d82b1d857",
+    "test/memory_test.cpp": "2778ad03ebd81e1636b27538d4ffd5ddccc253c41227aed39f8d43e3ce170513",
+    "test/native_test.cpp": "9e3c27aa2c1802395e05e571cc8b6585f83e04b8f0247b748b064d4ba5f10899",
+    "test/reference.hpp": "e77ea9ae4be512e74dad1f9bc30e4e971919cae6f0ff79f9ba44210750c08e24",
+    "test/stack_bus.cpp": "f2695b8b0c195abddd19148d0f027c487f1a8037b1d9b12d959268a9f90de18a",
+    "test/stack_calls.cpp": "cb7b146d791cffa1a6464c6fdf3f4fe1b8cf2e28347b793c790e1985d2ebbb02",
+    "test/stack_model.hpp": "2bbfad6ea06b1456e61c2cc05980322fff46cc8e43ce806d80b9c38da4a76f98",
+    "test/stack_test.cpp": "031be44a1acab40abf224c7df640df45f79afbcba944c187b289efc614435275",
+    "test/transfer_test.cpp": "2d806c7ac5d757627ad53a7cf4ffc79bffd5e6c82ec50912b3cfd43e0fc4be3d",
+    "test/word_test.cpp": "7b89b6e007b831c2de1750026950217e7ca9e954dc0a7b3ece248e94f2a834af"
+  },
+  "build": {
+    "profile": "LLVM19 Release O3 march=native ThinLTO; warnings as errors; clang-tidy zero findings",
+    "actual_exit": 0,
+    "sources_unchanged": true,
+    "core_archive_sha256": "1cbbdfb048107b575abac9a0acccf9ed64b1bb492b1e86d5003bb65400e69f5c",
+    "compile_commands_sha256": "8b7fd6af0860f3c7dcd0f8346863683b59264c8969be7328e54bacd686047b28",
+    "optimized_compile_commands_checked": 25,
+    "qualified_hardened_consumers": 10
+  },
+  "tests": {
+    "transfer-1": {
+      "pid": 2093160,
+      "actual_exit": 0,
+      "actual_executable_sha256": "cf2b7f6432b0a47476db4dc6274233f05be443eda0479353cd1137f782ef8026",
+      "actual_argv_verified": true,
+      "reaped": true,
+      "log_sha256": "3b3dafc916752b0fe0545769492369b93a8b2eb7ec7b4ef1f18729fca6b7852e",
+      "output": "Verified 24779786 native transfer/exchange cases, signed and fixed extensions, A/B/D overlaps, CCR X restrictions, ignored encoding bits and explicit factory refusals."
+    },
+    "alu-1": {
+      "pid": 2093215,
+      "actual_exit": 0,
+      "actual_executable_sha256": "dfdbc1ac293b93c9b21f934a1ce999afdda6e0524356e4c25d812f776ecb5eef",
+      "actual_argv_verified": true,
+      "reaped": true,
+      "log_sha256": "a36018a7e14c47b590a73dba4c836ae012dc0136199fbcf76642c94ee00f5acd",
+      "output": "Verified 4759688 native carry/unary/shift/index/CCR cases, independent flags, RAM addressing and explicit external faults."
+    },
+    "stack-1": {
+      "pid": 2093219,
+      "actual_exit": 0,
+      "actual_executable_sha256": "b6cddca88765a87d077a21ba58b0dd35ff9e8f4ae9405010c1de1d5a4897bf5e",
+      "actual_argv_verified": true,
+      "reaped": true,
+      "log_sha256": "be0c22cf931536fa001e30c03dd90f559c9dc00297ee75bd7ad889973978ed73",
+      "output": "Verified 2328433 native stack/call cases, CCR X restrictions, nested returns, overlapping pointers, wrapped data and explicit external faults."
+    },
+    "control-1": {
+      "pid": 2093224,
+      "actual_exit": 0,
+      "actual_executable_sha256": "c2c0aeebff3b22de9460e355304a3739067a786ba896b6882453d00e98a5f1fc",
+      "actual_argv_verified": true,
+      "reaped": true,
+      "log_sha256": "9eb85c0a414d2079eaedc8609984ea09e2024fd734cf83b868760e101947cad2",
+      "output": "Verified 631555 native long-branch/JMP cases, all CCR values, dynamic addresses, indirect pointer faults and no target data access."
+    },
+    "auto-1": {
+      "pid": 2093227,
+      "actual_exit": 0,
+      "actual_executable_sha256": "d2cca97fe80c852c03212b007424dd9e9ae110696ae78e58dec8e2489106196a",
+      "actual_argv_verified": true,
+      "reaped": true,
+      "log_sha256": "ca67f67ecb2dfeaa8bfbf0e8758d0c2f6fb07df98621dad1f9c50a87f637bf44",
+      "output": "Verified 292732 native auto-index/LEA cases, adjusted sources, destination overlap, complete CCR preservation and atomic fault boundaries."
+    },
+    "indexed-1": {
+      "pid": 2093230,
+      "actual_exit": 0,
+      "actual_executable_sha256": "c0f519c642b53c00f7117425ba41b99b969b5bf09e0755b11ee70c9bd679aa66",
+      "actual_argv_verified": true,
+      "reaped": true,
+      "log_sha256": "557a3013fa83b090d8ae7fb465db9ebd72596d4ee81aad916747b34801303cc7",
+      "output": "Verified 168432 independent indexed RAM/state cases plus dynamic window, indirect bus, phase-fault and refusal contracts."
+    },
+    "native-1": {
+      "pid": 2093233,
+      "actual_exit": 0,
+      "actual_executable_sha256": "196bcaef56f5ba060b570621e02d082e6aff96d5432b68f8bb36feae9144f075",
+      "actual_argv_verified": true,
+      "reaped": true,
+      "log_sha256": "9d44b3e322ba573dce9b9689e4092414a659dd55fe6cd958571c9501777418de",
+      "output": "Verified 3166209 independent native arithmetic/branch cases; unsupported ISA remains explicit."
+    },
+    "memory-1": {
+      "pid": 2093239,
+      "actual_exit": 0,
+      "actual_executable_sha256": "053e7b92b4bd2d5399c9c82db0143f1dc04f5893cb46f5f1f047b6a8b1504d94",
+      "actual_argv_verified": true,
+      "reaped": true,
+      "log_sha256": "ea685be2e9616addd4b88aba22eb9a84e4c3574af47d5a77995132461c1e27db",
+      "output": "Verified 2098261 native memory cases plus exact bus faults, callbacks, reentrancy and RAM/cache boundaries."
+    },
+    "word-1": {
+      "pid": 2093242,
+      "actual_exit": 0,
+      "actual_executable_sha256": "b3e37ce2fabfa6f9157b7d57f9fc6cd535caa76706fd89a4e82899d82d0502ef",
+      "actual_argv_verified": true,
+      "reaped": true,
+      "log_sha256": "1a5193e2a999b3a51563ba41eaca0b71e36f8f28270d4a32c5c0385d5c87b33c",
+      "output": "Verified 10485948 native word cases plus wide-bus, fault, endian, wrap and cache contracts."
+    },
+    "api-1": {
+      "pid": 2093245,
+      "actual_exit": 0,
+      "actual_executable_sha256": "b9bf835f515269a9c54a324d64d1b7cf4e2f6a7d69ffbe85b6bb23d205ddaf64",
+      "actual_argv_verified": true,
+      "reaped": true,
+      "log_sha256": "aafd5b0d8ac400b4e50ad0a4ff8b67e872cbc8b74c15aed2763c18c5c14c1268",
+      "output": "Memory/Core/Io/Options API, unified storage, cache bounds and explicit external access passed."
+    }
+  },
+  "supported_opcode_forms": 226,
+  "new_opcode_entries": [
+    "B7 normal transfer/exchange, including sign extension and assembler aliases",
+    "18 0E TAB",
+    "18 0F TBA"
+  ],
+  "normal_transfer_postbytes": 196,
+  "explicit_factory_temporary_refusals": 60,
+  "independent_transfer_cases": 24779786,
+  "contracts": [
+    "TFR byte-to-word sign extension, word-to-byte low-byte extraction and complete normal selector set",
+    "EXG mixed-width fixed00/FF prefixes follow direction and target selector, not sign of the byte",
+    "Both original operands are captured before writes; explicit literal A/B/D overlap cases match manual tables",
+    "CCR writes cannot raise clear X; all other flags stay unchanged except explicit CCR values",
+    "Both bit3 aliases have the same semantics, while complete raw captures remain separate native cache entries",
+    "TAB/TBA update NZV and preserve C/H/other flags; source and destination domains have independent expectations",
+    "Sixty factory TMP2/TMP3 postbytes fail before native compilation, retirement or bus access",
+    "Known register execution uses native host operations without ISA helpers or external accesses"
+  ],
+  "provenance": {
+    "primary": "S12CPUV2 Rev4.0 TFR/EXG and TableA-5, SEX and TAB/TBA entries; reference-manifest.json pins PDF",
+    "expectations": "Independently authored mathematical register domains plus literal manual overlap examples and complete byte/CCR domains",
+    "hardware_measured": false,
+    "interrupt_timing_or_full_isa_claim": false
+  },
+  "known_open_requirements": [
+    "Remaining ISA, including memory RMW/move/bit/loop and multiply/divide/banked operations",
+    "Reset IRQ wait checkpoint fetch/native regions and time budgets",
+    "Factory-only TMP2/TMP3 register semantics remain unsupported",
+    "Earlier5bit JSR0,SP reference difference and ANDCC interrupt delay remain explicit",
+    "Blofeld CPU12 integration and full instrument/real-time qualification"
+  ],
+  "no_manufacturer_program_inputs": true,
+  "fuzz": false,
+  "throughput_claim": false,
+  "firmware_or_instrument_acceptance": false,
+  "extensive_sanitizer_regressions": "Deferred until original firmware runs in real time, per user instruction"
+}

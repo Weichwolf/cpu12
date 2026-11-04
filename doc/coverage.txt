@@ -12,6 +12,9 @@ Initial native implementation on x86-64/Linux:
 - Inherent A/B NEG/COM/INC/DEC/LSR/ROL/ROR/ASR/ASL/CLR/TST and D shifts.
 - CPU12 right-shift/rotate V=N xor C, with complete CCR/operand expectations.
 - INX/DEX/INY/DEY update only Z; ANDCC/ORCC retain the software X-mask limit.
+- TFR/EXG/SEX and assembler aliases:196 normal postbytes, signed/fixed extensions,
+  A/B/D overlap and CCR X restriction;60 factory TMP2/TMP3 forms refuse visibly.
+- TAB/TBA preserve C/H/other flags and update N/Z/V.
 - Direct/extended byte load/ALU/store instructions, preserving all other registers.
 - Immediate/direct/extended LDD/LDX/LDY/LDS, CPD/CPX/CPY/CPS, ADDD/SUBD.
 - Direct/extended STD/STX/STY/STS, correct word NZVC and unchanged H.
@@ -42,7 +45,7 @@ register state, PC wrap, cache-clear/NOP and no-effect refusals. No manufacturer
 program is used. This scope is distinct from an independently booting processor.
 
 Open requirements:
-- The remaining ISA and its addressing/control/stack forms.
+- The remaining ISA and its addressing/control/stack forms, factory temporaries.
 - Additional memory-window types and multi-byte/per-instruction access boundaries.
 - Native regions, fetch ownership/code invalidation and event/timing budgets.
 - Reset, interrupt priorities/entry/return, ANDCC IRQ-recognition delay,
@@ -58,8 +61,9 @@ remains physically unmeasured. stack.txt records the distinction.
 No native throughput or real-time claim is made from correctness test duration.
 Broad QA is deferred until original Blofeld firmware runs in real time, as the
 user requested. No fuzzing was run. Current qualification is in
-alu-reference.json: 4759688 carry/register cases and all eight previous
-native/byte/word/API/indexed/auto/control/stack consumers use one coherent library.
+transfer-reference.json:24779786 transfer/exchange cases and all nine previous
+consumers use one coherent library. Historical alu-reference.json pins the
+earlier carry/register qualification.
 Historical stack-reference.json pins stack/call qualification.
 Historical control-reference.json pins long-branch/JMP qualification.
 Historical auto-indexed-reference.json pins 292732 auto/LEA cases.

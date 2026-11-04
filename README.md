@@ -12,7 +12,8 @@ cover D, X, Y and SP. Native entry requires the detected long-mode LAHF CPU
 feature; unsupported hosts refuse explicitly. Arithmetic, CCR changes and
 branch decisions execute natively. Stack save/restore, JSR/BSR and RTS also
 compile to native memory and control transfers. Carry arithmetic, inherent
-unary/shift operations, index counters and CCR masks also execute natively. No instruction interpreter or
+unary/shift operations, index counters, CCR masks and normal register
+transfers/exchanges also execute natively. No instruction interpreter or
 Ghidra dependency is present. Unsupported instructions return an explicit fault
 without retirement. This is an initial ISA subset, not a complete CPU12
 emulator or a completed Blofeld integration.
@@ -30,8 +31,9 @@ required work, along with remaining ISA and bounded native regions. The current
 RAM/bus contract is described in [memory.txt](doc/memory.txt) and
 [indexed.txt](doc/indexed.txt), [control transfers](doc/control.txt) and
 [stack/subroutines](doc/stack.txt). [Register/carry ALU](doc/alu.txt) records
-flag semantics and the remaining interrupt-timing requirement. See
-[coverage](doc/coverage.txt) and the [full objective](doc/objective.txt).
+flag semantics and the remaining interrupt-timing requirement.
+[Transfers](doc/transfer.txt) cover signed/fixed extensions and register
+overlap. See [coverage](doc/coverage.txt) and the [full objective](doc/objective.txt).
 
 ```sh
 cmake --preset release

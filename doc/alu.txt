@@ -31,9 +31,11 @@ byte operands, unchanged upper flags, native addressing and external refusals.
 Unary byte tests cover all source values and all CCR values; word shift and
 index tests cover every 16-bit value at directed initial CCRs. CCR masks cover
 all old-CCR/mask combinations. The 4759688 ALU cases and eight existing
-consumers pass on one coherent optimized library; alu-reference.json pins current source, archive, actual ELF
-and run-log hashes. These component tests do not establish full CPU12 execution,
-original firmware boot, hardware equivalence or real time.
+consumers passed on one coherent optimized library; historical
+alu-reference.json pins that source and actual run hashes.
+transfer-reference.json records current consumers after register transfers.
+These component tests do not establish full CPU12 execution, original firmware
+boot, hardware equivalence or real time.
 Fuzzing is not automatic and was not requested. Extensive sanitizer matrices
 remain deferred until real-time Blofeld execution under the user policy.
 

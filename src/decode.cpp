@@ -259,6 +259,7 @@ std::optional<Instruction> decode(const std::span<const std::uint8_t> bytes) {
   if (bytes.empty()) { return {}; }
   const auto opcode = bytes[0];
   if (const auto instruction = decode_register(bytes)) { return instruction; }
+  if (const auto instruction = decode_transfer(bytes)) { return instruction; }
   if ((opcode >= first_branch && opcode <= last_branch) ||
       (opcode >= first_jump && opcode <= bsr) || (opcode >= first_call && opcode <= prefix)) {
     return control(bytes);

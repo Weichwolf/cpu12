@@ -1,5 +1,5 @@
 {
-  "scope": "Native carry/register ALU and coherent CPU12 consumers; incomplete ISA and no original firmware or instrument acceptance",
+  "scope": "Historical native carry/register ALU qualification at qualified_revision; current coverage is recorded in coverage.txt",
   "parent_revision": "e214b60096bd46744214068d4d5caa2f108847e2",
   "source_sha256": {
     ".clang-format": "fd267d78d4415894f55822b698ba496ce856c5308338a6db6e1c98c1441de9fd",
@@ -164,5 +164,6 @@
   "fuzz": false,
   "throughput_claim": false,
   "firmware_or_instrument_acceptance": false,
-  "extensive_sanitizer_regressions": "Deferred until original firmware runs in real time, per user instruction"
+  "extensive_sanitizer_regressions": "Deferred until original firmware runs in real time, per user instruction",
+  "qualified_revision": "1ae7d3f3c3f0f3fbaedc5b75678d9fa98db50841"
 }

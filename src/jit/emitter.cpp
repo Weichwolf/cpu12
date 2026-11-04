@@ -9,6 +9,7 @@
 #include "jit/indexed.hpp"
 #include "jit/registers.hpp"
 #include "jit/stack.hpp"
+#include "jit/transfer.hpp"
 #include "runtime.hpp"
 
 #include <array>
@@ -226,6 +227,7 @@ void arithmetic(Code &code, const Instruction &instruction, const Ram ram) {
     case Kind::pull:
     case Kind::return_subroutine:
     case Kind::register_operation:
+    case Kind::transfer:
     case Kind::jump:
     case Kind::effective_address:
     case Kind::nop:
@@ -374,6 +376,7 @@ WordEncoding word_operation(const Instruction &instruction) {
     case Kind::pull:
     case Kind::return_subroutine:
     case Kind::register_operation:
+    case Kind::transfer:
     case Kind::jump:
     case Kind::effective_address:
     case Kind::nop:
@@ -469,7 +472,9 @@ void branch(Code &code, const Instruction &instruction) {
 std::vector<std::uint8_t> emit(const Instruction &instruction, const Ram ram) {
   Code code;
   code.raw(entry);
-  if (instruction.kind == Kind::register_operation) {
+  if (instruction.kind == Kind::transfer) {
+    transfer_instruction(code, instruction);
+  } else if (instruction.kind == Kind::register_operation) {
     register_instruction(code, instruction);
   } else if (instruction.kind == Kind::call) {
     subroutine_call(code, instruction, ram);

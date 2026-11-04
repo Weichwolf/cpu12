@@ -15,7 +15,8 @@
       "PSHA/B/C/D/X/Y and PULA/B/C/D/X/Y entries, including PULC X-mask restriction",
       "ADCA/B and SBCA/B entries: carry/borrow, signed overflow and half-carry",
       "Inherent NEG/COM/INC/DEC/LSR/ROL/ROR/ASR/ASL/CLR/TST and LSRD/ASLD flag rules",
-      "INX/DEX/INY/DEY and ANDCC/ORCC entries; ANDCC IRQ delay remains future timing work"
+      "INX/DEX/INY/DEY and ANDCC/ORCC entries; ANDCC IRQ delay remains future timing work",
+      "TFR/EXG, SEX, TAB/TBA entries and TableA-5: normal selector encodings, ignored bit3, mixed widths, fixed prefixes and overlapping registers"
     ],
     "redistributed": false
   }

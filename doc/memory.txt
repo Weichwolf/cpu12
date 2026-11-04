@@ -50,10 +50,11 @@ existing 3,166,209 native instruction cases pass on the new coherent library.
 The new word matrix checks every left operand against eight directed partner
 values across immediate/direct/extended arithmetic, every memory load/store
 value, all four register targets, wide-callback refusals/partial effects, RAM
-wrapping and full immediate cache keys. The nine current Release consumers,
-including carry/register ALU, stack/subroutines, addressing and the public
-Memory API check, are pinned in alu-reference.json. Historical API and word
-qualifications remain separately pinned. These are CPU component checks, not original firmware boot,
+wrapping and full immediate cache keys. The ten current Release consumers,
+including transfers, carry/register ALU, addressing and the public Memory API,
+are pinned in transfer-reference.json. Historical API and word qualifications
+remain separately pinned. These are CPU component checks, not original firmware
+boot,
 complete ISA, whole instrument, physical-device or real-time acceptance. No
 fuzzing or broad sanitizer campaign was run; the user's real-time-first
 validation policy applies.
