@@ -41,7 +41,8 @@ enum class Fault : std::uint8_t {
   unsupported_host,
   memory_read,
   memory_write,
-  reentrant
+  reentrant,
+  unsupported_state
 };
 
 struct RunResult {
@@ -65,8 +66,8 @@ struct Statistics {
 };
 
 // Captured instructions have already been fetched by the caller. Board timing,
-// code fetch and interrupts are not implemented by this initial API. Bus faults
-// latch until explicit register replacement, preventing automatic access replay.
+// code fetch and interrupts are not implemented by this initial API. Native
+// execution faults latch until explicit register replacement, preventing replay.
 class Core {
 public:
   explicit Core(Memory memory = Memory::external(), Io *io = nullptr, Options options = {});

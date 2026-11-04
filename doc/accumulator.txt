@@ -1,0 +1,36 @@
+Accumulator arithmetic and decimal adjustment
+
+ABA, SBA and CBA compile A+B, A-B and A-B comparison directly into native byte
+arithmetic. B is retained; CBA retains A. ABA defines H/N/Z/V/C, while SBA/CBA
+preserve H and define N/Z/V/C. Other registers and CCR bits are unchanged.
+ABX/ABY already execute through their LEAX B,X / LEAY B,Y assembler aliases.
+
+DAA uses the nine input rows in S12CPUV2 Rev4.0. An immutable, generated 2 KiB
+host table maps A/C/H to adjusted A and C. N/Z follow adjusted A; H and the
+upper flags are retained. Architecturally undefined V retains its previous
+value as an explicit core policy, without a silicon-equivalence claim. Warm
+execution uses native arithmetic/table lookup without an ISA helper, callback,
+host stack frame or allocation.
+
+The manual qualifies 384 of 1024 A/C/H combinations. The remaining 640 produce
+Fault::unsupported_state, not an invented guest exception or successful DAA.
+RunResult retains the original PC/opcode and packs A | C<<8 | H<<9 into value,
+where C/H are boolean flags; address/access_size are zero. Registers, PC and
+retirement counters are unchanged. Like other native execution faults, this
+fault remains latched across cache clearing until set_registers supplies an
+explicit new boundary. This identifies incomplete emulator knowledge, not
+defective firmware; an observed firmware dependency needs further evidence.
+
+Tests enumerate all A/B/CCR combinations for ABA/SBA/CBA, all A/CCR combinations
+for DAA, PC wrapping, both existing index aliases and decimal sums 0..99 using
+ABA or ADCA followed by DAA. Independent arithmetic and nine literal manual
+rows provide expectations. Tests distinguish defined flags from the V policy,
+check all unsupported inputs without retirement and verify fault metadata,
+latching and explicit recovery after a genuine external memory-read refusal.
+Separate SMT checks prove the reduced input domain and adjustment equivalent
+to the nine rows; an incorrect carry threshold has a SAT counterexample.
+accumulator-reference.json pins the qualified sources, optimized build and
+actual native test binaries. The focused CTest name is accumulator.
+
+This captured-instruction evidence does not establish reset, interrupt timing,
+complete ISA, original firmware execution or whole-instrument performance.

@@ -50,7 +50,11 @@ enum class RegisterOp : std::uint8_t {
   index_increment,
   index_decrement,
   ccr_and,
-  ccr_or
+  ccr_or,
+  add_b,
+  subtract_b,
+  compare_b,
+  decimal_adjust
 };
 
 enum class Addressing : std::uint8_t { immediate, direct, extended, indexed, relative };

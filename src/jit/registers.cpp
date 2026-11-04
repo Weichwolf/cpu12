@@ -3,6 +3,7 @@
 
 #include "cpu12/core.hpp"
 #include "instruction.hpp"
+#include "jit/accumulator.hpp"
 #include "jit/code.hpp"
 #include "jit/flags.hpp"
 
@@ -182,6 +183,10 @@ void unary_flags(Code &code, const Instruction &instruction, const bool publish)
 
 void register_instruction(Code &code, const Instruction &instruction) {
   const auto operation = instruction.operation;
+  if (operation >= RegisterOp::add_b) {
+    accumulator_instruction(code, instruction);
+    return;
+  }
   if (operation == RegisterOp::index_increment || operation == RegisterOp::index_decrement) {
     index(code, instruction);
   } else if (operation == RegisterOp::ccr_and || operation == RegisterOp::ccr_or) {

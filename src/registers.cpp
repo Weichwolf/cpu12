@@ -8,6 +8,26 @@
 
 namespace cpu12::detail {
 namespace {
+std::optional<Instruction> page_register(const std::span<const std::uint8_t> bytes) {
+  if (bytes.size() != 2) { return {}; }
+  constexpr unsigned prefix = 0x18;
+  if (bytes[0] != prefix) { return {}; }
+  constexpr unsigned add = 6;
+  constexpr unsigned decimal = 7;
+  constexpr unsigned subtract = 0x16;
+  constexpr unsigned compare = 0x17;
+  RegisterOp operation;
+  switch (bytes[1]) {
+    case add: operation = RegisterOp::add_b; break;
+    case decimal: operation = RegisterOp::decimal_adjust; break;
+    case subtract: operation = RegisterOp::subtract_b; break;
+    case compare: operation = RegisterOp::compare_b; break;
+    default: return {};
+  }
+  return Instruction{
+      .kind = Kind::register_operation, .opcode = prefix, .length = 2, .operation = operation};
+}
+
 std::optional<RegisterOp> operation(const unsigned opcode) {
   enum Opcode : std::uint8_t {
     right_d = 0x49,
@@ -56,6 +76,7 @@ std::optional<RegisterOp> operation(const unsigned opcode) {
 
 std::optional<Instruction> decode_register(const std::span<const std::uint8_t> bytes) {
   if (bytes.empty()) { return {}; }
+  if (const auto instruction = page_register(bytes)) { return instruction; }
   constexpr unsigned nop = 0xa7;
   const auto opcode = bytes[0];
   if (opcode == nop && bytes.size() == 1) {

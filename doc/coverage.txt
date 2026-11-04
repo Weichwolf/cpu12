@@ -15,6 +15,10 @@ Initial native implementation on x86-64/Linux:
 - TFR/EXG/SEX and assembler aliases:196 normal postbytes, signed/fixed extensions,
   A/B/D overlap and CCR X restriction;60 factory TMP2/TMP3 forms refuse visibly.
 - TAB/TBA preserve C/H/other flags and update N/Z/V.
+- ABA/SBA/CBA use native byte arithmetic and independent H/N/Z/V/C expectations.
+- DAA covers the nine documented rows; undefined V retention is explicit policy.
+- Unqualified DAA states report original PC/A/C/H without retirement or CPU mutation.
+- ABX/ABY retain flags through the existing LEAX B,X / LEAY B,Y aliases.
 - MUL/EMUL/EMULS and IDIV/IDIVS/EDIV/EDIVS/FDIV use native host arithmetic,
   defined product/quotient/remainder flags and guarded zero/guest-overflow paths.
 - Signed32 EDIVS uses host64 division; documented indeterminate fields are
@@ -78,12 +82,15 @@ remains physically unmeasured. stack.txt records the distinction.
 
 No native throughput or real-time claim is made from correctness test duration.
 Broad QA is deferred until original Blofeld firmware runs in real time, as the
-user requested. No fuzzing was run. Current qualification is in
-multiply-divide-reference.json:48287746 multiplication/division cases and all
-fourteen previous consumers use one coherent library; 9438977 of the new cases
-also check explicitly indeterminate policy. Defined fields are checked in all
-cases. The signed 16 overflow test has an UNSAT proof and two SAT negative
-controls. Historical move-reference.json pins 2306650 MOV cases.
+user requested. No fuzzing was run. Current accumulator-reference.json pins
+50432704 accepted native accumulator/BCD cases, 40961 explicit unqualified-state
+boundaries and all fifteen previous consumers against one coherent library.
+The DAA domain/result reductions have two UNSAT proofs and one SAT negative
+control. Undefined V preservation is checked separately from defined fields.
+Historical multiply-divide-reference.json pins 48287746 multiplication/division
+cases, including 9438977 with explicit indeterminate policy in addition to
+defined-field checks, plus its signed16 range proof and negative controls.
+Historical move-reference.json pins 2306650 MOV cases.
 Historical bits-reference.json pins 4276806 bit/capture
 cases and the raw key packing UNSAT proof with three SAT negative controls.
 Historical loop-reference.json

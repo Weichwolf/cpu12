@@ -21,7 +21,9 @@ BRSET/BRCLR add masked byte modifications and memory-conditioned branches.
 MOVB/MOVW transfer byte/word data with sequential source/destination index
 updates and unchanged flags, using HCS12 next-PC semantics. Native multiply
 and guarded unsigned/signed/fractional division preserve documented register
-and flag behavior, with indeterminate fields recorded as explicit policy. No instruction interpreter or
+and flag behavior, with indeterminate fields recorded as explicit policy.
+ABA/SBA/CBA and documented DAA inputs also execute natively; unqualified DAA
+states fail visibly with their original input and PC. No instruction interpreter or
 Ghidra dependency is present. Unsupported instructions return an explicit fault
 without retirement. This is an initial ISA subset, not a complete CPU12
 emulator or a completed Blofeld integration.
@@ -49,6 +51,8 @@ cover six-byte captures, address/mask tails and real bus phase behavior.
 [Memory transfers](doc/move.txt) describe operand order and the explicitly
 unsupported original M68HC12 move-queue variant. [Multiplication/division](doc/multiply-divide.txt)
 describes widths, overflow, zero divisors and the indeterminate-value policy.
+[Accumulator arithmetic](doc/accumulator.txt) covers ABA/SBA/CBA, existing
+ABX/ABY aliases, decimal adjustment and explicit unqualified-state diagnostics.
 See [coverage](doc/coverage.txt) and the [full objective](doc/objective.txt).
 
 ```sh
