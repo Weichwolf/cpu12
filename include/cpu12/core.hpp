@@ -24,10 +24,16 @@ struct ByteWrite {
   std::uint8_t value = 0;
 };
 
+struct WordWrite {
+  std::uint16_t address = 0, value = 0;
+};
+
 struct Io {
   void *owner = nullptr;
   bool (*read)(void *, std::uint16_t, std::uint8_t &) noexcept = nullptr;
   bool (*write)(void *, ByteWrite) noexcept = nullptr;
+  bool (*read_word)(void *, std::uint16_t, std::uint16_t &) noexcept = nullptr;
+  bool (*write_word)(void *, WordWrite) noexcept = nullptr;
 };
 enum class Fault : std::uint8_t {
   none,
@@ -45,7 +51,8 @@ struct RunResult {
   std::uint16_t pc = 0;
   std::uint8_t opcode = 0;
   std::uint16_t address = 0;
-  std::uint8_t value = 0;
+  std::uint16_t value = 0;
+  std::uint8_t access_size = 0;
 };
 
 struct Statistics {

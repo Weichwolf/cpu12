@@ -44,6 +44,71 @@ bool arithmetic_kind(Instruction &instruction) {
   }
   return true;
 }
+
+bool word_kind(Instruction &instruction) {
+  constexpr unsigned word_mask = 0xcf;
+  constexpr unsigned word_load = 0xcc;
+  constexpr unsigned word_compare = 0x8c;
+  constexpr unsigned target_mask = 3;
+  constexpr unsigned add_d = 0xc3;
+  constexpr unsigned sub_d = 0x83;
+  const auto operation = instruction.opcode & word_mask;
+  if ((operation & ~target_mask) == word_load) {
+    instruction.kind = Kind::load;
+    instruction.target = static_cast<WordTarget>(operation & target_mask);
+  } else if ((operation & ~target_mask) == word_compare) {
+    instruction.kind = Kind::compare;
+    instruction.target = static_cast<WordTarget>(operation & target_mask);
+  } else if (operation == add_d) {
+    instruction.kind = Kind::add;
+  } else if (operation == sub_d) {
+    instruction.kind = Kind::subtract;
+  } else {
+    return false;
+  }
+  instruction.word = true;
+  return true;
+}
+
+bool word_store(Instruction &instruction) {
+  constexpr unsigned word_store_mask = 0xdc;
+  constexpr unsigned store_d = 0x5c;
+  constexpr unsigned target_mask = 3;
+  constexpr unsigned extended_store = 0x20;
+  if ((instruction.opcode & word_store_mask) != store_d) { return false; }
+  instruction.kind = Kind::store;
+  instruction.word = true;
+  instruction.target = static_cast<WordTarget>(instruction.opcode & target_mask);
+  instruction.addressing =
+      (instruction.opcode & extended_store) != 0 ? Addressing::extended : Addressing::direct;
+  return true;
+}
+
+bool immediate_operand(Instruction &instruction, const std::span<const std::uint8_t> bytes) {
+  const unsigned length = instruction.word ? 3U : 2U;
+  if (bytes.size() != length) { return false; }
+  constexpr unsigned byte_bits = 8;
+  instruction.operand = static_cast<std::uint16_t>(
+      instruction.word ? (static_cast<unsigned>(bytes[1]) << byte_bits) | bytes[2] : bytes[1]);
+  instruction.length = static_cast<std::uint8_t>(length);
+  return true;
+}
+
+bool arithmetic_operand(Instruction &instruction, const std::span<const std::uint8_t> bytes) {
+  constexpr unsigned addressing_mask = 0x30;
+  constexpr unsigned indexed_mode = 0x20;
+  constexpr unsigned extended_mode = 0x30;
+  const auto mode = instruction.opcode & addressing_mask;
+  if (mode == indexed_mode) { return false; }
+  if (mode == 0) {
+    if (!immediate_operand(instruction, bytes)) { return false; }
+  } else {
+    instruction.addressing = mode == extended_mode ? Addressing::extended : Addressing::direct;
+    if (!memory_operand(instruction, bytes)) { return false; }
+  }
+  return true;
+}
+
 }
 
 std::optional<Instruction> decode(const std::span<const std::uint8_t> bytes) {
@@ -54,9 +119,6 @@ std::optional<Instruction> decode(const std::span<const std::uint8_t> bytes) {
   constexpr unsigned store_mask = 0xde;
   constexpr unsigned store_a = 0x5a;
   constexpr unsigned extended_store = 0x20;
-  constexpr unsigned addressing_mask = 0x30;
-  constexpr unsigned indexed_mode = 0x20;
-  constexpr unsigned extended_mode = 0x30;
   if (bytes.empty()) { return {}; }
   const auto opcode = bytes[0];
   if (opcode == nop && bytes.size() == 1) {
@@ -70,6 +132,10 @@ std::optional<Instruction> decode(const std::span<const std::uint8_t> bytes) {
     instruction.length = 2;
     return instruction;
   }
+  if (word_store(instruction)) {
+    if (!memory_operand(instruction, bytes)) { return {}; }
+    return instruction;
+  }
   if ((opcode & store_mask) == store_a) {
     instruction.kind = Kind::store;
     instruction.accumulator_b = (opcode & 1U) != 0;
@@ -78,18 +144,9 @@ std::optional<Instruction> decode(const std::span<const std::uint8_t> bytes) {
     if (!memory_operand(instruction, bytes)) { return {}; }
     return instruction;
   }
-  if (!arithmetic_kind(instruction)) { return {}; }
+  if (!word_kind(instruction) && !arithmetic_kind(instruction)) { return {}; }
   instruction.accumulator_b = (opcode & accumulator_b) != 0;
-  const auto mode = opcode & addressing_mask;
-  if (mode == indexed_mode) { return {}; }
-  if (mode == 0) {
-    if (bytes.size() != 2) { return {}; }
-    instruction.operand = bytes[1];
-    instruction.length = 2;
-  } else {
-    instruction.addressing = mode == extended_mode ? Addressing::extended : Addressing::direct;
-    if (!memory_operand(instruction, bytes)) { return {}; }
-  }
+  if (!arithmetic_operand(instruction, bytes)) { return {}; }
   return instruction;
 }
 }

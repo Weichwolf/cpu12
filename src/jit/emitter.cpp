@@ -96,6 +96,9 @@ constexpr std::array<std::uint8_t, 9> call_begin{
 constexpr std::array<std::uint8_t, 3> call_r11{0x41, 0xff, 0xd3};
 constexpr std::array<std::uint8_t, 6> call_end{0x48, 0x83, 0xc4, 0x08, 0x5e, 0x5f};
 constexpr std::array<std::uint8_t, 8> read_result{0x3d, 0x00, 0x01, 0x00, 0x00, 0x75, 0x01, 0xc3};
+constexpr std::array<std::uint8_t, 8> word_read_result{
+    0x3d, 0x00, 0x00, 0x01, 0x00, 0x75, 0x01, 0xc3};
+constexpr std::array<std::uint8_t, 3> word_write_argument{0x0f, 0xb7, 0xd0};
 constexpr std::array<std::uint8_t, 5> write_result{0x85, 0xc0, 0x75, 0x01, 0xc3};
 constexpr std::array<std::uint8_t, 2> operand_from_ax{0x89, 0xc1};
 constexpr std::array<std::uint8_t, 4> ram_read{0x41, 0x0f, 0xb6, 0x0b};
@@ -109,22 +112,40 @@ std::uint8_t *ram_pointer(const Ram ram, const std::uint16_t address) {
 }
 
 void bus_call(Code &code, const Instruction &instruction, const bool write) {
-  if (write) { code.raw(write_argument); }
+  if (write) {
+    if (instruction.word) {
+      code.raw(word_write_argument);
+    } else {
+      code.raw(write_argument);
+    }
+  }
   code.raw(call_begin);
   code.byte(load_si);
   code.u32(instruction.address);
   code.raw(absolute_r11);
   if (write) {
-    code.u64(reinterpret_cast<std::uintptr_t>(&write_byte));
+    if (instruction.word) {
+      code.u64(reinterpret_cast<std::uintptr_t>(&write_word));
+    } else {
+      code.u64(reinterpret_cast<std::uintptr_t>(&write_byte));
+    }
   } else {
-    code.u64(reinterpret_cast<std::uintptr_t>(&read_byte));
+    if (instruction.word) {
+      code.u64(reinterpret_cast<std::uintptr_t>(&read_word));
+    } else {
+      code.u64(reinterpret_cast<std::uintptr_t>(&read_byte));
+    }
   }
   code.raw(call_r11);
   code.raw(call_end);
   if (write) {
     code.raw(write_result);
   } else {
-    code.raw(read_result);
+    if (instruction.word) {
+      code.raw(word_read_result);
+    } else {
+      code.raw(read_result);
+    }
   }
 }
 
@@ -208,7 +229,7 @@ void arithmetic(Code &code, const Instruction &instruction, const Ram ram) {
   }
   if (immediate) {
     code.byte(opcode);
-    code.byte(instruction.operand);
+    code.byte(static_cast<std::uint8_t>(instruction.operand));
   } else {
     constexpr unsigned register_form_delta = 4;
     auto native = static_cast<unsigned>(opcode);
@@ -246,11 +267,156 @@ void store(Code &code, const Instruction &instruction, const Ram ram) {
   code.byte(ret);
 }
 
+constexpr std::array<std::uint8_t, 4> native_word_read{0x41, 0x0f, 0xb7, 0x0b};
+constexpr std::array<std::uint8_t, 4> native_word_write{0x66, 0x41, 0x89, 0x03};
+constexpr std::array<std::uint8_t, 4> swap_cx{0x66, 0xc1, 0xc1, 0x08};
+constexpr std::array<std::uint8_t, 4> swap_ax{0x66, 0xc1, 0xc0, 0x08};
+constexpr std::array<std::uint8_t, 3> shift_cx_byte{0xc1, 0xe1, 0x08};
+constexpr std::array<std::uint8_t, 4> ram_read_ax{0x41, 0x0f, 0xb6, 0x03};
+constexpr std::array<std::uint8_t, 2> merge_cx_ax{0x09, 0xc1};
+constexpr std::array<std::uint8_t, 3> load_register_word{0x0f, 0xb7, 0x47};
+constexpr std::array<std::uint8_t, 3> store_register_word{0x66, 0x89, 0x47};
+constexpr std::array<std::uint8_t, 3> test_register_word{0x66, 0x85, 0xc0};
+constexpr std::array<std::uint8_t, 4> word_offsets{
+    static_cast<std::uint8_t>(offsetof(Registers, d)),
+    static_cast<std::uint8_t>(offsetof(Registers, y)),
+    static_cast<std::uint8_t>(offsetof(Registers, x)),
+    static_cast<std::uint8_t>(offsetof(Registers, sp))};
+
+enum WordEncoding : std::uint8_t {
+  word_prefix = 0x66,
+  mov_ax = 0xb8,
+  add_ax = 0x05,
+  sub_ax = 0x2d,
+  cmp_ax = 0x3d,
+  mov_ax_cx = 0x89,
+  add_ax_cx = 0x01,
+  sub_ax_cx = 0x29,
+  cmp_ax_cx = 0x39
+};
+
+void pointer_constant(Code &code, const std::uint8_t *pointer) {
+  code.raw(absolute_r11);
+  code.u64(reinterpret_cast<std::uintptr_t>(pointer));
+}
+
+void word_memory_read(Code &code, const Instruction &instruction, const Ram ram) {
+  const auto next = static_cast<std::uint16_t>(static_cast<unsigned>(instruction.address) + 1U);
+  const auto *high = ram_pointer(ram, instruction.address);
+  const auto *low = ram_pointer(ram, next);
+  if (high == nullptr || low == nullptr) {
+    bus_call(code, instruction, false);
+    code.raw(operand_from_ax);
+    return;
+  }
+  pointer_constant(code, high);
+  if (low == high + 1) {
+    code.raw(native_word_read);
+    code.raw(swap_cx);
+  } else {
+    code.raw(ram_read);
+    code.raw(shift_cx_byte);
+    pointer_constant(code, low);
+    code.raw(ram_read_ax);
+    code.raw(merge_cx_ax);
+  }
+}
+
+void word_memory_write(Code &code, const Instruction &instruction, const Ram ram) {
+  const auto next = static_cast<std::uint16_t>(static_cast<unsigned>(instruction.address) + 1U);
+  const auto *high = ram_pointer(ram, instruction.address);
+  const auto *low = ram_pointer(ram, next);
+  if (high == nullptr || low == nullptr) {
+    bus_call(code, instruction, true);
+    return;
+  }
+  code.raw(swap_ax);
+  pointer_constant(code, high);
+  if (low == high + 1) {
+    code.raw(native_word_write);
+  } else {
+    code.raw(ram_write);
+    code.raw(swap_ax);
+    pointer_constant(code, low);
+    code.raw(ram_write);
+  }
+}
+
+WordEncoding word_operation(const Instruction &instruction) {
+  switch (instruction.kind) {
+    case Kind::load: return mov_ax;
+    case Kind::add: return add_ax;
+    case Kind::subtract: return sub_ax;
+    case Kind::compare: return cmp_ax;
+    case Kind::nop:
+    case Kind::bit_and:
+    case Kind::bit_or:
+    case Kind::bit_xor:
+    case Kind::bit_test:
+    case Kind::branch:
+    case Kind::store:
+    default: throw std::logic_error("Invalid native word arithmetic kind");
+  }
+}
+
+WordEncoding word_register_operation(const WordEncoding opcode) {
+  switch (opcode) {
+    case mov_ax: return mov_ax_cx;
+    case add_ax: return add_ax_cx;
+    case sub_ax: return sub_ax_cx;
+    case cmp_ax: return cmp_ax_cx;
+    case word_prefix:
+    case mov_ax_cx:
+    case add_ax_cx:
+    case sub_ax_cx:
+    case cmp_ax_cx:
+    default: throw std::logic_error("Invalid word instruction encoding");
+  }
+}
+
+void word_instruction(Code &code, const Instruction &instruction, const Ram ram) {
+  const auto offset = word_offsets[static_cast<unsigned>(instruction.target)];
+  if (instruction.kind == Kind::store) {
+    code.raw(load_register_word);
+    code.byte(offset);
+    word_memory_write(code, instruction, ram);
+    code.raw(load_register_word);
+    code.byte(offset);
+    code.raw(test_register_word);
+    flags(code, {});
+  } else {
+    const bool immediate = instruction.addressing == Addressing::immediate;
+    if (!immediate) { word_memory_read(code, instruction, ram); }
+    code.raw(load_register_word);
+    code.byte(offset);
+    const auto opcode = word_operation(instruction);
+    code.byte(word_prefix);
+    if (immediate) {
+      code.byte(opcode);
+      code.byte(static_cast<std::uint8_t>(instruction.operand & byte_mask));
+      code.byte(static_cast<std::uint8_t>(instruction.operand >> byte_bits));
+    } else {
+      code.byte(word_register_operation(opcode));
+      code.byte(register_operands);
+    }
+    if (instruction.kind == Kind::load) { code.raw(test_register_word); }
+    if (instruction.kind != Kind::compare) {
+      code.raw(store_register_word);
+      code.byte(offset);
+    }
+    const bool arithmetic = instruction.kind != Kind::load;
+    flags(code, {.carry = arithmetic, .overflow = arithmetic});
+  }
+  code.advance(instruction.length);
+  code.byte(ret);
+}
+
 void branch(Code &code, const Instruction &instruction) {
   constexpr unsigned branch_condition_mask = 15;
   const auto condition = instruction.opcode & branch_condition_mask;
   const auto delta =
-      instruction.length + static_cast<int>(std::bit_cast<std::int8_t>(instruction.operand));
+      instruction.length +
+      static_cast<int>(std::bit_cast<std::int8_t>(static_cast<std::uint8_t>(instruction.operand)));
   if (condition < 2) {
     code.advance(condition == 0 ? delta : instruction.length);
     code.byte(ret);
@@ -275,7 +441,9 @@ void branch(Code &code, const Instruction &instruction) {
 std::vector<std::uint8_t> emit(const Instruction &instruction, const Ram ram) {
   Code code;
   code.raw(entry);
-  if (instruction.kind == Kind::branch) {
+  if (instruction.word) {
+    word_instruction(code, instruction, ram);
+  } else if (instruction.kind == Kind::branch) {
     branch(code, instruction);
   } else if (instruction.kind == Kind::nop) {
     code.advance(1);

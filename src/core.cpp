@@ -97,6 +97,7 @@ RunResult Core::execute(const std::span<const std::uint8_t> bytes) {
     result.fault = impl_->context.fault;
     result.address = impl_->context.address;
     result.value = impl_->context.value;
+    result.access_size = impl_->context.access_size;
     impl_->failure = result;
   }
   return result;

@@ -1,5 +1,5 @@
 {
-  "scope": "Current coherent captured CPU12 byte-memory/native ALU integration; no instrument or full-ISA claim",
+  "scope": "Historical native byte-memory integration at qualified_revision; current coherent qualification is in word-reference.json",
   "parent_revision": "c86888a072ddf892c0d039f8c546bbe0c3a01b0b",
   "source_sha256": {
     "include/cpu12/core.hpp": "5ccb87a884a5586acf4bb8275054bcaf327ba23a2296963d65e1071b439f1fb2",
@@ -58,5 +58,6 @@
   "fuzz": false,
   "sanitizers": "Extensive sanitizer matrices deferred until original firmware real-time operation",
   "whole_instrument_complete": false,
-  "performance_claim": false
+  "performance_claim": false,
+  "qualified_revision": "6d9b6b45ce5dadf575d15f00532cf0ce40f4ba0c"
 }

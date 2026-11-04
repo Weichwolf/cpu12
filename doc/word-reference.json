@@ -1,0 +1,83 @@
+{
+  "scope": "Current coherent native CPU12 word family and logical wide-bus integration; not complete ISA or whole instrument",
+  "parent_revision": "6d9b6b45ce5dadf575d15f00532cf0ce40f4ba0c",
+  "source_sha256": {
+    "include/cpu12/core.hpp": "e2cac2eaae41f3d37403b25d8f3610eea28a8cabece746895202d0a90cf0012d",
+    "src/core.cpp": "8a30c4ea38285cf27d381458ff3bf7c61619d96b8e7c99119ca2f03bf3236ec4",
+    "src/decode.cpp": "c758b86c3e2fb5f41bcd713393028bdd0633ed5102e36ebe4bb275e5d3248ab3",
+    "src/instruction.hpp": "19cf2270afbdfa01a7519410d7c08b2790561029041a92eccb2bbf6175488a65",
+    "src/jit/emitter.cpp": "30eb4f2b6f57a8fa5eafe9b5be1007ef8d1fb0e5088c505134d399208bb0fb6d",
+    "src/jit/emitter.hpp": "736526d5af766f1f15f2d744c0143e7e7570e43126def5efa7a6996065812f72",
+    "src/jit.cpp": "86b2f5fff6c2f6cb013651e492581906b2b93ce0a38026df7069b28be75f4bf2",
+    "src/jit.hpp": "59f9cc5055a9cd69fc4f14c8be9360c9872d58a26861565009ec6bdb1d4daf83",
+    "src/runtime.cpp": "1400d55e57ee53e872709d008c0c5407da4316d6816074cb4ad7c4abbe6761f7",
+    "src/runtime.hpp": "cd5e00e9e007ac859216216bece87e60624fbfdb2b9c7ace1dfd32e393cfc131",
+    "test/memory_test.cpp": "3496069b417db13190124115f9581aeedc414558b3a686b2e647a0342a65723e",
+    "test/native_test.cpp": "a5545de4c0ddbf5b23e6889f3bd7ee37592e7c48e41575e5d3494de6f9ff6228",
+    "test/reference.hpp": "e77ea9ae4be512e74dad1f9bc30e4e971919cae6f0ff79f9ba44210750c08e24",
+    "test/word_test.cpp": "44c514a674af8208e42107348ac757a641c027607c97bc501c78b47fd3da63b0"
+  },
+  "build": {
+    "profile": "Release O3 march=native ThinLTO LLVM19; warnings as errors; clang-tidy zero findings",
+    "actual_exit": 0,
+    "core_archive_sha256": "2d73f6476929ce2138c0a4be22bc74be0ae6cff74d31d472f39c9ddba5e33af7",
+    "compile_commands_sha256": "196feed1a7847a55109bc325a350fe34b9feca292a57334a75bc253ef5260694"
+  },
+  "tests": {
+    "native-1": {
+      "pid": 2052220,
+      "actual_exit": 0,
+      "actual_executable_sha256": "13ccd08328923d69651e616cdc778a05b58120044b83db8acd6433bc4552df85",
+      "actual_argv_verified": true,
+      "reaped": true,
+      "log_sha256": "9d44b3e322ba573dce9b9689e4092414a659dd55fe6cd958571c9501777418de",
+      "output": "Verified 3166209 independent native arithmetic/branch cases; unsupported ISA remains explicit."
+    },
+    "memory-1": {
+      "pid": 2052227,
+      "actual_exit": 0,
+      "actual_executable_sha256": "ce620d20a79157f94b42d9ec06ef358dc308ead699724feebdc44383a2b0806c",
+      "actual_argv_verified": true,
+      "reaped": true,
+      "log_sha256": "ea685be2e9616addd4b88aba22eb9a84e4c3574af47d5a77995132461c1e27db",
+      "output": "Verified 2098261 native memory cases plus exact bus faults, callbacks, reentrancy and RAM/cache boundaries."
+    },
+    "word-1": {
+      "pid": 2052232,
+      "actual_exit": 0,
+      "actual_executable_sha256": "369594e9ee4a01c14e390a8488eaaef07d51527e3bb3241e408c274c077a5956",
+      "actual_argv_verified": true,
+      "reaped": true,
+      "log_sha256": "1a5193e2a999b3a51563ba41eaca0b71e36f8f28270d4a32c5c0385d5c87b33c",
+      "output": "Verified 10485948 native word cases plus wide-bus, fault, endian, wrap and cache contracts."
+    }
+  },
+  "supported_opcodes": 107,
+  "independent_word_cases": 10485948,
+  "existing_native_cases": 3166209,
+  "existing_byte_memory_cases": 2098261,
+  "word_arithmetic_right_partners": [
+    0,
+    1,
+    255,
+    256,
+    32767,
+    32768,
+    65280,
+    65535
+  ],
+  "contracts": [
+    "Native 16-bit arithmetic and NZVC, preserve H and unrelated registers",
+    "Load/compare/store D/X/Y/SP, whole register-state expectations",
+    "Big-endian RAM values including ffff-to-zero wrap",
+    "Actual logical read/write word callbacks once, no implicit byte splitting",
+    "Word fault address, PC, opcode, access_size and full payload",
+    "Partial external write effects preserved; failure latched without replay",
+    "Full immediate-word cache keys and RAM/peripheral window seam delegation"
+  ],
+  "no_firmware_inputs": true,
+  "fuzz": false,
+  "extensive_sanitizer_regressions": "Deferred until original firmware runs in real time, per user instruction",
+  "firmware_or_instrument_acceptance": false,
+  "throughput_claim": false
+}

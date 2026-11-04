@@ -4,8 +4,8 @@ Independent CPU12/HC12 native JIT emulator core, written in C++23. GPL-3.0-only.
 
 The initial implementation compiles captured NOP, 8-bit immediate load/ALU and
 short conditional-branch instructions directly into x86-64/Linux host code.
-Direct/extended 8-bit load, ALU and store instructions use native RAM access
-or explicit external bus callbacks. Native entry requires the detected LAHF
+Direct/extended byte and word load, ALU and store instructions use native RAM
+access or explicit external bus callbacks. Word operations cover D, X, Y and SP. Native entry requires the detected LAHF
 long-mode CPU feature; unsupported hosts refuse explicitly.
 Arithmetic, CCR changes and branch decisions execute natively. No instruction
 interpreter or Ghidra dependency is present. Unsupported instructions return an
@@ -14,8 +14,7 @@ CPU12 emulator or a completed Blofeld integration.
 
 The captured instruction API separates CPU semantics from the caller's fetch,
 clocks and board model. Interrupt entry, reset and waits remain required work,
-along with 16-bit
-operations, indexed addressing and bounded native regions. The current RAM/bus
+along with indexed addressing and bounded native regions. The current RAM/bus
 contract is described in [memory.txt](doc/memory.txt). See
 [coverage](doc/coverage.txt) and the [full objective](doc/objective.txt).
 

@@ -21,12 +21,17 @@ enum class Kind : std::uint8_t {
 
 enum class Addressing : std::uint8_t { immediate, direct, extended };
 
+enum class WordTarget : std::uint8_t { d, y, x, sp };
+
 struct Instruction {
   Kind kind = Kind::nop;
-  std::uint8_t opcode = 0, operand = 0, length = 0;
+  std::uint8_t opcode = 0, length = 0;
+  std::uint16_t operand = 0;
   bool accumulator_b = false;
   Addressing addressing = Addressing::immediate;
   std::uint16_t address = 0;
+  bool word = false;
+  WordTarget target = WordTarget::d;
 };
 
 [[nodiscard]] std::optional<Instruction> decode(std::span<const std::uint8_t> bytes);

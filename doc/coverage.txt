@@ -4,6 +4,10 @@ Initial native implementation on x86-64/Linux:
 - Captured NOP.
 - Immediate LDAA/B, ADDA/B, SUBA/B, CMPA/B, ANDA/B, ORAA/B, EORA/B, BITA/B.
 - Direct/extended byte load/ALU/store instructions, preserving all other registers.
+- Immediate/direct/extended LDD/LDX/LDY/LDS, CPD/CPX/CPY/CPS, ADDD/SUBD.
+- Direct/extended STD/STX/STY/STS, correct word NZVC and unchanged H.
+- Big-endian known-RAM word reads/writes, including ffff-to-zero wrapping.
+- Explicit logical wide callbacks; unknown wide accesses never guess byte semantics.
 - One explicit known RAM window with direct native byte access.
 - Real external read/write callbacks, precise fault context and no automatic replay.
 - Recursive execution and state/cache mutations are refused during callbacks.
@@ -20,7 +24,7 @@ register state, PC wrap, cache-clear/NOP and no-effect refusals. No manufacturer
 program is used. This scope is distinct from an independently booting processor.
 
 Open requirements:
-- The remaining ISA, 16-bit arithmetic and indexed/other addressing forms.
+- The remaining ISA and indexed/other addressing forms.
 - Additional memory-window types and multi-byte/per-instruction access boundaries.
 - Native regions, fetch ownership/code invalidation and event/timing budgets.
 - Reset, interrupt priorities/entry/return, wait/stop and complete checkpoints.
@@ -30,7 +34,10 @@ Open requirements:
 
 No native throughput or real-time claim is made from correctness test duration.
 Broad QA is deferred until original Blofeld firmware runs in real time, as the
-user requested. No fuzzing was run. The initial c86888a qualification is retained in native-reference.json. Current
-qualification is in memory-reference.json, including the complete native test after
+user requested. No fuzzing was run. The initial c86888a qualification is retained
+in native-reference.json. Current
+qualification is in word-reference.json, including the complete native and byte
+memory tests after the word ABI integration. Historical byte integration is in
+memory-reference.json, including the complete native test after
 the ABI/operand integration, independent RAM byte-pair expectations, stores,
 real callbacks/refusals, PC/RAM boundaries and address-complete cache keys.
