@@ -1,0 +1,30 @@
+CPU12 coverage — incomplete
+
+Initial native implementation on x86-64/Linux:
+- Captured NOP.
+- Immediate LDAA/B, ADDA/B, SUBA/B, CMPA/B, ANDA/B, ORAA/B, EORA/B, BITA/B.
+- BRA/BRN and all short unsigned/signed conditional branches.
+- Native N/Z/V/C/H effects where specified; other CCR bits and registers retained.
+- Captured-byte cache keys, bounded entry count and explicit cache invalidation.
+- W^X code pages and a typed assembly bridge into generated code.
+- Explicit unsupported input/ISA/host faults with original PC/opcode; no retirement.
+
+The independent directed test enumerates every A/B value and immediate operand
+for all 16 arithmetic/load/logic opcodes at three initial CCR values, plus all 16
+branch conditions, every CCR byte and five displacements. It checks complete
+register state, PC wrap, cache-clear/NOP and no-effect refusals. No manufacturer
+program is used. This scope is distinct from an independently booting processor.
+
+Open requirements:
+- The remaining ISA, 16-bit arithmetic, all memory/indexed/addressing forms.
+- Direct memory windows, real bus callbacks and precise peripheral faults.
+- Native regions, fetch ownership/code invalidation and event/timing budgets.
+- Reset, interrupt priorities/entry/return, wait/stop and complete checkpoints.
+- Integration and state ownership with blofeld-emu; no emulator dependency pin yet.
+- Real firmware startup, actual instrument behavior and whole-emulator throughput.
+- Other host architectures, extensive sanitizer matrices and broader regression.
+
+No native throughput or real-time claim is made from correctness test duration.
+Broad QA is deferred until original Blofeld firmware runs in real time, as the
+user requested. No fuzzing was run. Current qualification is pinned separately
+in native-reference.json after the directed Release test succeeds.
