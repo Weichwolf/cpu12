@@ -32,9 +32,9 @@ optimized library. control-reference.json pins source, archive, policy and
 actual executable/log hashes. No manufacturer program or other emulator
 implementation is used.
 
-JSR/BSR, stack operations, returns, other remaining ISA, reset/IRQ/waits,
-fetch/native regions, timing and board integration remain open. These
-component tests do not establish original boot, instrument behavior or real
+stack.txt documents JSR/BSR, stack save/restore and RTS. Other remaining ISA,
+banked CALL/RTC, RTI/reset/IRQ/waits, fetch/native regions, timing and board
+integration remain open. These component tests do not establish original boot, instrument behavior or real
 time. No fuzzing is part of this work; broad sanitizer validation remains
 deferred under the user's real-time-first policy.
 

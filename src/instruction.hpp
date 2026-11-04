@@ -18,10 +18,14 @@ enum class Kind : std::uint8_t {
   branch,
   store,
   effective_address,
-  jump
+  jump,
+  call,
+  push,
+  pull,
+  return_subroutine
 };
 
-enum class Addressing : std::uint8_t { immediate, direct, extended, indexed };
+enum class Addressing : std::uint8_t { immediate, direct, extended, indexed, relative };
 enum class IndexBase : std::uint8_t { x, y, sp, pc };
 enum class IndexOffset : std::uint8_t { constant, a, b, d };
 
@@ -33,6 +37,8 @@ struct Indexed {
   std::int8_t update = 0;
   bool indirect = false;
 };
+
+enum class StackTarget : std::uint8_t { x, y, a, b, ccr, d, pc };
 
 enum class WordTarget : std::uint8_t { d, y, x, sp };
 
@@ -47,6 +53,7 @@ struct Instruction {
   bool word = false;
   WordTarget target = WordTarget::d;
   Indexed indexed{};
+  StackTarget stack_target = StackTarget::d;
 };
 
 [[nodiscard]] bool decode_indexed(Instruction &instruction, std::span<const std::uint8_t> bytes);

@@ -1,0 +1,59 @@
+Native stack and subroutine execution
+
+PSHA/B/C/D/X/Y decrement SP by one or two before storing their source. Words
+are big-endian and wrap at ffff. PULA/B/C/D/X/Y read at SP, publish the loaded
+register and advance SP. All preserve CCR except PULC: each bit comes from
+memory, but an initially clear X mask cannot be raised. RTS reads a word at
+SP, advances SP by two and replaces PC without an instruction-length addition.
+
+JSR supports direct, extended and indexed addresses; BSR uses a signed byte
+offset from its following address. Calls store that following address at the
+decremented stack pointer, high byte first. They preserve CCR and other
+registers except explicit indexed updates. An indexed auto update applies
+before the implicit two-byte stack decrement. Pure address calculations can
+be emitted after accepted storage while registers still hold the old values.
+An indirect pointer is actually read before storing the return address, so
+a pointer overlapping that stack word retains its original target.
+
+The model uses one indexed address rule across the 5/9/16-bit constant forms,
+including zero SP offsets: the base is the original instruction boundary,
+with any explicit pre/post indexing applied before the stack decrement.
+S12CPUV2 sections 3.9/4.4.2 and JSR/BSR/RTS/PSH/PUL entries provide the primary
+encoding and semantic rules. A separate SLEIGH observation corroborates auto
+updates and pointer-before-stack ordering, but its special 5-bit zero-SP form
+exposes a register alias across the stack decrement. That reference difference
+remains explicit; no measured-silicon result is claimed for this corner.
+reference-manifest.json pins the primary manual.
+
+Known RAM uses generated loads/stores. Partial RAM words delegate the entire
+logical word, including any known byte, to the owner. No missing byte/word bus
+callback silently falls back to a different transaction. Real external side
+effects survive refusals; CPU state stays at its unretired boundary and the
+fault latches against replay. Diagnostics retain operation, address, width,
+data, PC and opcode. Callbacks see that original CPU state. This synchronous
+functional contract is not physical bus-error rollback or cycle accuracy.
+
+An indirect call with a possible external stack write uses a temporary native
+host frame to retain the actual pointer across that write. A full-RAM layout
+keeps the pointer in a host register and needs no frame. Host and guest stacks
+stay independent; every emitted fault return releases the native frame. Ordinary calls and
+inherent operations require no native frame. Frame selection, widths and opcode
+dispatch are compile-time decisions; warm known-RAM execution has no ISA helper.
+
+Independent tests cover source/memory values and CCR domains, stack and PC
+wrapping, all indexed call postbytes, actual pointer/stack aliasing, external
+byte/word refusals, partial writes, RAM seams, callback register clobbers and
+latched no-replay. An authored nested JSR/BSR/save/restore/RTS program checks
+every intermediate architectural state and real return-stack bytes. The 2328433
+stack/call cases and seven existing consumers pass on one coherent optimized
+library; stack-reference.json pins source, actual ELF and run-log hashes. This
+is component execution, not original Blofeld boot, full ISA or instrument proof.
+Remaining ISA, banked CALL/RTC, RTI/reset/IRQ/waits, checkpoints, fetch/native
+regions, timing and Blofeld integration are still required. No fuzzing is part
+of this work; broad sanitizer matrices remain deferred until real time.
+
+Focused reproduction:
+
+  cmake --preset release
+  cmake --build --preset release --target cpu12-stack-test cpu12-control-test
+  ctest --test-dir build/release --output-on-failure -R '^(stack|control)$'

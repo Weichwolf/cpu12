@@ -10,8 +10,9 @@ access or explicit external bus callbacks. Indexed forms add dynamic X/Y/SP/PC,
 constant/accumulator offsets and indirect pointer accesses. Word operations
 cover D, X, Y and SP. Native entry requires the detected long-mode LAHF CPU
 feature; unsupported hosts refuse explicitly. Arithmetic, CCR changes and
-branch decisions execute natively. No instruction interpreter or Ghidra
-dependency is present. Unsupported instructions return an explicit fault
+branch decisions execute natively. Stack save/restore, JSR/BSR and RTS also
+compile to native memory and control transfers. No instruction interpreter or
+Ghidra dependency is present. Unsupported instructions return an explicit fault
 without retirement. This is an initial ISA subset, not a complete CPU12
 emulator or a completed Blofeld integration.
 
@@ -26,8 +27,8 @@ The captured `run_instruction(bytes)` API separates CPU semantics from the
 caller's fetch, clocks and board model. Interrupt entry, reset and waits remain
 required work, along with remaining ISA and bounded native regions. The current
 RAM/bus contract is described in [memory.txt](doc/memory.txt) and
-[indexed.txt](doc/indexed.txt); [control transfers](doc/control.txt) cover
-branch/JMP behavior. See [coverage](doc/coverage.txt) and the [full
+[indexed.txt](doc/indexed.txt), [control transfers](doc/control.txt) and
+[stack/subroutines](doc/stack.txt). See [coverage](doc/coverage.txt) and the [full
 objective](doc/objective.txt).
 
 ```sh

@@ -5,6 +5,14 @@
 #include "jit/code.hpp"
 
 namespace cpu12::detail {
+struct Access {
+  bool word = false, write = false;
+};
+
+void data_access(Code &code, Ram ram, Access access);
+void indexed_address(Code &code, const Instruction &instruction, Ram ram);
+void indexed_commit(Code &code, const Instruction &instruction);
+
 // Computed address arithmetic and known RAM access are emitted host instructions.
 // Only genuine external accesses call the supplied bus owner.
 void indexed_read(Code &code, const Instruction &instruction, Ram ram);

@@ -38,10 +38,11 @@ rollback.
 
 The earlier native auto/LEA integration passed 292732 cases and five existing
 consumers, including 168432 non-auto indexed cases, on one coherent library.
-control-reference.json records the current consumers after branch/JMP support. All CCR values, destination/source overlap, wrapping, indirect
-effects, cache length collisions and latched refusals have independent
-expectations. auto-indexed-reference.json pins that integration's source, ELF and actual
-run receipts. Historical indexed-reference.json retains its separate source
+stack-reference.json records the current consumers after stack/call support.
+All CCR values, destination/source overlap, wrapping, indirect effects, cache
+length collisions and latched refusals have independent
+expectations. auto-indexed-reference.json pins that integration's source, ELF
+and actual run receipts. Historical indexed-reference.json retains its separate source
 pins. Four SMT queries prove interval/wrap/PC arithmetic, with two SAT negative
 controls; LLVM decoding separately checks the emitted host instruction
 encodings. These are component checks, not full ISA, original boot, instrument

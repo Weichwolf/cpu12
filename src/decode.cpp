@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "instruction.hpp"
 
+#include <array>
 #include <cstdint>
 #include <optional>
 #include <span>
@@ -109,22 +110,92 @@ bool arithmetic_operand(Instruction &instruction, const std::span<const std::uin
   return true;
 }
 
+bool stack_opcode(const unsigned opcode) {
+  constexpr unsigned first = 0x30;
+  constexpr unsigned last = 0x3b;
+  constexpr unsigned rts = 0x3d;
+  return (opcode >= first && opcode <= last) || opcode == rts;
+}
+
+std::optional<Instruction> stack(const std::span<const std::uint8_t> bytes) {
+  if (bytes.size() != 1) { return {}; }
+  constexpr unsigned first = 0x30;
+  constexpr unsigned rts = 0x3d;
+  const auto opcode = bytes[0];
+  if (opcode == rts) {
+    return Instruction{.kind = Kind::return_subroutine,
+                       .opcode = opcode,
+                       .length = 1,
+                       .word = true,
+                       .stack_target = StackTarget::pc};
+  }
+  constexpr std::array targets{StackTarget::x,
+                               StackTarget::y,
+                               StackTarget::a,
+                               StackTarget::b,
+                               StackTarget::x,
+                               StackTarget::y,
+                               StackTarget::a,
+                               StackTarget::b,
+                               StackTarget::ccr,
+                               StackTarget::ccr,
+                               StackTarget::d,
+                               StackTarget::d};
+  const auto target = targets[opcode - first];
+  constexpr unsigned push_first = 0x34;
+  constexpr unsigned push_last = 0x37;
+  constexpr unsigned push_ccr = 0x39;
+  constexpr unsigned push_d = 0x3b;
+  const bool push =
+      (opcode >= push_first && opcode <= push_last) || opcode == push_ccr || opcode == push_d;
+  return Instruction{.kind = push ? Kind::push : Kind::pull,
+                     .opcode = opcode,
+                     .length = 1,
+                     .word = target == StackTarget::x || target == StackTarget::y ||
+                             target == StackTarget::d,
+                     .stack_target = target};
+}
+
+std::optional<Instruction> target(const std::span<const std::uint8_t> bytes) {
+  constexpr unsigned indexed = 5;
+  constexpr unsigned extended = 6;
+  constexpr unsigned call_first = 0x15;
+  constexpr unsigned form_mask = 15;
+  const auto opcode = bytes[0];
+  Instruction instruction{.kind = opcode >= call_first ? Kind::call : Kind::jump, .opcode = opcode};
+  const auto form = opcode & form_mask;
+  if (form == indexed) {
+    if (!decode_indexed(instruction, bytes)) { return {}; }
+  } else {
+    instruction.addressing = form == extended ? Addressing::extended : Addressing::direct;
+    if (!memory_operand(instruction, bytes)) { return {}; }
+  }
+  return instruction;
+}
+
 std::optional<Instruction> control(const std::span<const std::uint8_t> bytes) {
   constexpr unsigned prefix = 0x18;
   constexpr unsigned first_branch = 0x20;
   constexpr unsigned last_branch = 0x2f;
   constexpr unsigned indexed_jump = 5;
   constexpr unsigned extended_jump = 6;
+  constexpr unsigned bsr = 7;
+  constexpr unsigned first_call = 0x15;
+  constexpr unsigned last_call = 0x17;
+  constexpr unsigned byte_extension = 0xff00;
   const auto opcode = bytes[0];
   Instruction instruction{.opcode = opcode};
-  if (opcode == indexed_jump || opcode == extended_jump) {
-    instruction.kind = Kind::jump;
-    if (opcode == extended_jump) {
-      instruction.addressing = Addressing::extended;
-      if (!memory_operand(instruction, bytes)) { return {}; }
-    } else if (!decode_indexed(instruction, bytes)) {
-      return {};
-    }
+  if (opcode == indexed_jump || opcode == extended_jump ||
+      (opcode >= first_call && opcode <= last_call)) {
+    return target(bytes);
+  }
+  if (opcode == bsr) {
+    if (bytes.size() != 2) { return {}; }
+    instruction.kind = Kind::call;
+    instruction.length = 2;
+    instruction.addressing = Addressing::relative;
+    instruction.operand =
+        static_cast<std::uint16_t>(bytes[1] < 0x80U ? bytes[1] : byte_extension | bytes[1]);
     return instruction;
   }
   const bool wide = opcode == prefix;
@@ -133,7 +204,6 @@ std::optional<Instruction> control(const std::span<const std::uint8_t> bytes) {
   const auto operation = wide ? bytes[1] : opcode;
   if (operation < first_branch || operation > last_branch) { return {}; }
   constexpr unsigned byte_bits = 8;
-  constexpr unsigned byte_extension = 0xff00;
   instruction.kind = Kind::branch;
   instruction.length = static_cast<std::uint8_t>(length);
   instruction.condition = static_cast<std::uint8_t>(operation - first_branch);
@@ -176,8 +246,9 @@ std::optional<Instruction> decode(const std::span<const std::uint8_t> bytes) {
   constexpr unsigned first_branch = 0x20;
   constexpr unsigned last_branch = 0x2f;
   constexpr unsigned prefix = 0x18;
-  constexpr unsigned indexed_jump = 5;
-  constexpr unsigned extended_jump = 6;
+  constexpr unsigned first_jump = 5;
+  constexpr unsigned bsr = 7;
+  constexpr unsigned first_call = 0x15;
   constexpr unsigned accumulator_b = 0x40;
   constexpr unsigned store_mask = 0xde;
   constexpr unsigned store_a = 0x5a;
@@ -187,10 +258,11 @@ std::optional<Instruction> decode(const std::span<const std::uint8_t> bytes) {
   if (opcode == nop && bytes.size() == 1) {
     return Instruction{.kind = Kind::nop, .opcode = opcode, .length = 1};
   }
-  if ((opcode >= first_branch && opcode <= last_branch) || opcode == prefix ||
-      opcode == indexed_jump || opcode == extended_jump) {
+  if ((opcode >= first_branch && opcode <= last_branch) ||
+      (opcode >= first_jump && opcode <= bsr) || (opcode >= first_call && opcode <= prefix)) {
     return control(bytes);
   }
+  if (stack_opcode(opcode)) { return stack(bytes); }
   Instruction instruction{.opcode = opcode};
   constexpr unsigned first_indexed_store = 0x6a;
   constexpr unsigned last_indexed_store = 0x6f;

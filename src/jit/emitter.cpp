@@ -6,6 +6,7 @@
 #include "instruction.hpp"
 #include "jit/code.hpp"
 #include "jit/indexed.hpp"
+#include "jit/stack.hpp"
 #include "runtime.hpp"
 
 #include <array>
@@ -14,6 +15,7 @@
 #include <cstdint>
 #include <span>
 #include <stdexcept>
+#include <utility>
 #include <vector>
 
 namespace cpu12::detail {
@@ -201,6 +203,10 @@ void arithmetic(Code &code, const Instruction &instruction, const Ram ram) {
       opcode = test_al;
       store = false;
       break;
+    case Kind::call:
+    case Kind::push:
+    case Kind::pull:
+    case Kind::return_subroutine:
     case Kind::jump:
     case Kind::effective_address:
     case Kind::nop:
@@ -339,6 +345,10 @@ WordEncoding word_operation(const Instruction &instruction) {
     case Kind::add: return add_ax;
     case Kind::subtract: return sub_ax;
     case Kind::compare: return cmp_ax;
+    case Kind::call:
+    case Kind::push:
+    case Kind::pull:
+    case Kind::return_subroutine:
     case Kind::jump:
     case Kind::effective_address:
     case Kind::nop:
@@ -434,7 +444,12 @@ void branch(Code &code, const Instruction &instruction) {
 std::vector<std::uint8_t> emit(const Instruction &instruction, const Ram ram) {
   Code code;
   code.raw(entry);
-  if (instruction.kind == Kind::jump) {
+  if (instruction.kind == Kind::call) {
+    subroutine_call(code, instruction, ram);
+  } else if (instruction.kind == Kind::push || instruction.kind == Kind::pull ||
+             instruction.kind == Kind::return_subroutine) {
+    stack_instruction(code, instruction, ram);
+  } else if (instruction.kind == Kind::jump) {
     jump(code, instruction, ram);
   } else if (instruction.kind == Kind::effective_address) {
     indexed_effective_address(code, instruction);
@@ -450,6 +465,6 @@ std::vector<std::uint8_t> emit(const Instruction &instruction, const Ram ram) {
   } else {
     arithmetic(code, instruction, ram);
   }
-  return code.bytes;
+  return std::move(code).take();
 }
 }

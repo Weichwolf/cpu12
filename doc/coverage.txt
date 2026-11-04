@@ -23,6 +23,9 @@ Initial native implementation on x86-64/Linux:
 - Recursive execution and state/cache mutations are refused during callbacks.
 - BRA/BRN and all short/long unsigned/signed conditional branches.
 - Extended and all indexed JMP forms, including actual indirect pointer accesses.
+- Direct/extended/indexed JSR, relative BSR and RTS with real big-endian return stacks.
+- Byte/word PSH/PUL for A/B/CCR/D/X/Y; PULC cannot raise an initially clear X mask.
+- Indirect calls retain their actual target across overlapping stack writes and bus faults.
 - Native N/Z/V/C/H effects where specified; other CCR bits and registers retained.
 - Captured-byte cache keys, bounded entry count and explicit cache invalidation.
 - W^X code pages and a typed assembly bridge into generated code.
@@ -43,11 +46,16 @@ Open requirements:
 - Real firmware startup, actual instrument behavior and whole-emulator throughput.
 - Other host architectures, extensive sanitizer matrices and broader regression.
 
+The separate SLEIGH comparison differs for 5-bit JSR0,SP versus equivalent
+9/16-bit forms. CPU12 uses uniform pre-stack indexed address rules; this corner
+remains physically unmeasured. stack.txt records the distinction.
+
 No native throughput or real-time claim is made from correctness test duration.
 Broad QA is deferred until original Blofeld firmware runs in real time, as the
 user requested. No fuzzing was run. Current qualification is in
-control-reference.json: long branches and JMP plus all six previous
-native/byte/word/API/indexed/auto consumers use the same coherent library.
+stack-reference.json: 2328433 stack/call cases and all seven previous
+native/byte/word/API/indexed/auto/control consumers use the same coherent library.
+Historical control-reference.json pins long-branch/JMP qualification.
 Historical auto-indexed-reference.json pins 292732 auto/LEA cases.
 Historical indexed-reference.json pins the earlier non-auto integration and
 its four directed SMT arithmetic proofs with two SAT negative controls.

@@ -41,8 +41,8 @@ constexpr std::array<std::uint8_t, 3> call_address{0x44, 0x89, 0xce};
 constexpr std::array<std::uint8_t, 2> absolute_pointer{0x49, 0xbb};
 constexpr std::array<std::uint8_t, 3> call_absolute{0x41, 0xff, 0xd3};
 constexpr std::array<std::uint8_t, 6> call_leave{0x48, 0x83, 0xc4, 0x08, 0x5e, 0x5f};
-constexpr std::array<std::uint8_t, 5> write_status{0x85, 0xc0, 0x75, 0x01, 0xc3};
-constexpr std::array<std::uint8_t, 5> read_status{0x75, 0x01, 0xc3, 0x89, 0xc1};
+constexpr std::array<std::uint8_t, 2> write_status{0x85, 0xc0};
+constexpr std::array<std::uint8_t, 2> read_value{0x89, 0xc1};
 constexpr std::array<std::uint8_t, 4> next_address{0x45, 0x8d, 0x41, 0x01};
 constexpr std::array<std::uint8_t, 3> mask_low{0x41, 0x81, 0xe0};
 constexpr std::array<std::uint8_t, 3> move_address{0x45, 0x89, 0xca};
@@ -76,10 +76,6 @@ enum Encoding : std::uint8_t {
   ret = 0xc3,
   full_index = 0x0b,
   partial_index = 0x13
-};
-
-struct Access {
-  bool word = false, write = false;
 };
 
 bool replaces_base(const Instruction &instruction) {
@@ -149,8 +145,12 @@ void bus_call(Code &code, const Access access) {
   } else {
     code.byte(compare_result); // cmp eax, failed_read/failed_word_read
     code.u32(access.word ? failed_word_read : failed_read);
-    code.raw(read_status);
   }
+  constexpr std::uint8_t accepted = 0x75;
+  code.byte(accepted);
+  code.byte(code.return_size());
+  code.return_();
+  if (!access.write) { code.raw(read_value); }
 }
 
 void offset(Code &code, const Ram ram, const bool low) {
@@ -203,7 +203,9 @@ void native_access(Code &code, const Ram ram, const Access access) {
   }
 }
 
-void memory_access(Code &code, const Ram ram, const Access access) {
+}
+
+void data_access(Code &code, const Ram ram, const Access access) {
   if (ram.bytes.empty()) {
     bus_call(code, access);
     return;
@@ -224,25 +226,28 @@ void memory_access(Code &code, const Ram ram, const Access access) {
   code.bind(done);
 }
 
-void resolve(Code &code, const Instruction &instruction, const Ram ram) {
+void indexed_address(Code &code, const Instruction &instruction, const Ram ram) {
   effective_address(code, instruction);
   if (instruction.indexed.indirect) {
-    memory_access(code, ram, {.word = true});
+    data_access(code, ram, {.word = true});
     code.raw(pointer_result); // mov r9d, ecx
   }
 }
+
+void indexed_commit(Code &code, const Instruction &instruction) {
+  update_index(code, instruction);
 }
 
 void indexed_read(Code &code, const Instruction &instruction, const Ram ram) {
-  resolve(code, instruction, ram);
-  memory_access(code, ram, {.word = instruction.word});
+  indexed_address(code, instruction, ram);
+  data_access(code, ram, {.word = instruction.word});
   // A refused access has already returned before any CPU mutation. Successful
   // auto-update precedes the operation, whose register destination may replace it.
   update_index(code, instruction);
 }
 
 void indexed_write(Code &code, const Instruction &instruction, const Ram ram) {
-  resolve(code, instruction, ram);
+  indexed_address(code, instruction, ram);
   // The indirect pointer access can use a real ABI callback, so load the source
   // only after resolving it. CPU registers are unchanged until accepted access.
   code.raw(argument_prefix);
@@ -259,7 +264,7 @@ void indexed_write(Code &code, const Instruction &instruction, const Ram ram) {
     code.raw(advance_source);
     code.u16(static_cast<std::uint16_t>(instruction.indexed.update));
   }
-  memory_access(code, ram, {.word = instruction.word, .write = true});
+  data_access(code, ram, {.word = instruction.word, .write = true});
   update_index(code, instruction);
 }
 
@@ -271,7 +276,7 @@ void jump(Code &code, const Instruction &instruction, const Ram ram) {
     code.byte(pc_offset);
     code.u16(instruction.address);
   } else {
-    resolve(code, instruction, ram);
+    indexed_address(code, instruction, ram);
     update_index(code, instruction);
     code.raw(store_address);
     code.byte(pc_offset);
