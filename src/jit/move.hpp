@@ -5,5 +5,5 @@
 #include "jit/code.hpp"
 
 namespace cpu12::detail {
-void move_instruction(Code &code, const Instruction &instruction, Ram ram);
+void move_instruction(Code &code, const Instruction &instruction, const Memory &ram);
 }

@@ -14,5 +14,5 @@ struct Capture {
   bool supported = false;
 };
 
-[[nodiscard]] Capture fetch(Ram ram, NativeContext &context, Address pc);
+[[nodiscard]] Capture fetch(const Memory &ram, NativeContext &context, Address pc);
 }

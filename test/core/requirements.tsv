@@ -1,6 +1,6 @@
 id	requirement	status	remaining
 ISA	Complete documented instructions, encodings and addressing	partial	Complete independent operand/flag/mode qualification remains open
-MEMORY	Bounds, aliases, byte order, I/O effects and code invalidation	partial	Qualify all mapping and mutation combinations
+MEMORY	Bounds, aliases, byte order, I/O effects and program identity	partial	mapped-memory qualifies live grants, knowledge and retained remaps; complete cycle/event and mutation qualification remains open
 RESET	Reset vectors and architectural initial state	partial	Complete documented reset cases
 IRQ	IRQ/XIRQ, eligibility, stack frames and RTI	partial	Complete admission and deferred-interrupt sequences
 WAIT	WAI/STOP and wake state	partial	Complete wait/interrupt combinations

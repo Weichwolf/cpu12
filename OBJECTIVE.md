@@ -33,3 +33,11 @@ Keep the outward public API aligned with dsp56300 and as small as necessary.
 Core owns state, exposed read-only when requested; normal consumers do not manage
 it. Production execution is JIT-only. Future x86/SSE/AVX and ARM/NEON emitters
 implement the same host concept. Preserve the general ISA beyond Blofeld needs.
+
+Before further emulator integration or optimization, both CPU12 and DSP56300
+must approach matched host-ASM throughput on representative warmed workloads.
+The complete instrument objective remains unchanged. Optimize native blocks,
+loops, register/flag liveness and code layout in the cores, validate equivalent
+results and report per-workload JIT/host percentages. The current small CPU12
+fixtures are far below this target; their passing correctness tests do not
+satisfy the performance gate.

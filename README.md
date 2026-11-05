@@ -46,6 +46,13 @@ core. The example executes NOP and STOP; a consumer supplies its own program and
 optional I/O. `state()` provides an optional live, read-only view of Core-owned
 state on that execution thread. Unsupported instructions or modes report explicit faults.
 
+`Memory::mapped` accepts disjoint `Ram` grants with optional live byte knownness
+and write permission. Core copies the descriptors; their backing storage must
+remain alive for its lifetime. `set_memory` selects bindings between runs while
+preserving CPU state and retaining previous native translations. Changed executable
+contents require a new grant `identity` at that transition. Boundary words
+may require an owner word callback. Cycle/event accounting remains incomplete.
+
 The `cpu12-kernel-bench` target checks ALU/flags, RAM read-modify-write and
 counted-branch fixtures. Run `build/release/cpu12-kernel-bench` for cold-run and
 median warm throughput against a checked x86-64 ASM reference. Both paths include

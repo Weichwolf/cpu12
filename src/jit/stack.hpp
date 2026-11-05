@@ -5,6 +5,6 @@
 #include "jit/code.hpp"
 
 namespace cpu12::detail {
-void stack_instruction(Code &code, const Instruction &instruction, Ram ram);
-void subroutine_call(Code &code, const Instruction &instruction, Ram ram);
+void stack_instruction(Code &code, const Instruction &instruction, const Memory &ram);
+void subroutine_call(Code &code, const Instruction &instruction, const Memory &ram);
 }

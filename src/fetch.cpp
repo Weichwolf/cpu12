@@ -4,6 +4,7 @@
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
 #include "instruction.hpp"
+#include "memory.hpp"
 #include "runtime.hpp"
 
 #include <array>
@@ -52,11 +53,11 @@ const Plan &select_plan(const unsigned opcode, const bool page) {
   return page ? secondary[opcode] : primary[opcode];
 }
 
-bool byte(Capture &capture, const Ram ram, NativeContext &context, const Address pc) {
+bool byte(Capture &capture, const Memory &ram, NativeContext &context, const Address pc) {
   const auto address = static_cast<Address>(pc + capture.size);
   Byte value = 0;
-  if (address >= ram.first && static_cast<std::size_t>(address - ram.first) < ram.bytes.size()) {
-    value = ram.bytes[static_cast<std::size_t>(address - ram.first)];
+  if (const auto *pointer = known_byte(ram, address)) {
+    value = *pointer;
   } else {
     bool accepted = false;
     if (context.io.fetch != nullptr) {
@@ -87,7 +88,7 @@ unsigned indexed_length(const Plan selected, const unsigned postbyte) {
 }
 }
 
-Capture fetch(const Ram ram, NativeContext &context, const Address pc) {
+Capture fetch(const Memory &ram, NativeContext &context, const Address pc) {
   Capture capture;
   if (!byte(capture, ram, context, pc)) { return capture; }
   const bool page = capture.bytes[0] == prefix;

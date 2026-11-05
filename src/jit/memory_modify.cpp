@@ -8,6 +8,7 @@
 #include "jit/flags.hpp"
 #include "jit/indexed.hpp"
 #include "jit/registers.hpp"
+#include "memory.hpp"
 
 #include <array>
 #include <bit>
@@ -48,7 +49,7 @@ void result_flags(Code &code, const Instruction &instruction, const bool publish
   }
 }
 
-void address(Code &code, const Instruction &instruction, const Ram ram) {
+void address(Code &code, const Instruction &instruction, const Memory &ram) {
   if (instruction.addressing == Addressing::indexed) {
     indexed_address(code, instruction, ram);
   } else {
@@ -64,7 +65,7 @@ void finish(Code &code, const Instruction &instruction) {
   code.return_();
 }
 
-void single_access(Code &code, const Instruction &instruction, const Ram ram) {
+void single_access(Code &code, const Instruction &instruction, const Memory &ram) {
   if (instruction.operation == RegisterOp::test) {
     data_access(code, ram, {});
     code.raw(operand);
@@ -79,7 +80,7 @@ void single_access(Code &code, const Instruction &instruction, const Ram ram) {
   finish(code, instruction);
 }
 
-void bit_branch(Code &code, const Instruction &instruction, const Ram ram) {
+void bit_branch(Code &code, const Instruction &instruction, const Memory &ram) {
   data_access(code, ram, {.selected = true, .mask = instruction.bit_mask});
   code.raw(operand);
   if (instruction.condition == 0) {
@@ -111,12 +112,12 @@ void known_ram(Code &code, const Instruction &instruction, const Ram ram) {
   finish(code, instruction);
 }
 
-void external(Code &code, const Instruction &instruction) {
+void external(Code &code, const Instruction &instruction, const Memory &memory) {
   // Only the bus path needs staged address/result/flags. Fault epilogues release
   // this host frame; accepted external effects are never rolled back or replayed.
   code.frame();
   code.raw(save_address);
-  data_access(code, {}, {});
+  data_access(code, memory, {});
   code.raw(operand);
   operation(code, instruction);
   code.raw(save_result);
@@ -126,14 +127,14 @@ void external(Code &code, const Instruction &instruction) {
   code.raw(restore_context);
   code.raw(restore_address);
   code.raw(restore_result);
-  data_access(code, {}, {.write = true});
+  data_access(code, memory, {.write = true});
   code.raw(restore_flags);
   code.raw(publish_flags);
   finish(code, instruction);
 }
 }
 
-void memory_modify_instruction(Code &code, const Instruction &instruction, const Ram ram) {
+void memory_modify_instruction(Code &code, const Instruction &instruction, const Memory &ram) {
   address(code, instruction, ram);
   if (instruction.kind == Kind::bit_branch) {
     bit_branch(code, instruction, ram);
@@ -144,15 +145,17 @@ void memory_modify_instruction(Code &code, const Instruction &instruction, const
     single_access(code, instruction, ram);
     return;
   }
-  if (!ram.bytes.empty()) {
-    if (ram.first == 0 && ram.bytes.size() == address_bytes) {
-      known_ram(code, instruction, ram);
-      return;
-    }
-    const auto outside = outside_byte_ram(code, ram);
-    known_ram(code, instruction, ram);
-    code.bind(outside);
+  const auto plain = plain_ram(ram);
+  if (plain.first == 0 && plain.bytes.size() == address_bytes) {
+    known_ram(code, instruction, plain);
+    return;
   }
-  external(code, instruction);
+  for (const auto region : ram.regions()) {
+    if (region.bytes.empty() || !region.writable) { continue; }
+    const auto refused = admit_ram(code, region, {});
+    known_ram(code, instruction, region);
+    for (const auto position : refused) { code.bind(position); }
+  }
+  external(code, instruction, ram);
 }
 }

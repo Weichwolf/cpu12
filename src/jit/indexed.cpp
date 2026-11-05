@@ -5,11 +5,13 @@
 #include "cpu12/memory.hpp"
 #include "instruction.hpp"
 #include "jit/code.hpp"
+#include "memory.hpp"
 #include "runtime.hpp"
 
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <vector>
 
 namespace cpu12::detail {
 namespace {
@@ -215,38 +217,65 @@ void native_access(Code &code, const Ram ram, const Access access) {
   }
 }
 
+void mark_known(Code &code, const Ram ram, const Access access) {
+  if (!access.write || ram.known.empty()) { return; }
+  code.raw(absolute_pointer);
+  code.u64(reinterpret_cast<std::uintptr_t>(ram.known.data()));
+  constexpr std::array<std::uint8_t, 5> high{0x43, 0xc6, 0x04, 0x13, 1};
+  constexpr std::array<std::uint8_t, 5> low{0x43, 0xc6, 0x04, 0x03, 1};
+  code.raw(high);
+  if (access.word) { code.raw(low); }
 }
 
-std::size_t outside_byte_ram(Code &code, const Ram ram) {
-  return outside(code, ram, false);
+std::size_t unknown(Code &code, const bool low) {
+  constexpr std::array<std::uint8_t, 3> compare{0x43, 0x80, 0x3c};
+  constexpr std::array<std::uint8_t, 2> zero{0x0f, 0x84};
+  code.raw(compare);
+  code.byte(low ? 0x03 : partial_index);
+  code.byte(0);
+  code.raw(zero);
+  return code.relative32();
+}
+}
+
+std::vector<std::size_t> admit_ram(Code &code, const Ram ram, const Access access) {
+  std::vector<std::size_t> refused{outside(code, ram, false)};
+  if (access.word) { refused.push_back(outside(code, ram, true)); }
+  if (!access.write && !ram.known.empty()) {
+    code.raw(absolute_pointer);
+    code.u64(reinterpret_cast<std::uintptr_t>(ram.known.data()));
+    refused.push_back(unknown(code, false));
+    if (access.word) { refused.push_back(unknown(code, true)); }
+  }
+  return refused;
 }
 
 void native_data_access(Code &code, const Ram ram, const Access access) {
   native_access(code, ram, access);
+  mark_known(code, ram, access);
 }
 
-void data_access(Code &code, const Ram ram, const Access access) {
-  if (ram.bytes.empty()) {
-    bus_call(code, access);
+void data_access(Code &code, const Memory &memory, const Access access) {
+  const auto plain = plain_ram(memory);
+  if (plain.first == 0 && plain.bytes.size() == address_bytes) {
+    if (access.word) { offset(code, plain, true); }
+    native_access(code, plain, access);
     return;
   }
-  if (ram.first == 0 && ram.bytes.size() == address_bytes) {
-    if (access.word) { offset(code, ram, true); }
-    native_access(code, ram, access);
-    return;
+  std::vector<std::size_t> done;
+  for (const auto ram : memory.regions()) {
+    if (ram.bytes.empty() || (access.write && !ram.writable)) { continue; }
+    const auto refused = admit_ram(code, ram, access);
+    native_data_access(code, ram, access);
+    code.byte(jump_relative);
+    done.push_back(code.relative32());
+    for (const auto position : refused) { code.bind(position); }
   }
-  const auto high = outside(code, ram, false);
-  const auto low = access.word ? outside(code, ram, true) : high;
-  native_access(code, ram, access);
-  code.byte(jump_relative); // jmp done
-  const auto done = code.relative32();
-  code.bind(high);
-  if (access.word) { code.bind(low); }
   bus_call(code, access);
-  code.bind(done);
+  for (const auto position : done) { code.bind(position); }
 }
 
-void indexed_address(Code &code, const Instruction &instruction, const Ram ram) {
+void indexed_address(Code &code, const Instruction &instruction, const Memory &ram) {
   effective_address(code, instruction);
   if (instruction.indexed.indirect) {
     data_access(code, ram, {.word = true});
@@ -258,7 +287,7 @@ void indexed_commit(Code &code, const Instruction &instruction) {
   update_index(code, instruction);
 }
 
-void indexed_read(Code &code, const Instruction &instruction, const Ram ram) {
+void indexed_read(Code &code, const Instruction &instruction, const Memory &ram) {
   indexed_address(code, instruction, ram);
   data_access(code, ram, {.word = instruction.word});
   // A refused access has already returned before any CPU mutation. Successful
@@ -266,7 +295,7 @@ void indexed_read(Code &code, const Instruction &instruction, const Ram ram) {
   update_index(code, instruction);
 }
 
-void indexed_write(Code &code, const Instruction &instruction, const Ram ram) {
+void indexed_write(Code &code, const Instruction &instruction, const Memory &ram) {
   indexed_address(code, instruction, ram);
   // The indirect pointer access can use a real ABI callback, so load the source
   // only after resolving it. CPU registers are unchanged until accepted access.
@@ -288,7 +317,7 @@ void indexed_write(Code &code, const Instruction &instruction, const Ram ram) {
   update_index(code, instruction);
 }
 
-void jump(Code &code, const Instruction &instruction, const Ram ram) {
+void jump(Code &code, const Instruction &instruction, const Memory &ram) {
   constexpr auto pc_offset = static_cast<std::uint8_t>(offsetof(Registers, pc));
   if (instruction.addressing == Addressing::extended) {
     constexpr std::array<std::uint8_t, 3> store_immediate{0x66, 0xc7, 0x47};

@@ -8,5 +8,5 @@
 #include <vector>
 
 namespace cpu12::detail {
-[[nodiscard]] std::vector<std::uint8_t> emit(const Instruction &instruction, Ram ram);
+[[nodiscard]] std::vector<std::uint8_t> emit(const Instruction &instruction, const Memory &ram);
 }

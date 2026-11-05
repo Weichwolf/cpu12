@@ -15,7 +15,6 @@
 #include "jit/registers.hpp"
 #include "jit/stack.hpp"
 #include "jit/transfer.hpp"
-#include "runtime.hpp"
 
 #include <array>
 #include <bit>
@@ -74,65 +73,30 @@ enum Encoding : std::uint8_t {
 
 // All call templates retain state/context registers and SysV stack alignment.
 constexpr std::array<std::uint8_t, 2> absolute_r11{0x49, 0xbb};
-constexpr std::array<std::uint8_t, 9> call_begin{
-    0x57, 0x56, 0x48, 0x83, 0xec, 0x08, 0x48, 0x89, 0xf7};
-constexpr std::array<std::uint8_t, 3> call_r11{0x41, 0xff, 0xd3};
-constexpr std::array<std::uint8_t, 6> call_end{0x48, 0x83, 0xc4, 0x08, 0x5e, 0x5f};
-constexpr std::array<std::uint8_t, 8> read_result{0x3d, 0x00, 0x01, 0x00, 0x00, 0x75, 0x01, 0xc3};
-constexpr std::array<std::uint8_t, 8> word_read_result{
-    0x3d, 0x00, 0x00, 0x01, 0x00, 0x75, 0x01, 0xc3};
-constexpr std::array<std::uint8_t, 3> word_write_argument{0x0f, 0xb7, 0xd0};
-constexpr std::array<std::uint8_t, 5> write_result{0x85, 0xc0, 0x75, 0x01, 0xc3};
-constexpr std::array<std::uint8_t, 2> operand_from_ax{0x89, 0xc1};
+
 constexpr std::array<std::uint8_t, 4> ram_read{0x41, 0x0f, 0xb6, 0x0b};
 constexpr std::array<std::uint8_t, 3> ram_write{0x41, 0x88, 0x03};
-constexpr std::array<std::uint8_t, 3> write_argument{0x0f, 0xb6, 0xd0};
 
-std::uint8_t *ram_pointer(const Ram ram, const std::uint16_t address) {
-  if (address < ram.first) { return nullptr; }
-  const auto offset = static_cast<std::size_t>(address - ram.first);
-  return offset < ram.bytes.size() ? ram.bytes.data() + offset : nullptr;
+std::uint8_t *ram_pointer(const Memory &memory, const std::uint16_t address) {
+  for (const auto ram : memory.regions()) {
+    if (!ram.writable || !ram.known.empty() || address < ram.first) { continue; }
+    const auto offset = static_cast<std::size_t>(address - ram.first);
+    if (offset < ram.bytes.size()) { return ram.bytes.data() + offset; }
+  }
+  return nullptr;
 }
 
-void bus_call(Code &code, const Instruction &instruction, const bool write) {
-  if (write) {
-    if (instruction.word) {
-      code.raw(word_write_argument);
-    } else {
-      code.raw(write_argument);
-    }
-  }
-  code.raw(call_begin);
-  code.byte(load_si);
+void constant_access(Code &code,
+                     const Instruction &instruction,
+                     const Memory &memory,
+                     const bool write) {
+  constexpr std::array<std::uint8_t, 2> address{0x41, 0xb9};
+  code.raw(address);
   code.u32(instruction.address);
-  code.raw(absolute_r11);
-  if (write) {
-    if (instruction.word) {
-      code.u64(reinterpret_cast<std::uintptr_t>(&write_word));
-    } else {
-      code.u64(reinterpret_cast<std::uintptr_t>(&write_byte));
-    }
-  } else {
-    if (instruction.word) {
-      code.u64(reinterpret_cast<std::uintptr_t>(&read_word));
-    } else {
-      code.u64(reinterpret_cast<std::uintptr_t>(&read_byte));
-    }
-  }
-  code.raw(call_r11);
-  code.raw(call_end);
-  if (write) {
-    code.raw(write_result);
-  } else {
-    if (instruction.word) {
-      code.raw(word_read_result);
-    } else {
-      code.raw(read_result);
-    }
-  }
+  data_access(code, memory, {.word = instruction.word, .write = write});
 }
 
-void memory_read(Code &code, const Instruction &instruction, const Ram ram) {
+void memory_read(Code &code, const Instruction &instruction, const Memory &ram) {
   if (instruction.addressing == Addressing::indexed) {
     indexed_read(code, instruction, ram);
     return;
@@ -143,11 +107,10 @@ void memory_read(Code &code, const Instruction &instruction, const Ram ram) {
     code.raw(ram_read);
     return;
   }
-  bus_call(code, instruction, false);
-  code.raw(operand_from_ax);
+  constant_access(code, instruction, ram, false);
 }
 
-void memory_write(Code &code, const Instruction &instruction, const Ram ram) {
+void memory_write(Code &code, const Instruction &instruction, const Memory &ram) {
   if (instruction.addressing == Addressing::indexed) {
     indexed_write(code, instruction, ram);
     return;
@@ -158,7 +121,7 @@ void memory_write(Code &code, const Instruction &instruction, const Ram ram) {
     code.raw(ram_write);
     return;
   }
-  bus_call(code, instruction, true);
+  constant_access(code, instruction, ram, true);
 }
 
 }
@@ -193,7 +156,7 @@ void restore_carry(Code &code) {
 
 namespace {
 
-void arithmetic(Code &code, const Instruction &instruction, const Ram ram) {
+void arithmetic(Code &code, const Instruction &instruction, const Memory &ram) {
   const bool immediate = instruction.addressing == Addressing::immediate;
   if (!immediate) { memory_read(code, instruction, ram); }
   const auto offset = static_cast<std::uint8_t>(d_offset + (instruction.accumulator_b ? 0 : 1));
@@ -284,7 +247,7 @@ void arithmetic(Code &code, const Instruction &instruction, const Ram ram) {
   code.byte(ret);
 }
 
-void store(Code &code, const Instruction &instruction, const Ram ram) {
+void store(Code &code, const Instruction &instruction, const Memory &ram) {
   const auto offset = static_cast<std::uint8_t>(d_offset + (instruction.accumulator_b ? 0 : 1));
   if (instruction.addressing != Addressing::indexed) {
     code.raw(load_accumulator);
@@ -333,7 +296,7 @@ void pointer_constant(Code &code, const std::uint8_t *pointer) {
   code.u64(reinterpret_cast<std::uintptr_t>(pointer));
 }
 
-void word_memory_read(Code &code, const Instruction &instruction, const Ram ram) {
+void word_memory_read(Code &code, const Instruction &instruction, const Memory &ram) {
   if (instruction.addressing == Addressing::indexed) {
     indexed_read(code, instruction, ram);
     return;
@@ -342,8 +305,7 @@ void word_memory_read(Code &code, const Instruction &instruction, const Ram ram)
   const auto *high = ram_pointer(ram, instruction.address);
   const auto *low = ram_pointer(ram, next);
   if (high == nullptr || low == nullptr) {
-    bus_call(code, instruction, false);
-    code.raw(operand_from_ax);
+    constant_access(code, instruction, ram, false);
     return;
   }
   pointer_constant(code, high);
@@ -359,7 +321,7 @@ void word_memory_read(Code &code, const Instruction &instruction, const Ram ram)
   }
 }
 
-void word_memory_write(Code &code, const Instruction &instruction, const Ram ram) {
+void word_memory_write(Code &code, const Instruction &instruction, const Memory &ram) {
   if (instruction.addressing == Addressing::indexed) {
     indexed_write(code, instruction, ram);
     return;
@@ -368,7 +330,7 @@ void word_memory_write(Code &code, const Instruction &instruction, const Ram ram
   const auto *high = ram_pointer(ram, instruction.address);
   const auto *low = ram_pointer(ram, next);
   if (high == nullptr || low == nullptr) {
-    bus_call(code, instruction, true);
+    constant_access(code, instruction, ram, true);
     return;
   }
   code.raw(swap_ax);
@@ -435,7 +397,7 @@ WordEncoding word_register_operation(const WordEncoding opcode) {
   }
 }
 
-void word_instruction(Code &code, const Instruction &instruction, const Ram ram) {
+void word_instruction(Code &code, const Instruction &instruction, const Memory &ram) {
   const auto offset = word_offsets[static_cast<unsigned>(instruction.target)];
   if (instruction.kind == Kind::store) {
     if (instruction.addressing != Addressing::indexed) {
@@ -499,7 +461,7 @@ void branch(Code &code, const Instruction &instruction) {
 }
 }
 
-std::vector<std::uint8_t> emit(const Instruction &instruction, const Ram ram) {
+std::vector<std::uint8_t> emit(const Instruction &instruction, const Memory &ram) {
   if (instruction.kind == Kind::software_interrupt) {
     constexpr Address software_vector = 0xfff6;
     return emit_interrupt(

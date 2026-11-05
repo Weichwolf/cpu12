@@ -4,10 +4,10 @@
 #include "cpu12/memory.hpp"
 #include "fetch.hpp"
 #include "jit.hpp"
+#include "memory.hpp"
 #include "runtime.hpp"
 
 #include <bit>
-#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <span>
@@ -18,16 +18,10 @@
 
 namespace cpu12 {
 namespace {
-const Byte *known_byte(const Ram ram, const Address address) noexcept {
-  if (address < ram.first) { return nullptr; }
-  const auto offset = static_cast<std::size_t>(address - ram.first);
-  return offset < ram.bytes.size() ? ram.bytes.data() + offset : nullptr;
-}
-
 std::uint32_t
-reset_vector(const Ram ram, detail::NativeContext &context, const Address vector) noexcept {
-  const auto *high = known_byte(ram, vector);
-  const auto *low = known_byte(ram, static_cast<Address>(vector + 1U));
+reset_vector(const Memory &ram, detail::NativeContext &context, const Address vector) noexcept {
+  const auto *high = detail::known_byte(ram, vector);
+  const auto *low = detail::known_byte(ram, static_cast<Address>(vector + 1U));
   if (high == nullptr || low == nullptr) { return detail::read_word(&context, vector); }
   constexpr unsigned byte_bits = 8;
   return (static_cast<std::uint32_t>(*high) << byte_bits) | *low;
@@ -36,10 +30,9 @@ reset_vector(const Ram ram, detail::NativeContext &context, const Address vector
 
 class Core::Impl {
 public:
-  Impl(const Ram memory, const Io io) : ram(memory), context{.io = io}, jit(memory) {}
+  Impl(const Memory &memory, const Io io) : context{.io = io}, jit(memory) {}
 
   const bool supported = Core::native_supported();
-  Ram ram;
   detail::NativeContext context;
   detail::Jit jit;
   bool active = false;
@@ -73,7 +66,7 @@ public:
 
   RunResult step() {
     RunResult result{.state = context.cpu.execution, .pc = context.cpu.registers.pc};
-    const auto capture = detail::fetch(ram, context, result.pc);
+    const auto capture = detail::fetch(jit.memory(), context, result.pc);
     if (capture.size != 0) { result.opcode = capture.bytes[0]; }
     if (context.fault != Fault::none) {
       result = failed(result);
@@ -88,7 +81,7 @@ public:
 };
 
 Core::Core(const Memory memory, Io *const io)
-    : impl_(std::make_unique<Impl>(memory.storage(), io != nullptr ? *io : Io{})) {}
+    : impl_(std::make_unique<Impl>(memory, io != nullptr ? *io : Io{})) {}
 
 Core::~Core() = default;
 
@@ -123,6 +116,11 @@ void Core::set_registers(const Registers registers) {
   impl_->context.cpu.irq_delay = 0;
   impl_->context.cpu.returned_frame = false;
   impl_->context.cpu.execution = ExecutionState::running;
+}
+
+void Core::set_memory(const Memory memory) {
+  if (impl_->active) { throw std::logic_error("Cannot remap active CPU12 memory"); }
+  impl_->jit.set_memory(memory);
 }
 
 RunResult Core::run_instruction(const std::span<const std::uint8_t> bytes) {
@@ -221,7 +219,7 @@ EventResult Core::reset(const std::uint16_t vector) noexcept {
   impl_->context.cpu.irq_delay = 0;
   impl_->context.cpu.returned_frame = false;
   impl_->active = true;
-  const auto target = reset_vector(impl_->ram, impl_->context, vector);
+  const auto target = reset_vector(impl_->jit.memory(), impl_->context, vector);
   if (target == detail::failed_word_read) {
     const auto failed = impl_->failed({.pc = result.pc});
     result.fault = failed.fault;

@@ -6,6 +6,7 @@
 #include "instruction.hpp"
 #include "jit/code.hpp"
 #include "jit/indexed.hpp"
+#include "memory.hpp"
 #include "runtime.hpp"
 
 #include <array>
@@ -30,7 +31,7 @@ constexpr std::array<Part, 5> parts{
      {.position = 7, .destination = static_cast<std::uint8_t>(offsetof(Registers, pc))},
      {.position = 5, .destination = static_cast<std::uint8_t>(offsetof(Registers, y))}}};
 
-void read_part(Code &code, const Part part, const Ram ram) {
+void read_part(Code &code, const Part part, const Memory &ram) {
   const Instruction address{.addressing = Addressing::indexed,
                             .indexed = {.base = IndexBase::sp, .displacement = part.position}};
   indexed_address(code, address, ram);
@@ -101,14 +102,14 @@ void defer_interrupt(Code &code, const bool accumulator) {
 }
 
 std::vector<std::uint8_t> emit_interrupt(const InterruptRequest request,
-                                         const Ram ram,
+                                         const Memory &ram,
                                          const InterruptFrame frame,
                                          const std::uint8_t next_pc) {
   Code code;
   constexpr std::array<std::uint8_t, 4> entry{0xf3, 0x0f, 0x1e, 0xfa};
   code.raw(entry);
-  const bool external =
-      frame == InterruptFrame::push && (ram.first != 0 || ram.bytes.size() != address_bytes);
+  const bool external = frame == InterruptFrame::push &&
+                        (plain_ram(ram).first != 0 || plain_ram(ram).bytes.size() != address_bytes);
   if (external) { code.frame(); }
   constexpr std::array<std::uint8_t, 2> vector_address{0x41, 0xb9};
   code.raw(vector_address);
@@ -148,8 +149,8 @@ std::vector<std::uint8_t> emit_interrupt(const InterruptRequest request,
   return std::move(code).take();
 }
 
-void return_interrupt(Code &code, const Ram ram) {
-  const bool external = ram.first != 0 || ram.bytes.size() != address_bytes;
+void return_interrupt(Code &code, const Memory &ram) {
+  const bool external = plain_ram(ram).first != 0 || plain_ram(ram).bytes.size() != address_bytes;
   if (external) { code.frame(); }
   for (const auto part : parts) {
     read_part(code, part, ram);

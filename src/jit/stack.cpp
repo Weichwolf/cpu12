@@ -6,6 +6,7 @@
 #include "instruction.hpp"
 #include "jit/code.hpp"
 #include "jit/indexed.hpp"
+#include "memory.hpp"
 
 #include <array>
 #include <bit>
@@ -68,7 +69,7 @@ void pull(Code &code, const Instruction &instruction) {
 }
 }
 
-void stack_instruction(Code &code, const Instruction &instruction, const Ram ram) {
+void stack_instruction(Code &code, const Instruction &instruction, const Memory &ram) {
   const bool push = instruction.kind == Kind::push;
   const int width = instruction.word ? 2 : 1;
   indexed_address(code, stack_address(push ? -width : 0), ram);
@@ -87,10 +88,11 @@ void stack_instruction(Code &code, const Instruction &instruction, const Ram ram
   code.return_();
 }
 
-void subroutine_call(Code &code, const Instruction &instruction, const Ram ram) {
+void subroutine_call(Code &code, const Instruction &instruction, const Memory &ram) {
   const bool indexed = instruction.addressing == Addressing::indexed;
   const bool indirect = indexed && instruction.indexed.indirect;
-  const bool framed = indirect && (ram.first != 0 || ram.bytes.size() != address_bytes);
+  const bool framed =
+      indirect && (plain_ram(ram).first != 0 || plain_ram(ram).bytes.size() != address_bytes);
   if (indirect) {
     // Resolve the actual pointer before a possibly overlapping return-stack write.
     // A refused pointer read returns before this temporary host frame exists.

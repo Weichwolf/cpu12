@@ -21,7 +21,7 @@ constexpr auto state =
     static_cast<std::uint8_t>(offsetof(NativeContext, cpu) + offsetof(State, execution));
 static_assert(offsetof(NativeContext, cpu) + offsetof(State, execution) < 128);
 
-void enter_wait(Code &code, const Instruction &instruction, const Ram ram) {
+void enter_wait(Code &code, const Instruction &instruction, const Memory &ram) {
   stack_context(code, ram, instruction.length);
   constexpr std::array<std::uint8_t, 5> stack{0x66, 0x83, 0x6f, sp, 9};
   code.raw(stack);
@@ -34,7 +34,7 @@ void enter_wait(Code &code, const Instruction &instruction, const Ram ram) {
 }
 }
 
-void stack_context(Code &code, const Ram ram, const std::uint8_t next_pc) {
+void stack_context(Code &code, const Memory &ram, const std::uint8_t next_pc) {
   struct Field {
     std::uint8_t position, source;
     bool word = true;
@@ -68,7 +68,7 @@ void stack_context(Code &code, const Ram ram, const std::uint8_t next_pc) {
   }
 }
 
-void wait_instruction(Code &code, const Instruction &instruction, const Ram ram) {
+void wait_instruction(Code &code, const Instruction &instruction, const Memory &ram) {
   if (instruction.kind == Kind::stop) {
     constexpr std::array<std::uint8_t, 4> disabled{0xf6, 0x47, ccr, 0x80};
     constexpr std::array<std::uint8_t, 2> enabled{0x0f, 0x84};

@@ -42,7 +42,7 @@ void capture(const std::span<const Byte> code, const bool accepted = true) {
   Source source{.length = static_cast<unsigned>(code.size())};
   std::ranges::copy(code, source.bytes.begin());
   cpu12::detail::NativeContext context{.io = {.owner = &source, .fetch = Source::read}};
-  const auto result = cpu12::detail::fetch({}, context, Source::start);
+  const auto result = cpu12::detail::fetch(Memory::external(), context, Source::start);
   require(context.fault == Fault::none && result.supported == accepted &&
               result.size == code.size() && source.calls == code.size() &&
               context.fetch_callbacks == code.size() &&

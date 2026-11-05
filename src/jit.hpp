@@ -11,8 +11,10 @@
 namespace cpu12::detail {
 class Jit {
 public:
-  explicit Jit(Ram ram);
+  explicit Jit(const Memory &ram);
   ~Jit();
+  void set_memory(const Memory &memory);
+  [[nodiscard]] const Memory &memory() const noexcept;
   Jit(const Jit &) = delete;
   Jit &operator=(const Jit &) = delete;
   // False means unsupported captured bytes, with no native or I/O effect.

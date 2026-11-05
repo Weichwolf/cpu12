@@ -11,10 +11,13 @@
 #include "jit/interrupt.hpp"
 #include "runtime.hpp"
 
+#include <algorithm>
 #include <cstdint>
 #include <memory>
 #include <span>
 #include <unordered_map>
+#include <utility>
+#include <vector>
 
 namespace cpu12::detail {
 namespace {
@@ -45,16 +48,62 @@ void enter(const void *entry, Registers &registers, NativeContext &context) noex
 
 }
 
+namespace {
+bool same_region(const Ram &left, const Ram &right) noexcept {
+  return left.first == right.first && left.bytes.data() == right.bytes.data() &&
+         left.bytes.size() == right.bytes.size() && left.known.data() == right.known.data() &&
+         left.known.size() == right.known.size() && left.writable == right.writable &&
+         left.identity == right.identity;
+}
+
+struct Mapping {
+  explicit Mapping(const Memory &requested)
+      : grants(requested.regions().begin(), requested.regions().end()), memory(Memory::external()) {
+    if (grants.size() == 1) {
+      memory = Memory::window(grants[0]);
+    } else if (!grants.empty()) {
+      memory = Memory::mapped(grants);
+    }
+  }
+
+  std::vector<Ram> grants;
+  Memory memory;
+  std::unordered_map<std::uint64_t, const void *> blocks;
+
+  [[nodiscard]] bool matches(const Memory &requested) const noexcept {
+    const auto regions = requested.regions();
+    return regions.size() == grants.size() && std::ranges::equal(regions, grants, same_region);
+  }
+};
+}
+
 class Jit::Impl {
 public:
-  Ram ram;
   ExecutableArena arena;
-  std::unordered_map<std::uint64_t, const void *> blocks;
+  std::vector<std::unique_ptr<Mapping>> mappings;
+  Mapping *current = nullptr;
   Statistics statistics;
 };
 
-Jit::Jit(const Ram ram) : impl_(std::make_unique<Impl>()) {
-  impl_->ram = ram;
+Jit::Jit(const Memory &ram) : impl_(std::make_unique<Impl>()) {
+  set_memory(ram);
+}
+
+void Jit::set_memory(const Memory &memory) {
+  for (const auto &mapping : impl_->mappings) {
+    if (mapping->matches(memory)) {
+      impl_->current = mapping.get();
+      return;
+    }
+  }
+  auto mapping = std::make_unique<Mapping>(memory);
+  auto *selected = mapping.get();
+  impl_->mappings.push_back(std::move(mapping));
+  impl_->current = selected;
+}
+
+const Memory &Jit::memory() const noexcept {
+  return impl_->current->memory;
 }
 
 Jit::~Jit() = default;
@@ -78,11 +127,13 @@ bool Jit::execute(const std::span<const std::uint8_t> bytes,
   if (bytes.size() > 3) { key |= static_cast<std::uint64_t>(bytes[3]) << low_shift; }
   if (bytes.size() > 4) { key |= static_cast<std::uint64_t>(bytes[4]) << byte_shift; }
   if (bytes.size() > 5) { key |= bytes[5]; }
-  auto found = impl_->blocks.find(key);
-  if (found == impl_->blocks.end()) {
+  auto found = impl_->current->blocks.find(key);
+  if (found == impl_->current->blocks.end()) {
     const auto instruction = decode(bytes);
     if (!instruction) { return false; }
-    found = impl_->blocks.emplace(key, impl_->arena.append(emit(*instruction, impl_->ram))).first;
+    found = impl_->current->blocks
+                .emplace(key, impl_->arena.append(emit(*instruction, impl_->current->memory)))
+                .first;
     ++impl_->statistics.compiled_entries;
   }
   enter(found->second, registers, context);
@@ -111,10 +162,12 @@ void Jit::interrupt(const InterruptRequest request, Registers &registers, Native
   }
   const auto key = event_tag | (static_cast<std::uint64_t>(frame) << frame_shift) |
                    (static_cast<std::uint64_t>(request.kind) << kind_shift) | request.vector;
-  auto found = impl_->blocks.find(key);
-  if (found == impl_->blocks.end()) {
+  auto found = impl_->current->blocks.find(key);
+  if (found == impl_->current->blocks.end()) {
     found =
-        impl_->blocks.emplace(key, impl_->arena.append(emit_interrupt(request, impl_->ram, frame)))
+        impl_->current->blocks
+            .emplace(key,
+                     impl_->arena.append(emit_interrupt(request, impl_->current->memory, frame)))
             .first;
     ++impl_->statistics.compiled_entries;
   }
@@ -123,9 +176,9 @@ void Jit::interrupt(const InterruptRequest request, Registers &registers, Native
 
 void Jit::resume_stop(Registers &registers, NativeContext &context) {
   constexpr auto key = std::uint64_t{3} << 62U;
-  auto found = impl_->blocks.find(key);
-  if (found == impl_->blocks.end()) {
-    found = impl_->blocks.emplace(key, impl_->arena.append(emit_stop_wake())).first;
+  auto found = impl_->current->blocks.find(key);
+  if (found == impl_->current->blocks.end()) {
+    found = impl_->current->blocks.emplace(key, impl_->arena.append(emit_stop_wake())).first;
     ++impl_->statistics.compiled_entries;
   }
   enter(found->second, registers, context);

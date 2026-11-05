@@ -113,6 +113,8 @@ public:
   [[nodiscard]] const State &state() const noexcept;
   // An explicit fresh boundary clears a latched fault; coordinate bus state externally.
   void set_registers(Registers registers);
+  // Explicit retirement-boundary remap; CPU state and previous translations remain intact.
+  void set_memory(Memory memory);
   [[nodiscard]] RunResult run_instruction(std::span<const std::uint8_t> bytes);
   [[nodiscard]] RunResult step();
   [[nodiscard]] EventResult reset(std::uint16_t vector) noexcept;

@@ -20,7 +20,7 @@ Instruction access(const Instruction &move, const MoveOperand operand) {
           .indexed = operand.indexed};
 }
 
-void address(Code &code, const Instruction &operand, const Ram ram) {
+void address(Code &code, const Instruction &operand, const Memory &ram) {
   if (operand.addressing == Addressing::indexed) {
     indexed_address(code, operand, ram);
   } else {
@@ -47,7 +47,7 @@ void source_adjustment(Code &code, const Instruction &source, const Instruction 
 }
 }
 
-void move_instruction(Code &code, const Instruction &instruction, const Ram ram) {
+void move_instruction(Code &code, const Instruction &instruction, const Memory &ram) {
   const auto source = access(instruction, instruction.move_source);
   const auto destination = access(instruction, instruction.move_destination);
   if (source.addressing == Addressing::immediate) {
