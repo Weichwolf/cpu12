@@ -2,7 +2,6 @@
 # Strict project checks; third-party source keeps its own warning policy.
 set(CPU12_SANITIZER "address-undefined" CACHE STRING "none, address-undefined, or thread")
 set_property(CACHE CPU12_SANITIZER PROPERTY STRINGS none address-undefined thread)
-option(CPU12_FUZZING "Build offline libFuzzer targets" OFF)
 
 include("${CMAKE_CURRENT_LIST_DIR}/Hardening.cmake")
 add_library(cpu12_quality INTERFACE)
@@ -31,10 +30,4 @@ if(DEFINED cpu12_sanitizers)
   target_compile_options(cpu12_quality INTERFACE
     "-fsanitize=${cpu12_sanitizers}" -fno-sanitize-recover=all -g)
   target_link_options(cpu12_quality INTERFACE "-fsanitize=${cpu12_sanitizers}")
-endif()
-if(CPU12_FUZZING)
-  if(NOT CPU12_SANITIZER STREQUAL "address-undefined")
-    message(FATAL_ERROR "Fuzzing requires address-undefined sanitizers")
-  endif()
-  target_compile_options(cpu12_quality INTERFACE -fsanitize=fuzzer-no-link)
 endif()

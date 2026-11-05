@@ -18,7 +18,7 @@ Use C++23/LLVM19, CMake/Ninja, strict diagnostics and independent directed tests
 Run affected core correctness tests, including independent expectations and
 appropriate sanitizer coverage, before publishing source changes. Core tests
 remain active before the integrating instrument reaches real time. Keep strict
-compilation, formatting and static analysis; never weaken checks. Run fuzzing only when explicitly requested.
+compilation, formatting and static analysis; never weaken checks.
 Keep manufacturer assets and application firmware out of source and tests.
 Commit/push verified increments to configured origin/main and keep this repository
 private. Passing an initial captured-instruction subset is not completion.
