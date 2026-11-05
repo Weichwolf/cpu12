@@ -5,7 +5,6 @@
 
 #include <array>
 #include <span>
-#include <stdexcept>
 
 namespace cpu12::test::tail_chains {
 namespace {
@@ -23,8 +22,9 @@ void cached_modes() {
               core.registers() == initial,
           "Returned-mode cache entry reuses the original same-vector frame without rewriting it");
   constexpr std::array<Byte, 1> wai{0x3e};
-  require(core.run_instruction(wai).retired == 1 && core.state() == ExecutionState::waiting &&
-              core.interrupt_frame_available() && !core.checkpoint().returned_frame,
+  require(core.run_instruction(wai).retired == 1 &&
+              core.state().execution == ExecutionState::waiting &&
+              core.interrupt_frame_available() && !core.state().returned_frame,
           "WAI replaces returned-frame status with its genuine newly stacked waiting frame");
   const auto waiting = image;
   const auto saved_sp = core.registers().sp;
@@ -78,7 +78,7 @@ void consumed_boundaries() {
     if (index == 1) { wanted.d = loaded_d; }
     require(core.run_instruction(std::span(instructions[index]).first(length)).retired == 1 &&
                 core.registers() == wanted && !core.interrupt_frame_available() &&
-                !core.checkpoint().returned_frame,
+                !core.state().returned_frame,
             "Every actual following NOP/load/CCR instruction consumes the old return boundary");
     require(
         core.interrupt({.vector = vector}).accepted && image[frame_sp] == wanted.ccr &&
@@ -87,55 +87,18 @@ void consumed_boundaries() {
   }
 }
 
-void restored_boundary() {
-  Image image{};
-  image[vector] = 4;
-  put_frame(image, initial.sp);
-  Core core(Memory::unified(image));
-  restore_frame(core, initial);
-  const auto cpu = core.checkpoint();
-  const auto frame = image;
-  core.clear_code_cache();
-  require(core.interrupt_frame_available() && core.checkpoint() == cpu,
-          "Code invalidation leaves the genuine completed return boundary intact");
-  require(core.run_instruction(nop).retired == 1 && !core.interrupt_frame_available(),
-          "Fixture consumes the return boundary with one real instruction");
-  const auto retired = core.statistics().native_instructions;
-  core.restore(cpu);
-  require(
-      core.checkpoint() == cpu && core.interrupt_frame_available() &&
-          core.statistics().native_instructions == retired,
-      "A CPU checkpoint restores return eligibility without rewinding native execution statistics");
-  accept(core, {.vector = vector});
-  require(image == frame && core.statistics().native_instructions == retired,
-          "Restored boundary service consumes only the actual vector and leaves the saved frame "
-          "intact");
-}
-
 void fresh_boundaries() {
   Image image{};
   image[vector] = 4;
   put_frame(image, initial.sp);
   Core core(Memory::unified(image));
   restore_frame(core, initial);
-  const auto cpu = core.checkpoint();
-  std::array<Checkpoint, 2> invalid{cpu, cpu};
-  invalid[0].irq_delay = 1;
-  invalid[1].state = ExecutionState::waiting;
-  for (const auto &candidate : invalid) {
-    bool refused = false;
-    try {
-      core.restore(candidate);
-    } catch (const std::invalid_argument &) { refused = true; }
-    require(refused && core.checkpoint() == cpu,
-            "A returned frame cannot coexist with IRQ delay or a waiting checkpoint state");
-  }
   core.set_registers(core.registers());
-  require(!core.interrupt_frame_available() && !core.checkpoint().returned_frame,
+  require(!core.interrupt_frame_available() && !core.state().returned_frame,
           "Explicit register replacement is a fresh boundary even when the values are identical");
   restore_frame(core, initial);
   require(core.reset(vector).accepted && !core.interrupt_frame_available() &&
-              !core.checkpoint().returned_frame && core.checkpoint().irq_delay == 0,
+              !core.state().returned_frame && core.state().irq_delay == 0,
           "Actual CPU reset clears returned-frame and deferral status");
 }
 
@@ -148,7 +111,7 @@ void irq_deferral() {
   restore_frame(core, initial, masked);
   constexpr std::array<Byte, 2> cli{0x10, 0xef};
   require(core.run_instruction(cli).retired == 1 && !core.interrupt_frame_available() &&
-              !core.checkpoint().returned_frame && core.checkpoint().irq_delay == 1 &&
+              !core.state().returned_frame && core.state().irq_delay == 1 &&
               !core.interrupt_ready(InterruptKind::maskable),
           "CLI replaces returned-frame status with the genuine following-instruction IRQ delay");
   core.clear_code_cache();
@@ -167,12 +130,12 @@ void clocked_boundary() {
   put_frame(image, initial.sp);
   Core core(Memory::unified(image));
   restore_frame(core, initial);
-  auto expected = core.checkpoint();
+  auto expected = core.state();
   expected.returned_frame = false;
   const auto storage = image;
   const auto retired = core.statistics().native_instructions;
   core.close_return_window();
-  require(core.checkpoint() == expected && !core.interrupt_frame_available() && image == storage &&
+  require(core.state() == expected && !core.interrupt_frame_available() && image == storage &&
               core.statistics().native_instructions == retired,
           "Completing the board's RTI poll closes only return eligibility without memory or "
           "instruction effects");
@@ -185,25 +148,24 @@ void clocked_boundary() {
   core.set_registers(before);
   constexpr std::array<Byte, 2> cli{0x10, 0xef};
   require(core.run_instruction(cli).retired == 1, "Fixture establishes real CLI deferral");
-  const auto deferred = core.checkpoint();
+  const auto deferred = core.state();
   core.close_return_window();
-  require(core.checkpoint() == deferred && deferred.irq_delay == 1 &&
+  require(core.state() == deferred && deferred.irq_delay == 1 &&
               !core.interrupt_ready(InterruptKind::maskable),
           "Closing a return window cannot consume an unrelated IRQ delay");
   constexpr std::array<Byte, 1> wai{0x3e};
   require(core.run_instruction(wai).retired == 1, "Fixture enters the actual native waiting state");
-  const auto waiting = core.checkpoint();
+  const auto waiting = core.state();
   core.close_return_window();
-  require(core.checkpoint() == waiting && core.interrupt_frame_available(),
+  require(core.state() == waiting && core.interrupt_frame_available(),
           "The board's return poll cannot discard a genuine WAI frame");
 }
 }
 
-void checkpoint_cases() {
+void state_cases() {
   cached_modes();
   consecutive_returns();
   consumed_boundaries();
-  restored_boundary();
   fresh_boundaries();
   irq_deferral();
   clocked_boundary();

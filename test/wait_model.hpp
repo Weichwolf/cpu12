@@ -63,7 +63,7 @@ inline void check_frame(const Image &image, const Registers before, const Form f
 inline void enter(Core &core, const Image &image, const Registers before, const Form form) {
   const auto result = core.run_instruction(form.bytes());
   require(result.retired == 1 && result.fault == Fault::none && result.state == form.state &&
-              result.pc == before.pc && core.state() == form.state &&
+              result.pc == before.pc && core.state().execution == form.state &&
               core.registers() == sleeping(before, form),
           "A native wait retires once, saves next PC, changes SP and preserves every other "
           "flag/register");
@@ -72,5 +72,5 @@ inline void enter(Core &core, const Image &image, const Registers before, const 
 }
 
 void bus_cases();
-void checkpoint_cases();
+void state_cases();
 }

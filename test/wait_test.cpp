@@ -85,7 +85,7 @@ void idle_boundaries() {
           "Idle step, maximal run budget and captured inputs return promptly without execution");
     }
     core.clear_code_cache();
-    require(core.run(0).state == form.state && core.state() == form.state &&
+    require(core.run(0).state == form.state && core.state().execution == form.state &&
                 core.statistics().native_instructions == statistics.native_instructions &&
                 core.statistics().fetch_callbacks == 0,
             "Idle state survives cache invalidation and zero budgets with no hidden fetch");
@@ -126,7 +126,7 @@ void connected_program() {
     const auto stack = core.registers().sp;
     require(core.interrupt({.vector = vector}).accepted && core.registers().pc == handler &&
                 core.registers().sp == stack && image == frame &&
-                core.state() == ExecutionState::running,
+                core.state().execution == ExecutionState::running,
             "Eligible interrupt reuses the real wait frame without any second stack write");
     require(core.step().retired == 1 && core.registers().x == static_cast<Address>(before.x + 1U),
             "Real native handler code executes after a genuine vector fetch");
@@ -173,7 +173,8 @@ void masked_stop_wake() {
     require(
         result.accepted == accepted && result.fault == Fault::none && core.registers() == wanted &&
             image == saved &&
-            core.state() == (accepted ? ExecutionState::running : ExecutionState::stopped),
+            core.state().execution ==
+                (accepted ? ExecutionState::running : ExecutionState::stopped),
         "Masked XIRQ STOP continuation adjusts only SP/state and uses no vector or frame reads");
   }
 }
@@ -188,12 +189,12 @@ void wake_masks() {
     before.ccr = masked;
     core.set_registers(before);
     enter(core, image, before, form);
-    const auto saved = core.checkpoint();
+    const auto saved = core.state();
     const auto frame = image;
     const auto compiled = core.statistics().compiled_entries;
     require(!core.interrupt({.vector = vector}).accepted &&
                 !core.interrupt({.vector = vector, .kind = InterruptKind::xirq}).accepted &&
-                core.checkpoint() == saved && image == frame &&
+                core.state() == saved && image == frame &&
                 core.statistics().compiled_entries == compiled,
             "Masked requests neither service a vector nor change the genuine wait frame");
     constexpr Byte x_enabled = 0x30;
@@ -206,7 +207,7 @@ void wake_masks() {
     require(
         core.interrupt({.vector = vector, .kind = InterruptKind::xirq}).accepted &&
             core.registers().sp == idle.sp && core.registers().ccr == servicing &&
-            core.state() == ExecutionState::running && image == x_frame &&
+            core.state().execution == ExecutionState::running && image == x_frame &&
             core.run_instruction(rti).retired == 1 && core.registers().sp == before.sp &&
             core.registers().ccr == before.ccr && core.registers().pc == idle.pc,
         "Unmasked XIRQ wakes with I set, reuses the real frame and restores both masks via RTI");
@@ -224,10 +225,10 @@ int main() {
     wake_masks();
     cache_modes();
     bus_cases();
-    checkpoint_cases();
+    state_cases();
     std::cout << "Verified " << entered
               << " native wait entries, full stack/PC/CCR domains, genuine wake frames and CPU "
-                 "checkpoints.\n";
+                 "state inspection.\n";
   } catch (const std::exception &error) {
     std::cerr << error.what() << '\n';
     return 1;

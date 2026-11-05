@@ -92,45 +92,28 @@ void failed_vector() {
   Core core(Memory::external(), &io);
   bus.core = &core;
   restore_frame(core, initial);
-  const auto ready = core.checkpoint();
+  const auto ready = core.state();
   const auto frame = bus.image;
   const auto result = core.interrupt({.vector = vector});
   require(!result.accepted && result.fault == Fault::memory_read &&
               result.pc == ready.registers.pc && result.address == vector &&
               result.value == target && result.access_size == 2 &&
               core.registers() == ready.registers && !core.interrupt_frame_available() &&
-              core.checkpoint().returned_frame && bus.reads == 6 && bus.writes == 0 &&
+              core.state().returned_frame && bus.reads == 6 && bus.writes == 0 &&
               bus.image == frame && bus.intact,
           "A refused actual vector retains restored CPU/frame state, diagnostic target and read "
           "effects");
-  const auto fault = core.checkpoint();
+  const auto fault = core.state();
   bool refused = false;
   try {
     core.close_return_window();
   } catch (const std::logic_error &) { refused = true; }
-  require(refused && core.checkpoint() == fault,
+  require(refused && core.state() == fault,
           "A board poll cannot discard a failed boundary or its diagnostic metadata");
   core.clear_code_cache();
   require(core.interrupt({.vector = vector}).fault == Fault::memory_read &&
               core.step().fault == Fault::memory_read && bus.reads == 6,
           "Fault latching blocks vector replay and code execution across cache invalidation");
-  core.set_registers(initial);
-  core.restore(fault);
-  require(
-      core.step().fault == Fault::memory_read && bus.reads == 6 && core.checkpoint() == fault &&
-          !core.interrupt_frame_available(),
-      "Fault checkpoints retain return-boundary metadata without permitting interrupt delivery");
-  constexpr Address changed_target = 0x4567;
-  constexpr Byte high = 0x45;
-  constexpr Byte low = 0x67;
-  bus.image[vector] = high;
-  bus.image[vector + 1U] = low;
-  bus.vector_allowed = true;
-  core.restore(ready);
-  accept(core, {.vector = vector}, changed_target);
-  require(
-      bus.reads == 7 && bus.writes == 0 && bus.intact,
-      "Coordinated recovery rereads the changed real vector once without touching the saved frame");
   for (unsigned index = 0; index < sequence.size(); ++index) {
     require(bus.trace[index] == sequence[index],
             "External RTI reads CCR,B:A,X,PC,Y before the one pending vector read");

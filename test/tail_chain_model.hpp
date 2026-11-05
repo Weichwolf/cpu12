@@ -43,7 +43,7 @@ inline void restore_frame(Core &core, const Registers before, const Byte stacked
   const auto result = core.run_instruction(rti);
   require(result.retired == 1 && result.fault == Fault::none && result.pc == before.pc &&
               core.registers() == restored(before, stacked) && core.interrupt_frame_available() &&
-              core.checkpoint().returned_frame,
+              core.state().returned_frame,
           "Native RTI restores the independently specified literal frame and exposes it at the "
           "boundary");
 }
@@ -62,12 +62,12 @@ inline void accept(Core &core, const InterruptRequest request, const Address des
   const auto result = core.interrupt(request);
   require(result.accepted && result.fault == Fault::none && result.pc == before.pc &&
               core.registers() == wanted && !core.interrupt_frame_available() &&
-              !core.checkpoint().returned_frame && core.statistics().native_instructions == retired,
+              !core.state().returned_frame && core.statistics().native_instructions == retired,
           "Native post-RTI entry reads the vector, backs SP by9, applies masks and retires no "
           "instruction");
   ++chained;
 }
 
 void bus_cases();
-void checkpoint_cases();
+void state_cases();
 }

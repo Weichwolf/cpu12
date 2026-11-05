@@ -114,46 +114,14 @@ Registers Core::registers() const noexcept {
   return impl_->registers;
 }
 
-ExecutionState Core::state() const noexcept {
-  return impl_->context.state;
-}
-
-Checkpoint Core::checkpoint() const {
-  if (impl_->active) { throw std::logic_error("Cannot checkpoint active CPU12 execution"); }
+State Core::state() const noexcept {
   return {.registers = impl_->registers,
           .failure = impl_->failure,
-          .state = impl_->context.state,
+          .execution = impl_->context.state,
           .irq_delay =
               static_cast<std::uint8_t>(impl_->context.boundary_control & detail::irq_delay_mask),
           .returned_frame =
               (impl_->context.boundary_control & detail::returned_frame_boundary) != 0};
-}
-
-void Core::restore(const Checkpoint &checkpoint) {
-  if (impl_->active) { throw std::logic_error("Cannot restore active CPU12 execution"); }
-  const bool idle = checkpoint.state != ExecutionState::running;
-  constexpr unsigned stop_disable = 0x80;
-  if (checkpoint.state > ExecutionState::stopped || checkpoint.irq_delay > 1 ||
-      (idle && (checkpoint.irq_delay != 0 || checkpoint.returned_frame)) ||
-      (checkpoint.returned_frame && checkpoint.irq_delay != 0) ||
-      (checkpoint.state == ExecutionState::stopped &&
-       (checkpoint.registers.ccr & stop_disable) != 0) ||
-      checkpoint.failure.fault > Fault::instruction_fetch ||
-      (checkpoint.failure.fault != Fault::none &&
-       (checkpoint.failure.retired != 0 || checkpoint.failure.pc != checkpoint.registers.pc ||
-        checkpoint.failure.state != checkpoint.state))) {
-    throw std::invalid_argument("Inconsistent CPU12 checkpoint boundary");
-  }
-  impl_->registers = checkpoint.registers;
-  impl_->failure = checkpoint.failure;
-  impl_->context.fault = checkpoint.failure.fault;
-  impl_->context.address = checkpoint.failure.address;
-  impl_->context.value = checkpoint.failure.value;
-  impl_->context.access_size = checkpoint.failure.access_size;
-  impl_->context.read_mask = checkpoint.failure.read_mask;
-  impl_->context.boundary_control =
-      checkpoint.returned_frame ? detail::returned_frame_boundary : checkpoint.irq_delay;
-  impl_->context.state = checkpoint.state;
 }
 
 void Core::set_registers(const Registers registers) {
@@ -166,7 +134,7 @@ void Core::set_registers(const Registers registers) {
 }
 
 RunResult Core::run_instruction(const std::span<const std::uint8_t> bytes) {
-  RunResult result{.state = state(),
+  RunResult result{.state = impl_->context.state,
                    .pc = impl_->registers.pc,
                    .opcode = bytes.empty() ? std::uint8_t{0} : bytes[0]};
   if (impl_->active) {
@@ -178,7 +146,7 @@ RunResult Core::run_instruction(const std::span<const std::uint8_t> bytes) {
     result.fault = Fault::unsupported_host;
     return result;
   }
-  if (state() != ExecutionState::running) { return result; }
+  if (impl_->context.state != ExecutionState::running) { return result; }
   if (bytes.empty() || bytes.size() > maximum_capture_bytes) {
     result.fault = Fault::invalid_input;
     return result;
@@ -195,7 +163,7 @@ RunResult Core::run_instruction(const std::span<const std::uint8_t> bytes) {
 }
 
 RunResult Core::step() {
-  RunResult result{.state = state(), .pc = impl_->registers.pc};
+  RunResult result{.state = impl_->context.state, .pc = impl_->registers.pc};
   if (impl_->active) {
     result.fault = Fault::reentrant;
     return result;
@@ -218,7 +186,7 @@ RunResult Core::step() {
 }
 
 RunResult Core::run(const std::uint32_t instruction_budget) {
-  RunResult result{.state = state(), .pc = impl_->registers.pc};
+  RunResult result{.state = impl_->context.state, .pc = impl_->registers.pc};
   if (impl_->active) {
     result.fault = Fault::reentrant;
     return result;
@@ -293,7 +261,7 @@ bool Core::interrupt_ready(const InterruptKind kind) const noexcept {
 
 bool Core::interrupt_frame_available() const noexcept {
   if (impl_->active || impl_->failure.fault != Fault::none) { return false; }
-  return state() != ExecutionState::running ||
+  return impl_->context.state != ExecutionState::running ||
          (impl_->context.boundary_control & detail::returned_frame_boundary) != 0;
 }
 
@@ -366,7 +334,9 @@ EventResult Core::resume_from_stop() {
     return result;
   }
   constexpr unsigned x_mask = 0x40;
-  if (state() != ExecutionState::stopped || (impl_->registers.ccr & x_mask) == 0) { return result; }
+  if (impl_->context.state != ExecutionState::stopped || (impl_->registers.ccr & x_mask) == 0) {
+    return result;
+  }
   impl_->active = true;
   try {
     impl_->jit.resume_stop(impl_->registers, impl_->context);

@@ -83,14 +83,14 @@ struct EventResult {
   std::uint8_t access_size = 0;
 };
 
-// CPU state only; the caller pairs this with the corresponding bus/memory state.
-struct Checkpoint {
+// Read-only inspection of Core-owned CPU state; memory and I/O belong to the consumer.
+struct State {
   Registers registers;
   RunResult failure;
-  ExecutionState state = ExecutionState::running;
+  ExecutionState execution = ExecutionState::running;
   std::uint8_t irq_delay = 0;
   bool returned_frame = false;
-  bool operator==(const Checkpoint &) const = default;
+  bool operator==(const State &) const = default;
 };
 
 struct Options {
@@ -114,9 +114,7 @@ public:
   Core &operator=(const Core &) = delete;
   [[nodiscard]] static bool native_supported() noexcept;
   [[nodiscard]] Registers registers() const noexcept;
-  [[nodiscard]] ExecutionState state() const noexcept;
-  [[nodiscard]] Checkpoint checkpoint() const;
-  void restore(const Checkpoint &checkpoint);
+  [[nodiscard]] State state() const noexcept;
   // An explicit fresh boundary clears a latched fault; coordinate bus state externally.
   void set_registers(Registers registers);
   [[nodiscard]] RunResult run_instruction(std::span<const std::uint8_t> bytes);

@@ -65,14 +65,14 @@ void flags() {
         before.ccr = static_cast<Byte>(old);
         put_frame(image, before.sp, static_cast<Byte>(stacked));
         restore_frame(core, before, static_cast<Byte>(stacked));
-        const auto saved = core.checkpoint();
+        const auto saved = core.state();
         constexpr unsigned x = 0x40;
         constexpr unsigned i = 0x10;
         const bool blocked =
             kind == InterruptKind::maskable ? (stacked & i) != 0 : (old & stacked & x) != 0;
         if (blocked) {
           const auto result = core.interrupt({.vector = vector, .kind = kind});
-          require(!result.accepted && result.fault == Fault::none && core.checkpoint() == saved &&
+          require(!result.accepted && result.fault == Fault::none && core.state() == saved &&
                       core.interrupt_frame_available(),
                   "Masked requests retain the restored frame for another eligible source");
         } else {
@@ -123,7 +123,7 @@ void native_program() {
   Core core(Memory::unified(image));
   core.set_registers(initial);
   require(core.reset(reset).accepted && core.run(2).retired == 2 &&
-              core.state() == ExecutionState::waiting,
+              core.state().execution == ExecutionState::waiting,
           "Authored actual reset/ANDCC/WAI program reaches a genuine wait boundary");
   require(
       core.interrupt({.vector = vector}).accepted && core.run(2).retired == 2 &&
@@ -147,10 +147,10 @@ int main() {
     vector_destinations();
     native_program();
     bus_cases();
-    checkpoint_cases();
+    state_cases();
     std::cout << "Verified " << chained
               << " native post-RTI entries, unchanged saved frames, precise vector faults and "
-                 "boundary checkpoints.\n";
+                 "boundary state inspection.\n";
   } catch (const std::exception &error) {
     std::cerr << error.what() << '\n';
     return 1;

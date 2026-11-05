@@ -19,7 +19,9 @@ the same minimal Core API. ISA-specific register layouts, address units and
 peripheral contracts account for their differences; internal JIT mechanics do not.
 Core owns its complete state. Normal consumers need no state management; optional
 read-only state access occurs at safe owner boundaries and adds no work otherwise.
-Opaque checkpoint handles and staged effect tickets are outside the normal API.
+Checkpoint import/export and restore interfaces do not belong in the library.
+State inspection cannot replace or rewind Core state. Staged effect tickets are
+outside the normal API.
 
 Only JIT execution belongs in production. Host emitters satisfy one host concept;
 there is no interpreter/reference/cached backend selector. Native specialization
@@ -41,3 +43,10 @@ implementation goals. ISA-visible instruction and interrupt semantics remain.
 Strict compilation, static analysis and independently expected ISA/state tests
 qualify changes. Core tests remain active before instrument real-time operation;
 fuzzing runs only on explicit request. Primary references are in reference-manifest.json.
+
+Generated code uses compact shared executable arenas, not one page per operation.
+Place frequently connected native blocks together, align entries deliberately,
+and keep fault/diagnostic slow paths out of hot instruction streams. Keep active
+Core data compact and retain live guest values in host registers across chained
+blocks. Qualify locality with code/data working-set and cache measurements; layout
+alone does not establish that a whole hot path fits a particular host cache.

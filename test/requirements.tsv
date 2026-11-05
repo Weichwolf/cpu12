@@ -3,8 +3,8 @@ ISA	Complete documented instructions, encodings and addressing	partial	Complete 
 MEMORY	Bounds, aliases, byte order, I/O effects and code invalidation	partial	Qualify all mapping and mutation combinations
 RESET	Reset vectors and architectural initial state	partial	Complete documented reset cases
 IRQ	IRQ/XIRQ, eligibility, stack frames and RTI	partial	Complete admission and deferred-interrupt sequences
-WAIT	WAI/STOP and wake state	partial	Complete wait/interrupt/checkpoint combinations
-STATE	Complete CPU checkpoints and restores	partial	Qualify all in-flight and fault continuations
+WAIT	WAI/STOP and wake state	partial	Complete wait/interrupt combinations
+STATE	Complete readable Core-owned state	partial	Qualify all in-flight and fault continuations
 NATIVE	Native execution for every legal supported form	partial	Complete native lowering and region execution
 PERFORMANCE	Maximum throughput with bounded event latency	unqualified	Whole-instrument real-time performance remains open
-QUALITY	Strict compiler/static checks and sanitizer qualification	partial	Execution checks deferred under current user budget
+QUALITY	Strict compiler/static checks and sanitizer qualification	partial	Affected core tests active; complete qualification remains open
