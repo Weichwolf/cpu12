@@ -26,6 +26,11 @@ struct FailedExit {
   std::uint32_t completed = 0;
 };
 
+struct ResidentCall {
+  ResidentPlan plan;
+  std::size_t displacement = 0;
+};
+
 constexpr std::array<std::uint8_t, 4> endbr{0xf3, 0x0f, 0x1e, 0xfa};
 constexpr std::array<std::uint8_t, 8> save{0x41, 0x54, 0x41, 0x55, 0x41, 0x56, 0x41, 0x57};
 constexpr std::array<std::uint8_t, 12> arguments{
@@ -144,6 +149,31 @@ void append_instruction(Code &code,
     }
   }
 }
+
+std::optional<ResidentCall> append_resident_prefix(
+    Code &code, const std::span<const BlockInstruction> instructions, const Memory &memory) {
+  const auto boundary = std::ranges::find_if(instructions, [&memory](const auto &operation) {
+    return !flag_writes(operation.instruction, memory).has_value();
+  });
+  const auto count = static_cast<std::size_t>(boundary - instructions.begin());
+  if (count == 0 || count == instructions.size()) { return std::nullopt; }
+  auto plan = resident_plan(instructions.first(count), memory);
+  if (!plan || plan->loop) { return std::nullopt; }
+  code.raw(restore_arguments);
+  constexpr std::uint8_t budget = 0xba; // MOV EDX,imm32: the complete prefix is admitted.
+  code.byte(budget);
+  code.u32(static_cast<std::uint32_t>(count));
+  constexpr std::uint8_t call = 0xe8;
+  code.byte(call);
+  const auto displacement = code.relative32();
+  return ResidentCall{.plan = std::move(*plan), .displacement = displacement};
+}
+
+std::optional<ResidentPlan> complete_plan(const std::span<const BlockInstruction> instructions,
+                                          const Memory &memory) {
+  if (auto plan = resident_loop_plan(instructions, memory)) { return plan; }
+  return resident_plan(instructions, memory);
+}
 }
 
 void describe_exit(Code &code, const ExitLocation location, const bool boundary) {
@@ -157,6 +187,7 @@ void describe_exit(Code &code, const ExitLocation location, const bool boundary)
 
 std::vector<std::uint8_t> emit_block(const std::span<const BlockInstruction> instructions,
                                      const Memory &memory) {
+  const auto resident = complete_plan(instructions, memory);
   Code code;
   code.raw(endbr);
   code.raw(save);
@@ -171,8 +202,10 @@ std::vector<std::uint8_t> emit_block(const std::span<const BlockInstruction> ins
   std::vector<FailedExit> faults;
   std::uint32_t completed = 0;
   const auto options = emission_options(instructions, memory);
+  const auto prefix = resident ? std::nullopt : append_resident_prefix(code, instructions, memory);
+  if (prefix) { completed = static_cast<std::uint32_t>(prefix->plan.operations.size()); }
   bool pending_pc = false;
-  for (const auto &operation : instructions) {
+  for (const auto &operation : instructions.subspan(completed)) {
     const auto policy = options[completed];
     if (pending_pc && policy.advance_pc) { publish_pc(code, operation.pc); }
     // Proven pure operations preserve RDI and do not need the context in RSI.
@@ -219,13 +252,12 @@ std::vector<std::uint8_t> emit_block(const std::span<const BlockInstruction> ins
     const auto done = code.relative32();
     code.bind(done, finished);
   }
+  if (prefix) {
+    code.bind(prefix->displacement);
+    code.raw(emit_resident(prefix->plan, {}));
+  }
   auto general = std::move(code).take();
-  if (const auto plan = resident_loop_plan(instructions, memory)) {
-    return emit_resident(*plan, general);
-  }
-  if (const auto plan = resident_plan(instructions, memory)) {
-    return emit_resident(*plan, general);
-  }
+  if (resident) { return emit_resident(*resident, general); }
   return general;
 }
 

@@ -18,6 +18,7 @@ struct ResidentOperation {
   Instruction instruction;
   Address pc = 0;
   unsigned flags = 0;
+  unsigned forwarded_word = 0, forwarded_shift = 0;
   bool deferred = false, branch_zero = false, initial_load = false;
   bool cached_operand = false, cache_store = false;
   const Byte *pointer = nullptr;

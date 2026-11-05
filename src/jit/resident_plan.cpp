@@ -6,12 +6,14 @@
 #include "jit/resident.hpp"
 
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
 #include <optional>
 #include <span>
+#include <unordered_map>
 #include <vector>
 
 namespace cpu12::detail {
@@ -253,6 +255,83 @@ void forward_operand(ResidentPlan &plan) {
   }
 }
 
+struct StoredByte {
+  unsigned reg = 0, version = 0, shift = 0;
+};
+
+struct StoredValues {
+  static constexpr unsigned registers = 6;
+  static constexpr unsigned byte_bits = 8;
+  std::unordered_map<std::uintptr_t, StoredByte> bytes;
+  std::array<unsigned, registers> versions{};
+  std::array<StoredByte, registers> origins{};
+
+  void load(ResidentOperation &operation) const {
+    const auto address = reinterpret_cast<std::uintptr_t>(operation.pointer);
+    const auto high = bytes.find(address);
+    const auto low = bytes.find(address + 1);
+    if (high == bytes.end() || low == bytes.end()) { return; }
+    const auto left = high->second;
+    const auto right = low->second;
+    if (left.reg == right.reg && left.version == right.version &&
+        left.version == versions.at(left.reg) && left.shift == right.shift + byte_bits) {
+      operation.forwarded_word = left.reg;
+      operation.forwarded_shift = right.shift;
+    }
+  }
+
+  void store(const ResidentOperation &operation, const bool swapped_d) {
+    const auto &instruction = operation.instruction;
+    const auto reg = native_word(instruction);
+    const auto address = reinterpret_cast<std::uintptr_t>(operation.pointer);
+    auto value = origins.at(reg);
+    if (value.reg == 0 || value.version != versions.at(value.reg)) {
+      value = {.reg = reg, .version = versions.at(reg)};
+    }
+    if (instruction.word) {
+      bytes[address] = {
+          .reg = value.reg, .version = value.version, .shift = value.shift + byte_bits};
+      bytes[address + 1] = value;
+    } else {
+      const bool high = swapped_d ? instruction.accumulator_b : !instruction.accumulator_b;
+      value.shift += high ? byte_bits : 0U;
+      bytes[address] = value;
+    }
+  }
+
+  void advance(const Instruction &instruction) {
+    const auto writes = written_words(instruction);
+    for (unsigned index = 0; index < registers; ++index) {
+      if ((writes & (1U << index)) != 0) {
+        ++versions.at(index);
+        origins.at(index) = {};
+      }
+    }
+    if (instruction.kind == Kind::multiply_divide) {
+      // Native multiplication retains the full 32-bit product in EBX, with
+      // logical D in BX and Y in DX. Stored halves may later be read across.
+      constexpr unsigned d = 3;
+      constexpr unsigned y = 2;
+      constexpr unsigned word_bits = 16;
+      origins.at(y) = {.reg = d, .version = versions.at(d), .shift = word_bits};
+    }
+  }
+};
+
+void forward_stores(ResidentPlan &plan) {
+  // Each byte names a still-resident value, not a guessed RAM value. Physical
+  // addresses cover aliases; every intervening store replaces the affected tags.
+  StoredValues values;
+  for (auto &operation : plan.operations) {
+    const auto &instruction = operation.instruction;
+    if (operation.pointer != nullptr) {
+      if (instruction.kind == Kind::load && instruction.word) { values.load(operation); }
+      if (instruction.kind == Kind::store) { values.store(operation, plan.swapped_d); }
+    }
+    values.advance(instruction);
+  }
+}
+
 void analyze(ResidentPlan &plan) {
   unsigned live = flags_nzvc | flag_h;
   unsigned overwritten = 0;
@@ -364,6 +443,7 @@ std::optional<ResidentPlan> resident_plan(const std::span<const BlockInstruction
   analyze(plan);
   forward_load(plan);
   forward_operand(plan);
+  if (!plan.loop) { forward_stores(plan); }
   return plan;
 }
 

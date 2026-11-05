@@ -219,6 +219,20 @@ void memory_operation(Code &code,
   }
   const bool store = instruction.kind == Kind::store;
   auto reg = instruction.word ? native_word(instruction) : byte_register(instruction, plan);
+  if (!store && operation.forwarded_word != 0) {
+    if (reg != operation.forwarded_word) {
+      code.byte(mov_to);
+      code.byte(
+          static_cast<std::uint8_t>(register_operand | (operation.forwarded_word << 3U) | reg));
+    }
+    if (operation.forwarded_shift != 0) {
+      code.byte(shift_immediate);
+      code.byte(static_cast<std::uint8_t>(shift_right_eax | reg));
+      code.byte(static_cast<std::uint8_t>(operation.forwarded_shift));
+    }
+    if (needed_flags) { test_value(code, instruction, plan); }
+    return;
+  }
   const bool high = !instruction.word && reg >= native_high;
   const auto value_register = reg;
 #if !defined(__MOVBE__)
