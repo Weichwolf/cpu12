@@ -26,7 +26,8 @@
       "Instruction object-code length entries and Table3-2 indexed extensions for logical byte fetching; physical prefetch/bus-cycle timing is not claimed",
       "Sections2.2.5 and7.8 and RTI: reset S/X/I masks, IRQ/XIRQ nine-byte frames, B:A byte order, X restoration limit and conflicting mask/vector ordering",
       "BRSET/BRCLR: selected operand bits and unchanged CCR; selected external transport preserves the complete real read effects",
-      "WAI3E and STOP183E: next-instruction returnPC, actual frame stores, S-disabled no-op, clock ownership and masked-XIRQ unvectored continuation; IRQ/RTI frame reuse distinctions"
+      "WAI3E and STOP183E: next-instruction returnPC, actual frame stores, S-disabled no-op, clock ownership and masked-XIRQ unvectored continuation; IRQ/RTI frame reuse distinctions",
+      "Section7.5.5 post-RTI pending entry: restore first, read actual next vector, back SP by9 and retain saved bytes; distinguish returned/waiting frame reuse from ordinary stacking"
     ],
     "redistributed": false
   }

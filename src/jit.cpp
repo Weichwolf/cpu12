@@ -128,7 +128,16 @@ bool Jit::execute(const std::span<const std::uint8_t> bytes,
   found->second->enter(registers, context);
   if (context.fault == Fault::none) {
     ++impl_->statistics.native_instructions;
-    if (context.irq_delay != 0) { --context.irq_delay; }
+    if (context.boundary_control != 0) {
+      if (context.boundary_control == returned_frame_boundary) {
+        constexpr unsigned rti = 0x0b;
+        constexpr auto rti_key =
+            (std::uint64_t{1} << length_shift) | (std::uint64_t{rti} << opcode_shift);
+        if (key != rti_key) { context.boundary_control = 0; }
+      } else {
+        --context.boundary_control;
+      }
+    }
   }
   return true;
 }
@@ -136,16 +145,21 @@ bool Jit::execute(const std::span<const std::uint8_t> bytes,
 void Jit::interrupt(const InterruptRequest request, Registers &registers, NativeContext &context) {
   constexpr unsigned kind_shift = 16;
   constexpr auto event_tag = std::uint64_t{1} << 63U;
-  constexpr unsigned reuse_shift = 17;
-  const bool reuse = context.state != ExecutionState::running;
-  const auto key = event_tag | (static_cast<std::uint64_t>(reuse) << reuse_shift) |
+  constexpr unsigned frame_shift = 17;
+  auto frame = InterruptFrame::push;
+  if (context.state != ExecutionState::running) {
+    frame = InterruptFrame::waiting;
+  } else if (context.boundary_control == returned_frame_boundary) {
+    frame = InterruptFrame::returned;
+  }
+  const auto key = event_tag | (static_cast<std::uint64_t>(frame) << frame_shift) |
                    (static_cast<std::uint64_t>(request.kind) << kind_shift) | request.vector;
   auto found = impl_->blocks.find(key);
   if (found == impl_->blocks.end()) {
     if (impl_->blocks.size() == impl_->cache_entries) { clear(); }
     found =
         impl_->blocks
-            .emplace(key, std::make_unique<Executable>(emit_interrupt(request, impl_->ram, reuse)))
+            .emplace(key, std::make_unique<Executable>(emit_interrupt(request, impl_->ram, frame)))
             .first;
     ++impl_->statistics.compiled_entries;
   }

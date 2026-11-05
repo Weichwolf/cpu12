@@ -45,9 +45,12 @@ CCR-destination transfers; their timing remains a separate research corner.
 
 This is an explicit entry/readiness interface. wait.txt specifies native wait
 frames and wake reuse; checkpoints.txt specifies CPU-only snapshots. It does not
-arbitrate pending sources during run(), implement RTI tail chaining or supply
+arbitrate pending sources during run() or supply
 board-cycle timing. The board must call entry at qualified instruction
 boundaries and coordinate vector acknowledgement with actual bus effects.
+tail-chain.txt specifies the native post-RTI entry mode and the board's frame
+availability query. Ordinary entry, wait wake and return reuse have distinct
+cached code for the same source/vector.
 
 Focused reproduction:
 

@@ -8,6 +8,8 @@
 namespace cpu12::detail {
 inline constexpr std::uint32_t failed_read = 0x100;
 inline constexpr std::uint32_t failed_word_read = 0x10000;
+inline constexpr std::uint8_t returned_frame_boundary = 0x80;
+inline constexpr std::uint8_t irq_delay_mask = 0x7f;
 
 struct NativeContext {
   Io io;
@@ -18,7 +20,8 @@ struct NativeContext {
   std::uint8_t read_mask = std::numeric_limits<std::uint8_t>::max();
   std::uint64_t read_callbacks = 0, write_callbacks = 0;
   std::uint64_t fetch_callbacks = 0;
-  std::uint8_t irq_delay = 0;
+  // Zero is the common boundary; low bits defer IRQ, high bit retains an RTI frame.
+  std::uint8_t boundary_control = 0;
   ExecutionState state = ExecutionState::running;
 };
 

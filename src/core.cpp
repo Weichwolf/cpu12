@@ -111,7 +111,10 @@ Checkpoint Core::checkpoint() const {
   return {.registers = impl_->registers,
           .failure = impl_->failure,
           .state = impl_->context.state,
-          .irq_delay = impl_->context.irq_delay};
+          .irq_delay =
+              static_cast<std::uint8_t>(impl_->context.boundary_control & detail::irq_delay_mask),
+          .returned_frame =
+              (impl_->context.boundary_control & detail::returned_frame_boundary) != 0};
 }
 
 void Core::restore(const Checkpoint &checkpoint) {
@@ -119,7 +122,8 @@ void Core::restore(const Checkpoint &checkpoint) {
   const bool idle = checkpoint.state != ExecutionState::running;
   constexpr unsigned stop_disable = 0x80;
   if (checkpoint.state > ExecutionState::stopped || checkpoint.irq_delay > 1 ||
-      (idle && checkpoint.irq_delay != 0) ||
+      (idle && (checkpoint.irq_delay != 0 || checkpoint.returned_frame)) ||
+      (checkpoint.returned_frame && checkpoint.irq_delay != 0) ||
       (checkpoint.state == ExecutionState::stopped &&
        (checkpoint.registers.ccr & stop_disable) != 0) ||
       checkpoint.failure.fault > Fault::instruction_fetch ||
@@ -135,7 +139,8 @@ void Core::restore(const Checkpoint &checkpoint) {
   impl_->context.value = checkpoint.failure.value;
   impl_->context.access_size = checkpoint.failure.access_size;
   impl_->context.read_mask = checkpoint.failure.read_mask;
-  impl_->context.irq_delay = checkpoint.irq_delay;
+  impl_->context.boundary_control =
+      checkpoint.returned_frame ? detail::returned_frame_boundary : checkpoint.irq_delay;
   impl_->context.state = checkpoint.state;
 }
 
@@ -144,7 +149,7 @@ void Core::set_registers(const Registers registers) {
   impl_->registers = registers;
   impl_->failure = {};
   impl_->context.fault = Fault::none;
-  impl_->context.irq_delay = 0;
+  impl_->context.boundary_control = 0;
   impl_->context.state = ExecutionState::running;
 }
 
@@ -237,7 +242,7 @@ EventResult Core::reset(const std::uint16_t vector) noexcept {
   }
   impl_->failure = {};
   impl_->context.fault = Fault::none;
-  impl_->context.irq_delay = 0;
+  impl_->context.boundary_control = 0;
   impl_->active = true;
   const auto target = reset_vector(impl_->ram, impl_->context, vector);
   if (target == detail::failed_word_read) {
@@ -263,10 +268,17 @@ bool Core::interrupt_ready(const InterruptKind kind) const noexcept {
   constexpr unsigned xirq = 0x40;
   switch (kind) {
     case InterruptKind::maskable:
-      return (impl_->registers.ccr & irq) == 0 && impl_->context.irq_delay == 0;
+      return (impl_->registers.ccr & irq) == 0 &&
+             (impl_->context.boundary_control & detail::irq_delay_mask) == 0;
     case InterruptKind::xirq: return (impl_->registers.ccr & xirq) == 0;
     default: return false;
   }
+}
+
+bool Core::interrupt_frame_available() const noexcept {
+  if (impl_->active || impl_->failure.fault != Fault::none) { return false; }
+  return state() != ExecutionState::running ||
+         (impl_->context.boundary_control & detail::returned_frame_boundary) != 0;
 }
 
 EventResult Core::interrupt(const InterruptRequest request) {

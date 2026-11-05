@@ -36,8 +36,8 @@ retains idle state. Explicit register replacement cancels it; accepted reset
 clears it while retaining the documented reset policy for other registers.
 
 CPU-only snapshots include idle state and IRQ delay; checkpoints.txt defines
-the caller's memory/peripheral responsibility. Pending-source arbitration,
-post-RTI tail chaining, physical prefetch/timing and full original-firmware
+the caller's memory/peripheral responsibility. tail-chain.txt covers reuse of a
+just-returned frame. Pending-source arbitration, physical prefetch/timing and full original-firmware
 integration remain outside this component. Fuzzing is not automatic.
 
 Focused reproduction:

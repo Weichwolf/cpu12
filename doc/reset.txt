@@ -22,7 +22,8 @@ cached; fetched bytes still determine their identity after a reset.
 
 The board owns peripheral/clock/storage reset and vector selection. Accepted
 CPU reset also clears waiting/stopped state. A refused vector retains that state
-and latches the fault. Physical prefetch, reset timing, asynchronous source
+and latches the fault. Reset attempts clear prior returned-frame/deferral status.
+Physical prefetch, reset timing, asynchronous source
 arbitration and full board reset remain outside this CPU event.
 Sections2.2.5 and7.8 differ in vector/mask ordering;
 this logical event reads the vector before mask publication, following7.8.

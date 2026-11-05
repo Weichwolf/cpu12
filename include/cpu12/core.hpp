@@ -89,6 +89,7 @@ struct Checkpoint {
   RunResult failure;
   ExecutionState state = ExecutionState::running;
   std::uint8_t irq_delay = 0;
+  bool returned_frame = false;
   bool operator==(const Checkpoint &) const = default;
 };
 
@@ -124,6 +125,7 @@ public:
   [[nodiscard]] RunResult step();
   [[nodiscard]] EventResult reset(std::uint16_t vector) noexcept;
   [[nodiscard]] bool interrupt_ready(InterruptKind kind) const noexcept;
+  [[nodiscard]] bool interrupt_frame_available() const noexcept;
   [[nodiscard]] EventResult interrupt(InterruptRequest request);
   // Report an asserted masked XIRQ while stopped; no vector is serviced.
   [[nodiscard]] EventResult resume_from_stop();

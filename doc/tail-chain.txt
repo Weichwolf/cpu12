@@ -1,0 +1,55 @@
+Native post-RTI interrupt entry
+
+At the boundary immediately after a successful RTI, an eligible pending source
+uses the frame that was just restored. Core::interrupt reads the actual vector,
+backs SP by9 with16-bit wrapping, applies I/X masks and transfers to the target.
+It performs no frame read or write and retires no instruction. All other CPU
+registers and the saved bytes remain intact. This follows S12CPUV2 section7.5.5;
+physical instruction-queue refill and exact bus-cycle timing remain unmeasured.
+
+Preserving the original bytes matters when RTI clears a saved X bit that the
+current CPU cannot raise. Tail entry leaves that saved bit unchanged; it does
+not replace the frame with the currently restored CCR. Ordinary entry after a
+following instruction instead saves the actual current registers and next PC.
+
+interrupt_frame_available() exposes frame reuse at a completed CPU boundary
+for the board's event/cycle owner. It is independent of interrupt_ready(kind),
+which tests source eligibility. Active execution and a latched fault report
+no available frame for service. A masked request leaves the boundary intact.
+The board chooses priorities and acknowledges the actual accepted vector read;
+this API does not fabricate acknowledgement or arbitrate sources in run().
+
+Native code marks a completed RTI only after every real restore read succeeds.
+The next retired instruction consumes that boundary; another RTI replaces it
+with its own returned frame. ANDCC/TAP transitions replace it with their real
+IRQ deferral. This shares the existing retirement-control byte and zero-control
+check. Normal instruction execution gains no helper call or new status branch.
+The native event cache distinguishes ordinary pushes, waiting-frame reuse and
+returned-frame reuse for the same vector. STOP continuation has a separate domain.
+
+Code invalidation preserves the boundary. Checkpoint.returned_frame stores it
+alongside CPU registers, IRQ delay and faults; it cannot coexist with an idle
+state or outstanding delay. The caller pairs CPU and memory/peripheral snapshots.
+An identical debug register replacement still establishes a fresh boundary;
+reset attempts also cancel returned-frame status. Fault snapshots retain their
+metadata, but execution and service remain blocked until coordinated recovery.
+
+A refused vector read preserves restored CPU state and actual callback effects.
+The failure latch prevents replay across cache clearing or snapshot restoration.
+Recovered service rereads the actual vector; it cannot use a previous diagnostic
+target. The board must check pending sources at qualified instruction boundaries.
+If run() executes a following instruction before the board checks, that later
+boundary requires ordinary entry, as specified by the instruction-budget API.
+
+Authored tests cover all SP and vector-target values, all old/saved CCR pairs,
+IRQ/XIRQ eligibility, saved-X preservation, exact external reads/no writes,
+three warm same-vector code modes, consecutive RTIs, deferral and snapshots.
+An actual fetched reset/WAI program executes two real authored handlers and
+continues at its following instruction. This is CPU component evidence, not
+original firmware, whole-board timing, instrument or real-time acceptance.
+
+Focused reproduction:
+
+  cmake --preset release
+  cmake --build --preset release --target cpu12-tail-chain-test
+  ctest --test-dir build/release --output-on-failure -R '^tail-chain$'

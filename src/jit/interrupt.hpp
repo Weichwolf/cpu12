@@ -9,11 +9,12 @@
 #include <vector>
 
 namespace cpu12::detail {
+enum class InterruptFrame : std::uint8_t { push, waiting, returned };
 void return_interrupt(Code &code, Ram ram);
 void defer_interrupt(Code &code, bool accumulator);
 void stack_context(Code &code, Ram ram, std::uint8_t next_pc = 0);
 void wait_instruction(Code &code, const Instruction &instruction, Ram ram);
 [[nodiscard]] std::vector<std::uint8_t>
-emit_interrupt(InterruptRequest request, Ram ram, bool reuse);
+emit_interrupt(InterruptRequest request, Ram ram, InterruptFrame frame);
 [[nodiscard]] std::vector<std::uint8_t> emit_stop_wake();
 }

@@ -46,7 +46,10 @@ vector; [interrupt entry and return](doc/interrupt.txt) expose eligibility and n
 stack transactions. The board owns source arbitration, acknowledgement and time.
 [WAI/STOP](doc/wait.txt) report bounded idle exits and reuse the genuine saved
 frame on wake. [CPU checkpoints](doc/checkpoints.txt) retain registers, idle
-state, IRQ deferral and faults; callers pair them with board snapshots.
+state, IRQ deferral, returned-frame status and faults; callers pair them with board snapshots.
+[Post-RTI entry](doc/tail-chain.txt) reuses the just-restored frame for an eligible
+pending source before a following instruction retires. The board can query frame
+availability separately from source eligibility.
 Remaining ISA, board timing and bounded native regions remain open. The current
 RAM/bus contract is described in [memory.txt](doc/memory.txt) and
 [indexed.txt](doc/indexed.txt), [control transfers](doc/control.txt) and
