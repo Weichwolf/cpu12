@@ -73,4 +73,8 @@ Both scopes include input reset, native state publication, STOP and verification
 `native_code_bytes` includes retained native paths for shorter execution grants.
 The performance gate applies to full Core.run across representative workloads.
 
+`cpu12-word-checksum-bench` measures indexed big-endian word reads, accumulator
+writes and counted branches against scalar host ASM, with independent state and
+memory checks. It reports cold execution separately and checks translation reuse.
+
 [License](LICENSE)
