@@ -44,7 +44,8 @@ void long_region() {
   Device device(program);
   const auto result = device.core.run();
   require(result.fault == Fault::none && result.retired == count + 1 &&
-              result.state == ExecutionState::stopped &&
+              result.state == ExecutionState::stopped && result.pc == entry + count &&
+              result.opcode == isa::stop[0] &&
               device.core.registers().pc == entry + program.size() &&
               device.core.statistics().compiled_entries == 1,
           "A complete natural region exceeds fixed translation caps and retires through STOP");
@@ -68,7 +69,8 @@ void bounded_loop() {
   device.core.set_registers({.pc = entry, .x = iterations, .sp = stack});
   constexpr unsigned limit = 127;
   const auto first = device.core.run(limit);
-  require(first.fault == Fault::none && first.retired == limit &&
+  require(first.fault == Fault::none && first.retired == limit && first.pc == entry &&
+              first.opcode == isa::opcode<isa::Opcode::dex>()[0] &&
               device.core.registers().x == iterations - (limit + 1) / 2 &&
               device.core.registers().pc == entry + isa::opcode<isa::Opcode::dex>().size(),
           "A grant ending inside a native loop stops after the exact instruction");
@@ -92,8 +94,9 @@ void precise_fault() {
   const auto result = device.core.run();
   const auto state = device.core.state();
   require(result.fault == Fault::unsupported_state && result.retired == 2 &&
-              result.pc == entry + 3 && state.registers.pc == entry + 3 &&
-              state.registers.d == invalid_d && state.registers.sp == stack,
+              result.pc == entry + 3 && result.opcode == isa::daa[0] &&
+              state.registers.pc == entry + 3 && state.registers.d == invalid_d &&
+              state.registers.sp == stack,
           "A joined native fault preserves the precise failing PC and preceding retirements");
   const auto again = device.core.run();
   require(again.fault == result.fault && again.retired == 0 && device.core.state() == state,

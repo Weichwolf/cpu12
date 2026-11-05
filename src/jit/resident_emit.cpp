@@ -2,6 +2,7 @@
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
 #include "instruction.hpp"
+#include "jit/block.hpp"
 #include "jit/code.hpp"
 #include "jit/resident.hpp"
 
@@ -434,6 +435,8 @@ std::vector<std::uint8_t> emit_resident(const ResidentPlan &plan,
   constexpr std::uint8_t pop_rax = 0x58;
   code.byte(pop_rax);
   preserve(code, plan, true);
+  const auto &last = plan.operations.back();
+  describe_exit(code, {.pc = last.pc, .opcode = last.instruction.opcode});
   constexpr std::uint8_t ret = 0xc3;
   code.byte(ret);
   code.bind(insufficient);

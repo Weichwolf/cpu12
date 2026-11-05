@@ -31,8 +31,8 @@ constexpr std::array<std::uint8_t, 12> arguments{
 constexpr std::array<std::uint8_t, 6> restore_arguments{0x4c, 0x89, 0xe7, 0x4c, 0x89, 0xee};
 constexpr std::array<std::uint8_t, 6> remaining{0x44, 0x89, 0xf8, 0x44, 0x29, 0xf0};
 constexpr std::array<std::uint8_t, 3> add_count{0x41, 0x81, 0xc6};
-constexpr std::array<std::uint8_t, 12> leave{
-    0x44, 0x89, 0xf0, 0x41, 0x5f, 0x41, 0x5e, 0x41, 0x5d, 0x41, 0x5c, 0xc3};
+constexpr std::array<std::uint8_t, 9> leave{0x41, 0x5f, 0x41, 0x5e, 0x41, 0x5d, 0x41, 0x5c, 0xc3};
+constexpr std::array<std::uint8_t, 3> count_result{0x44, 0x89, 0xf0};
 constexpr std::uint8_t jump = 0xe9, compare_eax = 0x3d;
 
 bool loops(const std::span<const BlockInstruction> instructions) {
@@ -61,6 +61,14 @@ void append_instruction(Code &code,
     }
   }
 }
+}
+
+void describe_exit(Code &code, const ExitLocation location) {
+  const auto metadata =
+      std::uint32_t{location.pc} | (std::uint32_t{location.opcode} << native_opcode_shift);
+  constexpr std::uint8_t descriptor = 0xba; // MOV EDX,imm32; RAX retains retirement progress.
+  code.byte(descriptor);
+  code.u32(metadata);
 }
 
 std::vector<std::uint8_t> emit_block(const std::span<const BlockInstruction> instructions,
@@ -95,8 +103,11 @@ std::vector<std::uint8_t> emit_block(const std::span<const BlockInstruction> ins
     const auto repeat = code.relative32();
     code.bind(repeat, begin);
   }
-  const auto finished = code.size();
   code.bind(insufficient);
+  code.raw(count_result);
+  describe_exit(code,
+                {.pc = instructions.back().pc, .opcode = instructions.back().instruction.opcode});
+  const auto finished = code.size();
   code.raw(leave);
   for (const auto fault : faults) {
     code.bind(fault.displacement);
@@ -104,6 +115,9 @@ std::vector<std::uint8_t> emit_block(const std::span<const BlockInstruction> ins
       code.raw(add_count);
       code.u32(fault.completed);
     }
+    code.raw(count_result);
+    const auto &operation = instructions[fault.completed];
+    describe_exit(code, {.pc = operation.pc, .opcode = operation.instruction.opcode});
     code.byte(jump);
     const auto done = code.relative32();
     code.bind(done, finished);
@@ -116,7 +130,7 @@ std::vector<std::uint8_t> emit_block(const std::span<const BlockInstruction> ins
 }
 
 #if defined(__x86_64__) && defined(__linux__)
-extern "C" std::uint32_t
+extern "C" RawNativeResult
 cpu12_enter_block(const void *, Registers *, NativeContext *, std::uint32_t) noexcept;
 asm(".pushsection .text\n"
     ".globl cpu12_enter_block\n"
@@ -133,18 +147,19 @@ asm(".pushsection .text\n"
     ".popsection\n");
 #endif
 
-std::uint32_t enter_block(const void *entry,
-                          Registers &registers,
-                          NativeContext &context,
-                          const std::uint32_t budget) noexcept {
+NativeResult enter_block(const void *entry,
+                         Registers &registers,
+                         NativeContext &context,
+                         const std::uint32_t budget) noexcept {
 #if defined(__x86_64__) && defined(__linux__)
-  return cpu12_enter_block(entry, &registers, &context, budget);
+  const auto result = cpu12_enter_block(entry, &registers, &context, budget);
+  return native_result(result);
 #else
   static_cast<void>(entry);
   static_cast<void>(registers);
   static_cast<void>(context);
   static_cast<void>(budget);
-  return 0;
+  return {};
 #endif
 }
 }

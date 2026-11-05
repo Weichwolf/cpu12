@@ -25,8 +25,9 @@ void execute(Core &core, const Address pc) {
   const auto result = core.run(1);
   auto expected = initial;
   expected.pc = static_cast<Address>(pc + 1U);
-  require(result.fault == Fault::none && result.retired == 1 &&
-              result.state == ExecutionState::running && core.registers() == expected,
+  require(result.fault == Fault::none && result.retired == 1 && result.pc == pc &&
+              result.opcode == isa::nop[0] && result.state == ExecutionState::running &&
+              core.registers() == expected,
           "Sparse native-entry lookup must preserve the complete instruction result");
 }
 

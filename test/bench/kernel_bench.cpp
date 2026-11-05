@@ -93,8 +93,9 @@ void verify(const State &state,
             const std::array<Byte, address_bytes> &ram) {
   constexpr Address frame_bytes = 9;
   if (result.fault != Fault::none || result.retired != fixture.instructions ||
-      state.execution != ExecutionState::stopped || state.registers.d != fixture.expected_d ||
-      state.registers.x != 0 || state.registers.y != 0 ||
+      result.pc != entry + fixture.program.size() - isa::stop.size() ||
+      result.opcode != isa::stop[0] || state.execution != ExecutionState::stopped ||
+      state.registers.d != fixture.expected_d || state.registers.x != 0 || state.registers.y != 0 ||
       state.registers.pc != entry + fixture.program.size() ||
       state.registers.sp != stack - frame_bytes || state.registers.ccr != fixture.expected_ccr ||
       ram[data] != fixture.expected_memory) {
@@ -136,13 +137,21 @@ public:
     context.fault = Fault::none;
     constexpr auto budget = std::numeric_limits<std::uint32_t>::max();
     std::uint32_t retired = 0;
+    detail::ExitLocation location;
     for (const auto *block : blocks) {
-      retired += detail::enter_block(block, context.cpu.registers, context, budget - retired);
+      const auto result =
+          detail::enter_block(block, context.cpu.registers, context, budget - retired);
+      retired += result.retired;
+      location = result.location;
       if (context.fault != Fault::none || context.cpu.execution != ExecutionState::running) {
         break;
       }
     }
-    verify(context.cpu, {.retired = retired, .fault = context.fault}, fixture, ram);
+    verify(
+        context.cpu,
+        {.retired = retired, .fault = context.fault, .pc = location.pc, .opcode = location.opcode},
+        fixture,
+        ram);
   }
 
   [[nodiscard]] const State &state() const { return context.cpu; }
