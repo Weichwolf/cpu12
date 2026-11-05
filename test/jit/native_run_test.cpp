@@ -56,12 +56,13 @@ struct Harness {
   detail::NativeContext context{};
   detail::ExecutableArena arena;
 
-  explicit Harness(const bool failing_write = false) {
+  explicit Harness(const bool failing_write = false,
+                   const std::span<const Byte> terminal = isa::stop) {
     std::ranges::copy(program_a, ram.begin() + first);
     const auto middle =
         failing_write ? std::span<const Byte>(fault_b) : std::span<const Byte>(program_b);
     std::ranges::copy(middle, ram.begin() + second);
-    std::ranges::copy(isa::stop, ram.begin() + third);
+    std::ranges::copy(terminal, ram.begin() + third);
     constexpr Address code_end = 0x0800;
     const std::array regions{Ram{.first = 0, .bytes = std::span(ram).first(first)},
                              Ram{.first = first,
@@ -135,6 +136,42 @@ void boundaries() {
           "A missing target entry exits for normal cold compilation");
 }
 
+void sleep_boundaries() {
+  Harness harness(false, isa::wai);
+  check(harness.run(), 6, {.pc = third, .opcode = isa::wai[0]});
+  require(harness.context.cpu.execution == ExecutionState::waiting &&
+              harness.context.cpu.registers.pc == third + isa::wai.size() &&
+              harness.context.cpu.registers.sp == stack - 9,
+          "A chained WAI must stop at the native wait boundary with its real stack frame");
+  std::array<Byte, address_bytes> ram{};
+  constexpr auto program = isa::program(isa::stop, isa::opcode<isa::Opcode::inx>(), isa::wai);
+  std::ranges::copy(program, ram.begin() + first);
+  const std::array regions{Ram{.first = 0, .bytes = std::span(ram).first(first)},
+                           Ram{.first = first,
+                               .bytes = std::span(ram).subspan(first, program.size()),
+                               .writable = false},
+                           Ram{.first = first + program.size(),
+                               .bytes = std::span(ram).subspan(first + program.size())}};
+  Core core(Memory::mapped(regions));
+  constexpr Byte disable_stop = 0x80;
+  auto expected = seed;
+  expected.pc = first + program.size();
+  ++expected.x;
+  expected.sp = stack - 9;
+  expected.ccr = disable_stop;
+  for (unsigned repetition = 0; repetition < 2; ++repetition) {
+    auto before = seed;
+    before.ccr = disable_stop;
+    core.set_registers(before);
+    const auto result = core.run();
+    require(result.retired == 3 && result.fault == Fault::none &&
+                result.state == ExecutionState::waiting && result.opcode == isa::wai[0] &&
+                result.pc == first + program.size() - isa::wai.size() &&
+                core.registers() == expected,
+            "Cold and retained execution must continue past disabled STOP to INX and WAI");
+  }
+}
+
 void faults() {
   Harness stack_failure;
   check(stack_failure.run({.sp = failing_stack}), 5, {.pc = third, .opcode = isa::stop[0]});
@@ -161,6 +198,7 @@ int main() {
     complete();
     boundaries();
     faults();
+    sleep_boundaries();
     std::cout << "Native block dispatch, budgets, cold targets and precise faults passed\n";
     return 0;
   } catch (const std::exception &error) {

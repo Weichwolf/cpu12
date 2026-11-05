@@ -33,8 +33,10 @@ struct RawNativeResult {
 };
 
 inline constexpr unsigned native_opcode_shift = 16;
+// Fault exits and sleep instructions request a boundary without warm context rereads.
+inline constexpr std::uint32_t native_boundary_mask = 1U << 24U;
 class Code;
-void describe_exit(Code &code, ExitLocation location);
+void describe_exit(Code &code, ExitLocation location, bool boundary = false);
 
 inline constexpr unsigned native_page_shift = 8;
 inline constexpr std::size_t native_page_entries = 1U << native_page_shift;

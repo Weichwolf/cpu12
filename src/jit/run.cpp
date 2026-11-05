@@ -7,7 +7,7 @@
 #include <cstdint>
 
 #define CPU12_RUN_FAULT_OFFSET 88
-#define CPU12_RUN_STATE_OFFSET 28
+#define CPU12_RUN_BOUNDARY_MASK 0x01000000
 #define CPU12_RUN_STRING_VALUE(value) #value
 #define CPU12_RUN_STRING(value) CPU12_RUN_STRING_VALUE(value)
 
@@ -15,7 +15,7 @@ namespace cpu12::detail {
 #if defined(__x86_64__) && defined(__linux__)
 // This private assembly ABI is checked against the C++ layout at compilation.
 static_assert(offsetof(NativeContext, fault) == CPU12_RUN_FAULT_OFFSET);
-static_assert(offsetof(NativeContext, cpu) + offsetof(State, execution) == CPU12_RUN_STATE_OFFSET);
+static_assert(native_boundary_mask == CPU12_RUN_BOUNDARY_MASK);
 static_assert(offsetof(Registers, pc) == 0);
 static_assert(sizeof(void *) == 8 && native_page_shift == 8);
 static_assert(Fault::none == Fault{} && ExecutionState::running == ExecutionState{});
@@ -23,7 +23,7 @@ static_assert(Fault::none == Fault{} && ExecutionState::running == ExecutionStat
 extern "C" RawNativeResult cpu12_run_blocks(
     const void *, Registers *, NativeContext *, std::uint32_t, const void *const *const *) noexcept;
 asm(".equ cpu12_run_fault," CPU12_RUN_STRING(CPU12_RUN_FAULT_OFFSET) "\n");
-asm(".equ cpu12_run_state," CPU12_RUN_STRING(CPU12_RUN_STATE_OFFSET) "\n");
+asm(".equ cpu12_run_boundary," CPU12_RUN_STRING(CPU12_RUN_BOUNDARY_MASK) "\n");
 asm(".pushsection .text\n"
     ".globl cpu12_run_blocks\n"
     ".hidden cpu12_run_blocks\n"
@@ -54,10 +54,8 @@ asm(".pushsection .text\n"
     "mov %rdx,%rbp\n"
     "add %eax,%ebx\n"
     "sub %eax,%r15d\n"
-    "cmpb $0,cpu12_run_fault(%r13)\n"
-    "jne .Lcpu12_run_done\n"
-    "cmpb $0,cpu12_run_state(%r13)\n"
-    "jne .Lcpu12_run_done\n"
+    "test $cpu12_run_boundary,%edx\n"
+    "jnz .Lcpu12_run_done\n"
     "test %r15d,%r15d\n"
     "jz .Lcpu12_run_done\n"
     "movzwl (%r12),%eax\n"
@@ -111,5 +109,5 @@ NativeResult enter_blocks(const void *entry,
 
 #undef CPU12_RUN_STRING
 #undef CPU12_RUN_STRING_VALUE
-#undef CPU12_RUN_STATE_OFFSET
+#undef CPU12_RUN_BOUNDARY_MASK
 #undef CPU12_RUN_FAULT_OFFSET

@@ -63,9 +63,10 @@ void append_instruction(Code &code,
 }
 }
 
-void describe_exit(Code &code, const ExitLocation location) {
-  const auto metadata =
-      std::uint32_t{location.pc} | (std::uint32_t{location.opcode} << native_opcode_shift);
+void describe_exit(Code &code, const ExitLocation location, const bool boundary) {
+  const auto metadata = std::uint32_t{location.pc} |
+                        (std::uint32_t{location.opcode} << native_opcode_shift) |
+                        (boundary ? native_boundary_mask : 0U);
   constexpr std::uint8_t descriptor = 0xba; // MOV EDX,imm32; RAX retains retirement progress.
   code.byte(descriptor);
   code.u32(metadata);
@@ -105,8 +106,10 @@ std::vector<std::uint8_t> emit_block(const std::span<const BlockInstruction> ins
   }
   code.bind(insufficient);
   code.raw(count_result);
+  const auto &last = instructions.back();
   describe_exit(code,
-                {.pc = instructions.back().pc, .opcode = instructions.back().instruction.opcode});
+                {.pc = last.pc, .opcode = last.instruction.opcode},
+                last.instruction.kind == Kind::wait || last.instruction.kind == Kind::stop);
   const auto finished = code.size();
   code.raw(leave);
   for (const auto fault : faults) {
@@ -117,7 +120,7 @@ std::vector<std::uint8_t> emit_block(const std::span<const BlockInstruction> ins
     }
     code.raw(count_result);
     const auto &operation = instructions[fault.completed];
-    describe_exit(code, {.pc = operation.pc, .opcode = operation.instruction.opcode});
+    describe_exit(code, {.pc = operation.pc, .opcode = operation.instruction.opcode}, true);
     code.byte(jump);
     const auto done = code.relative32();
     code.bind(done, finished);
