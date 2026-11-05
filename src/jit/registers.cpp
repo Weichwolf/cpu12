@@ -6,6 +6,7 @@
 #include "jit/accumulator.hpp"
 #include "jit/code.hpp"
 #include "jit/flags.hpp"
+#include "jit/interrupt.hpp"
 
 #include <array>
 #include <cstddef>
@@ -133,6 +134,8 @@ void ccr(Code &code, const Instruction &instruction) {
   constexpr std::array<std::uint8_t, 2> and_ccr{0x80, 0x67};
   constexpr std::array<std::uint8_t, 2> or_ccr{0x80, 0x4f};
   const bool conjunction = instruction.operation == RegisterOp::ccr_and;
+  constexpr unsigned irq = 0x10;
+  if (conjunction && (instruction.operand & irq) == 0) { defer_interrupt(code, false); }
   if (conjunction) {
     code.raw(and_ccr);
   } else {

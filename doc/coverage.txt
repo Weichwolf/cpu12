@@ -1,15 +1,25 @@
 CPU12 coverage — incomplete
 
 Current public API: Core(Memory, Io*, Options), run_instruction(captured_bytes),
-step() and run(instruction_budget). Borrowed byte views provide
+step(), run(instruction_budget), reset(vector), interrupt_ready(kind) and
+interrupt(request). Borrowed byte views provide
 unified/window/external layouts; native cache bounds are checked at construction.
-Fetched execution uses explicit code transport; clocks and interrupts remain
-outside the currently implemented execution contract.
+Fetched execution uses explicit code transport. The board owns clocks, source
+arbitration and acknowledgement; native interrupt events retire no instruction.
 
 Initial native implementation on x86-64/Linux:
 - Logical byte fetching from current RAM or explicit Io.fetch, separate from data.
 - Bounded instruction sequences, precise fetched faults, address wrapping and
   byte/length cache keys for changed code; no physical prefetch/timing claim.
+- Actual reset-vector reads and S/X/I forcing, with explicit retention policy
+  for other CPU state; peripheral/clock/storage reset belongs to the board.
+- Native IRQ/XIRQ vector and nine-byte stack entry, mask eligibility, and the
+  following-instruction recognition delay for ANDCC/TAP transitions.
+- Native RTI restores CCR/B:A/X/PC/Y, wraps SP, and cannot raise a clear X mask.
+- External entry/return stages CPU publication and retains actual partial effects
+  on faults without automatic replay. Full known RAM uses no host frame/callback.
+- Optional selected-bit byte reads for BRSET/BRCLR preserve real read effects,
+  including mask00; ordinary loads, words and RMW still require complete data.
 - Captured NOP.
 - Immediate LDAA/B, ADDA/B, SUBA/B, CMPA/B, ANDA/B, ORAA/B, EORA/B, BITA/B.
 - ADCA/B and SBCA/B in immediate/direct/extended/all existing indexed forms.
@@ -74,8 +84,9 @@ Open requirements:
 - Original M68HC12 move-queue PC corrections; current moves use HCS12 semantics.
 - Additional memory-window types and multi-byte/per-instruction access boundaries.
 - Native regions, executable mapping/invalidation contracts and event/timing budgets.
-- Reset, interrupt priorities/entry/return, ANDCC IRQ-recognition delay,
-  wait/stop and complete checkpoints.
+- Pending-source priorities/arbitration during run(), wait/stop, frame reuse,
+  tail chaining, SWI/trap/banked ISA, board timing and complete checkpoints.
+- Recognition timing for CCR-destination transfers beyond ANDCC/TAP transitions.
 - Integration and state ownership with blofeld-emu; no emulator dependency pin yet.
 - Real firmware startup, actual instrument behavior and whole-emulator throughput.
 - Other host architectures, extensive sanitizer matrices and broader regression.
@@ -86,11 +97,18 @@ remains physically unmeasured. stack.txt records the distinction.
 
 No native throughput or real-time claim is made from correctness test duration.
 Broad QA is deferred until original Blofeld firmware runs in real time, as the
-user requested. No fuzzing was run. Current fetch-reference.json pins
+user requested. No fuzzing was run. Historical fetch-reference.json pins
 14576 independent fetch shapes/boundaries, 333 native program retirements and
-all sixteen previous consumers against one coherent optimized library.
+all sixteen earlier consumers against its coherent optimized library.
 Authored loops, real call/return stacks, guest self-modification, external bank
 changes, byte-exact faults, reentrancy and no-replay boundaries are included.
+Current interrupt-reference.json pins 131334 reset events, 65803 interrupt
+entries, 393226 instruction cases in the RTI test and 393223 selected-bit cases,
+including real bus refusals, retained diagnostic bytes and no replay.
+Its 21 consumers use one coherent optimized library with exact executable
+identities; 20 results are reused after a formatter-only change to the one
+test consumer that was rebuilt and rerun. The fetch catalogue now covers
+286 opcode forms and14577 shapes/boundaries, with333 program retirements.
 Historical accumulator-reference.json pins 50432704 accumulator/BCD cases and
 40961 unqualified-state boundaries, with DAA domain/result proofs and an
 explicit undefined-V policy.

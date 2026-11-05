@@ -33,7 +33,8 @@ A later call at a latched fault returns zero retirements. A zero budget performs
 no fetch or execution. This is an instruction budget, not a cycle/time budget.
 
 This is a logical byte-fetch model, not the physical CPU12 prefetch queue or
-bus-cycle timing. Reset, interrupts, waits, native regions, event/cycle budgets
-and Blofeld integration remain required work. Tests use an independent literal
+bus-cycle timing. Reset and native interrupt events have separate interfaces;
+run() does not arbitrate sources or advance board time. Waits, native regions,
+event/cycle budgets and Blofeld integration remain required work. Tests use an independent literal
 opcode/length catalogue, explicit indexed postbyte sets and authored programs;
 they establish neither original firmware execution nor real-time throughput.

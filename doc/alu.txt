@@ -15,9 +15,10 @@ C, COM sets C, and CLR/TST clear C as specified.
 
 INX/DEX/INY/DEY change only the selected 16-bit index and Z. ANDCC clears
 selected bits. ORCC sets selected bits except X, which it cannot raise.
-The captured API currently implements register effects only: ANDCC's interrupt
-recognition delay, IRQ arbitration, waits, reset, fetch and cycle budgets
-remain explicit future requirements, alongside the remaining ISA.
+ANDCC and TAP transitions from masked to unmasked defer maskable IRQ eligibility
+until one following instruction retires; interrupt.txt specifies the entry/readiness
+contract. The board owns IRQ arbitration and time. Waits, complete checkpoints
+and cycle budgets remain open, alongside the remaining ISA.
 
 All instruction and template selection occurs during compilation. Warm register
 and known-RAM execution uses generated host operations; only genuine external

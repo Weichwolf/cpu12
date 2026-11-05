@@ -7,6 +7,7 @@
 #include "cpu12/memory.hpp"
 #include "instruction.hpp"
 #include "jit/emitter.hpp"
+#include "jit/interrupt.hpp"
 #include "runtime.hpp"
 
 #include <cerrno>
@@ -125,8 +126,27 @@ bool Jit::execute(const std::span<const std::uint8_t> bytes,
     ++impl_->statistics.compiled_entries;
   }
   found->second->enter(registers, context);
-  if (context.fault == Fault::none) { ++impl_->statistics.native_instructions; }
+  if (context.fault == Fault::none) {
+    ++impl_->statistics.native_instructions;
+    if (context.irq_delay != 0) { --context.irq_delay; }
+  }
   return true;
+}
+
+void Jit::interrupt(const InterruptRequest request, Registers &registers, NativeContext &context) {
+  constexpr unsigned kind_shift = 16;
+  constexpr auto event_tag = std::uint64_t{1} << 63U;
+  const auto key =
+      event_tag | (static_cast<std::uint64_t>(request.kind) << kind_shift) | request.vector;
+  auto found = impl_->blocks.find(key);
+  if (found == impl_->blocks.end()) {
+    if (impl_->blocks.size() == impl_->cache_entries) { clear(); }
+    found = impl_->blocks
+                .emplace(key, std::make_unique<Executable>(emit_interrupt(request, impl_->ram)))
+                .first;
+    ++impl_->statistics.compiled_entries;
+  }
+  found->second->enter(registers, context);
 }
 
 void Jit::clear() {

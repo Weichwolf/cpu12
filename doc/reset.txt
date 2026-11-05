@@ -1,0 +1,33 @@
+CPU reset control event
+
+Core::reset(vector_address) reads the actual big-endian vector and sets PC
+from it, then forces CCR S/X/I. The integration module selects the address;
+reset causes need not share one vector. Other register/status values retain
+their prior state as an explicit deterministic model policy, not measured
+power-on state. CPU reset neither executes nor retires an instruction.
+
+Known RAM reads the two actual vector bytes, including ffff-to-zero wrapping.
+A partial or unknown vector delegates one complete Io.read_word; byte callbacks
+are not substituted. EventResult.accepted is true only after the vector is
+accepted and CPU state changes. Failure reports original PC, address, width
+and diagnostic value, leaves registers intact, and latches before execution
+can continue. A new explicit reset can clear that CPU fault after the caller
+has independently recovered the bus. Earlier bus effects are retained.
+EventResult.pc always identifies the original boundary; registers().pc exposes
+the accepted vector target.
+
+Reset is a host-compiled control event; instruction execution remains native
+JIT code. Reentrant reset/execution is refused. Valid native code entries remain
+cached; fetched bytes still determine their identity after a reset.
+
+The board owns peripheral/clock/storage reset and vector selection. Physical
+prefetch, reset timing, asynchronous interrupts, WAI and full board reset remain
+outside this CPU event. Sections2.2.5 and7.8 differ in vector/mask ordering;
+this logical event reads the vector before mask publication, following7.8.
+These isolated tests cannot establish original firmware boot or update safety.
+
+Focused reproduction:
+
+  cmake --preset release
+  cmake --build --preset release --target cpu12-reset-test
+  ctest --test-dir build/release --output-on-failure -R '^reset$'

@@ -7,6 +7,7 @@
 #include "runtime.hpp"
 
 #include <bit>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <span>
@@ -16,6 +17,23 @@
 #endif
 
 namespace cpu12 {
+namespace {
+const Byte *known_byte(const Ram ram, const Address address) noexcept {
+  if (address < ram.first) { return nullptr; }
+  const auto offset = static_cast<std::size_t>(address - ram.first);
+  return offset < ram.bytes.size() ? ram.bytes.data() + offset : nullptr;
+}
+
+std::uint32_t
+reset_vector(const Ram ram, detail::NativeContext &context, const Address vector) noexcept {
+  const auto *high = known_byte(ram, vector);
+  const auto *low = known_byte(ram, static_cast<Address>(vector + 1U));
+  if (high == nullptr || low == nullptr) { return detail::read_word(&context, vector); }
+  constexpr unsigned byte_bits = 8;
+  return (static_cast<std::uint32_t>(*high) << byte_bits) | *low;
+}
+}
+
 class Core::Impl {
 public:
   Impl(const Ram memory, const Io io, const Options options)
@@ -29,11 +47,15 @@ public:
   RunResult failure;
   bool active = false;
 
-  RunResult failed(RunResult result) {
+  RunResult failed(RunResult result) noexcept {
     result.fault = context.fault;
     result.address = context.address;
     result.value = context.value;
     result.access_size = context.access_size;
+    if (context.access_size == 1 &&
+        (context.fault == Fault::memory_read || context.fault == Fault::instruction_fetch)) {
+      result.read_mask = context.read_mask;
+    }
     failure = result;
     return result;
   }
@@ -83,6 +105,7 @@ void Core::set_registers(const Registers registers) {
   impl_->registers = registers;
   impl_->failure = {};
   impl_->context.fault = Fault::none;
+  impl_->context.irq_delay = 0;
 }
 
 RunResult Core::run_instruction(const std::span<const std::uint8_t> bytes) {
@@ -155,6 +178,91 @@ RunResult Core::run(const std::uint32_t instruction_budget) {
     result.retired = retired;
     if (result.fault != Fault::none) { break; }
   }
+  return result;
+}
+
+EventResult Core::reset(const std::uint16_t vector) noexcept {
+  EventResult result{.pc = impl_->registers.pc};
+  if (impl_->active) {
+    result.fault = Fault::reentrant;
+    return result;
+  }
+  if (!impl_->supported) {
+    result.fault = Fault::unsupported_host;
+    return result;
+  }
+  impl_->failure = {};
+  impl_->context.fault = Fault::none;
+  impl_->context.irq_delay = 0;
+  impl_->active = true;
+  const auto target = reset_vector(impl_->ram, impl_->context, vector);
+  if (target == detail::failed_word_read) {
+    const auto failed = impl_->failed({.pc = result.pc});
+    result.fault = failed.fault;
+    result.address = failed.address;
+    result.value = failed.value;
+    result.access_size = failed.access_size;
+  } else {
+    constexpr unsigned masks = 0xd0;
+    impl_->registers.pc = static_cast<Address>(target);
+    impl_->registers.ccr = static_cast<Byte>(impl_->registers.ccr | masks);
+    result.accepted = true;
+  }
+  impl_->active = false;
+  return result;
+}
+
+bool Core::interrupt_ready(const InterruptKind kind) const noexcept {
+  if (impl_->active || !impl_->supported || impl_->failure.fault != Fault::none) { return false; }
+  constexpr unsigned irq = 0x10;
+  constexpr unsigned xirq = 0x40;
+  switch (kind) {
+    case InterruptKind::maskable:
+      return (impl_->registers.ccr & irq) == 0 && impl_->context.irq_delay == 0;
+    case InterruptKind::xirq: return (impl_->registers.ccr & xirq) == 0;
+    default: return false;
+  }
+}
+
+EventResult Core::interrupt(const InterruptRequest request) {
+  EventResult result{.pc = impl_->registers.pc};
+  if (impl_->active) {
+    result.fault = Fault::reentrant;
+    return result;
+  }
+  if (impl_->failure.fault != Fault::none) {
+    result.fault = impl_->failure.fault;
+    result.address = impl_->failure.address;
+    result.value = impl_->failure.value;
+    result.access_size = impl_->failure.access_size;
+    return result;
+  }
+  if (!impl_->supported) {
+    result.fault = Fault::unsupported_host;
+    return result;
+  }
+  if (request.kind != InterruptKind::maskable && request.kind != InterruptKind::xirq) {
+    result.fault = Fault::invalid_input;
+    return result;
+  }
+  if (!interrupt_ready(request.kind)) { return result; }
+  impl_->active = true;
+  try {
+    impl_->jit.interrupt(request, impl_->registers, impl_->context);
+    if (impl_->context.fault != Fault::none) {
+      const auto failed = impl_->failed({.pc = result.pc});
+      result.fault = failed.fault;
+      result.address = failed.address;
+      result.value = failed.value;
+      result.access_size = failed.access_size;
+    } else {
+      result.accepted = true;
+    }
+  } catch (...) {
+    impl_->active = false;
+    throw;
+  }
+  impl_->active = false;
   return result;
 }
 

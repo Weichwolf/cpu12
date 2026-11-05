@@ -13,6 +13,9 @@
 
 namespace cpu12::detail {
 namespace {
+static_assert(offsetof(MaskedByteRead, address) == 0 && offsetof(MaskedByteRead, mask) == 2 &&
+              sizeof(MaskedByteRead) == 4);
+static_assert(sizeof(RunResult) == 16);
 constexpr std::array<std::uint8_t, 4> base_offsets{
     static_cast<std::uint8_t>(offsetof(Registers, x)),
     static_cast<std::uint8_t>(offsetof(Registers, y)),
@@ -130,10 +133,19 @@ void bus_call(Code &code, const Access access) {
   // Save state/context, align SysV stack, then pass context and actual r9 address.
   code.raw(call_enter);
   code.raw(call_address);
+  if (access.selected && access.mask != 0) {
+    // SysV packs MaskedByteRead into ESI: address16 followed by mask8.
+    constexpr std::array<std::uint8_t, 2> pack{0x81, 0xce};
+    constexpr unsigned mask_shift = 16;
+    code.raw(pack);
+    code.u32(static_cast<std::uint32_t>(access.mask) << mask_shift);
+  }
   code.raw(absolute_pointer);
   if (access.write) {
     code.u64(access.word ? reinterpret_cast<std::uintptr_t>(&write_word)
                          : reinterpret_cast<std::uintptr_t>(&write_byte));
+  } else if (access.selected) {
+    code.u64(reinterpret_cast<std::uintptr_t>(&read_masked_byte));
   } else {
     code.u64(access.word ? reinterpret_cast<std::uintptr_t>(&read_word)
                          : reinterpret_cast<std::uintptr_t>(&read_byte));

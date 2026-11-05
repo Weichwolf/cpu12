@@ -18,6 +18,7 @@ public:
   // False means unsupported captured bytes, with no native or I/O effect.
   [[nodiscard]] bool
   execute(std::span<const std::uint8_t> bytes, Registers &registers, NativeContext &context);
+  void interrupt(InterruptRequest request, Registers &registers, NativeContext &context);
   void clear();
   [[nodiscard]] Statistics statistics() const noexcept;
 

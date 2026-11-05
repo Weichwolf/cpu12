@@ -4,6 +4,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <span>
 
@@ -27,6 +28,11 @@ struct WordWrite {
   std::uint16_t address = 0, value = 0;
 };
 
+struct MaskedByteRead {
+  std::uint16_t address = 0;
+  std::uint8_t mask = std::numeric_limits<std::uint8_t>::max();
+};
+
 struct Io {
   void *owner = nullptr;
   bool (*read)(void *, std::uint16_t, std::uint8_t &) noexcept = nullptr;
@@ -34,6 +40,7 @@ struct Io {
   bool (*read_word)(void *, std::uint16_t, std::uint16_t &) noexcept = nullptr;
   bool (*write_word)(void *, WordWrite) noexcept = nullptr;
   bool (*fetch)(void *, std::uint16_t, std::uint8_t &) noexcept = nullptr;
+  bool (*read_masked)(void *, MaskedByteRead, std::uint8_t &) noexcept = nullptr;
 };
 enum class Fault : std::uint8_t {
   none,
@@ -55,6 +62,21 @@ struct RunResult {
   std::uint16_t address = 0;
   std::uint16_t value = 0;
   std::uint8_t access_size = 0;
+  std::uint8_t read_mask = 0;
+};
+
+enum class InterruptKind : std::uint8_t { maskable, xirq };
+
+struct InterruptRequest {
+  std::uint16_t vector = 0;
+  InterruptKind kind = InterruptKind::maskable;
+};
+
+struct EventResult {
+  bool accepted = false;
+  Fault fault = Fault::none;
+  std::uint16_t pc = 0, address = 0, value = 0;
+  std::uint8_t access_size = 0;
 };
 
 struct Options {
@@ -68,8 +90,8 @@ struct Statistics {
   std::uint64_t fetch_callbacks = 0;
 };
 
-// Board clocks and interrupts are not implemented by this initial API. Native
-// execution and fetched-instruction faults latch until explicit register replacement.
+// The board owns clocks, pending-source arbitration and acknowledgement. Native
+// faults latch until explicit register replacement or a recovered reset boundary.
 class Core {
 public:
   explicit Core(Memory memory = Memory::external(), Io *io = nullptr, Options options = {});
@@ -84,6 +106,9 @@ public:
   void set_registers(Registers registers);
   [[nodiscard]] RunResult run_instruction(std::span<const std::uint8_t> bytes);
   [[nodiscard]] RunResult step();
+  [[nodiscard]] EventResult reset(std::uint16_t vector) noexcept;
+  [[nodiscard]] bool interrupt_ready(InterruptKind kind) const noexcept;
+  [[nodiscard]] EventResult interrupt(InterruptRequest request);
   // Instruction budget, not a cycle budget. The result counts completed instructions.
   [[nodiscard]] RunResult run(std::uint32_t instruction_budget);
   [[nodiscard]] Statistics statistics() const noexcept;

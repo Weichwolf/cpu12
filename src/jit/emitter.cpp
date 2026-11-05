@@ -7,6 +7,7 @@
 #include "jit/code.hpp"
 #include "jit/flags.hpp"
 #include "jit/indexed.hpp"
+#include "jit/interrupt.hpp"
 #include "jit/loop.hpp"
 #include "jit/memory_modify.hpp"
 #include "jit/move.hpp"
@@ -235,6 +236,7 @@ void arithmetic(Code &code, const Instruction &instruction, const Ram ram) {
     case Kind::push:
     case Kind::pull:
     case Kind::return_subroutine:
+    case Kind::return_interrupt:
     case Kind::register_operation:
     case Kind::transfer:
     case Kind::memory_unary:
@@ -390,6 +392,7 @@ WordEncoding word_operation(const Instruction &instruction) {
     case Kind::push:
     case Kind::pull:
     case Kind::return_subroutine:
+    case Kind::return_interrupt:
     case Kind::register_operation:
     case Kind::transfer:
     case Kind::memory_unary:
@@ -493,7 +496,9 @@ void branch(Code &code, const Instruction &instruction) {
 std::vector<std::uint8_t> emit(const Instruction &instruction, const Ram ram) {
   Code code;
   code.raw(entry);
-  if (instruction.kind == Kind::multiply_divide) {
+  if (instruction.kind == Kind::return_interrupt) {
+    return_interrupt(code, ram);
+  } else if (instruction.kind == Kind::multiply_divide) {
     multiply_divide_instruction(code, instruction);
   } else if (instruction.kind == Kind::move) {
     move_instruction(code, instruction, ram);

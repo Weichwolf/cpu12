@@ -30,8 +30,9 @@ captures refuse explicitly. Independent Z3 bit-vector checks prove injectivity
 of the packing for lengths 1..6, with three collision-producing negative
 controls dropping byte five, byte six or the length. The packing puts length
 at bit 48 and bytes at shifts 40/32/24/16/8/0; unused tail bytes are zero.
-This remains a captured-instruction API; fetch, interrupts, clocks, native
-regions and reset remain separate open work.
+Fetched execution, reset and native interrupts now have separate interfaces.
+Selected external branch reads are specified in masked-read.txt; clocks,
+native regions and full board integration remain open.
 
 Independently authored tests cover every mask/value pair in full and partial
 RAM, the complete CCR domain at directed operands, indexed/PC/auto forms,

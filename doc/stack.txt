@@ -47,10 +47,11 @@ latched no-replay. An authored nested JSR/BSR/save/restore/RTS program checks
 every intermediate architectural state and real return-stack bytes. The 2328433
 stack/call cases and seven existing consumers passed on one coherent optimized
 library; historical stack-reference.json pins that source and actual run hashes.
-alu-reference.json records current consumers after carry/register support. This
+alu-reference.json records the later carry/register integration. This
 is component execution, not original Blofeld boot, full ISA or instrument proof.
-Remaining ISA, banked CALL/RTC, RTI/reset/IRQ/waits, checkpoints, fetch/native
-regions, timing and Blofeld integration are still required. No fuzzing is part
+Fetched execution, reset and native IRQ/RTI now have separate documented interfaces.
+Remaining ISA, banked CALL/RTC, waits, checkpoints, native regions,
+timing and Blofeld integration are still required. No fuzzing is part
 of this work; broad sanitizer matrices remain deferred until real time.
 
 Focused reproduction:

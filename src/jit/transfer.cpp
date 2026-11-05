@@ -5,6 +5,7 @@
 #include "instruction.hpp"
 #include "jit/code.hpp"
 #include "jit/flags.hpp"
+#include "jit/interrupt.hpp"
 
 #include <array>
 #include <cstddef>
@@ -92,6 +93,9 @@ void transfer_instruction(Code &code, const Instruction &instruction) {
   const auto destination = descriptor(destination_id);
   const bool exchange = (instruction.operand & exchange_mask) != 0;
   load(code, source, Value::source, !exchange && destination.word);
+  if (!exchange && source_id == 0 && destination_id == ccr_selector) {
+    defer_interrupt(code, true);
+  }
   if (exchange) {
     // Snapshot both operands before either write, including overlapping A/B/D.
     load(code, destination, Value::destination, false);

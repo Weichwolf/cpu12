@@ -5,10 +5,14 @@
 #include "jit/code.hpp"
 
 #include <cstddef>
+#include <cstdint>
+#include <limits>
 
 namespace cpu12::detail {
 struct Access {
   bool word = false, write = false;
+  bool selected = false;
+  std::uint8_t mask = std::numeric_limits<std::uint8_t>::max();
 };
 
 // Byte admission leaves the native offset in r10. These helpers emit code only.

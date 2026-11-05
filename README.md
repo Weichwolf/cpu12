@@ -23,7 +23,8 @@ updates and unchanged flags, using HCS12 next-PC semantics. Native multiply
 and guarded unsigned/signed/fractional division preserve documented register
 and flag behavior, with indeterminate fields recorded as explicit policy.
 ABA/SBA/CBA and documented DAA inputs also execute natively; unqualified DAA
-states fail visibly with their original input and PC. No instruction interpreter or
+states fail visibly with their original input and PC. IRQ/XIRQ entry and RTI
+use native vector/stack accesses with precise external faults. No instruction interpreter or
 Ghidra dependency is present. Unsupported instructions return an explicit fault
 without retirement. This is an initial ISA subset, not a complete CPU12
 emulator or a completed Blofeld integration.
@@ -40,17 +41,21 @@ The captured `run_instruction(bytes)` API accepts at most six bytes.
 `Io.fetch` callback and executes it natively. `run(instruction_budget)` executes
 bounded instruction sequences; it does not supply cycle timing or interrupts.
 [Fetched execution](doc/fetch.txt) records exact byte accesses, separate code/data
-transports, changed code and fault latching. Interrupt entry, reset and waits
-remain required work, along with remaining ISA and bounded native regions. The current
+transports, changed code and fault latching. [Reset](doc/reset.txt) reads the actual
+vector; [interrupt entry and return](doc/interrupt.txt) expose eligibility and native
+stack transactions. The board owns source arbitration, acknowledgement and time.
+Waits, complete checkpoints, remaining ISA and bounded native regions remain open. The current
 RAM/bus contract is described in [memory.txt](doc/memory.txt) and
 [indexed.txt](doc/indexed.txt), [control transfers](doc/control.txt) and
 [stack/subroutines](doc/stack.txt). [Register/carry ALU](doc/alu.txt) records
-flag semantics and the remaining interrupt-timing requirement.
+flag semantics and the ANDCC/TAP recognition delay.
 [Transfers](doc/transfer.txt) cover signed/fixed extensions and register
 overlap. [Memory unary operations](doc/memory-unary.txt) describe the real bus
 phases and deferred CPU publication. [Loop branches](doc/loop.txt) cover
 byte/word counters and signed nine-bit offsets. [Masked memory operations](doc/bits.txt)
 cover six-byte captures, address/mask tails and real bus phase behavior.
+[Selected-bit reads](doc/masked-read.txt) preserve GPIO bit knowledge and real read
+effects without weakening ordinary loads or read-modify-write operations.
 [Memory transfers](doc/move.txt) describe operand order and the explicitly
 unsupported original M68HC12 move-queue variant. [Multiplication/division](doc/multiply-divide.txt)
 describes widths, overflow, zero divisors and the indeterminate-value policy.

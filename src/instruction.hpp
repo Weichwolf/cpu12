@@ -32,7 +32,8 @@ enum class Kind : std::uint8_t {
   memory_bits,
   bit_branch,
   move,
-  multiply_divide
+  multiply_divide,
+  return_interrupt
 };
 
 enum class RegisterOp : std::uint8_t {

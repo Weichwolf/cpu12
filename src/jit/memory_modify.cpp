@@ -80,7 +80,7 @@ void single_access(Code &code, const Instruction &instruction, const Ram ram) {
 }
 
 void bit_branch(Code &code, const Instruction &instruction, const Ram ram) {
-  data_access(code, ram, {});
+  data_access(code, ram, {.selected = true, .mask = instruction.bit_mask});
   code.raw(operand);
   if (instruction.condition == 0) {
     constexpr std::array<std::uint8_t, 2> complement{0xf6, 0xd0};

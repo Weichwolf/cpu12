@@ -32,9 +32,10 @@ hashes. Unsupported factory postbytes and malformed cached captures retain
 original CPU state, make no bus access, compile no code and retire nothing.
 
 This is captured-instruction component evidence. Remaining ISA, factory
-registers, reset/IRQ/waits, checkpoints, fetch/native regions and cycle budgets
-remain open. In particular, interrupt recognition around software CCR writes
-has no timing implementation in this API. No original firmware, physical
+registers, waits, checkpoints, native regions and cycle budgets remain open.
+Native interrupt entry and ANDCC/TAP transition deferral are specified in
+interrupt.txt; other CCR-destination recognition timing remains unqualified.
+No original firmware, physical
 hardware, complete instrument or throughput acceptance follows from this test.
 Fuzzing was not requested or run; extensive sanitizer work remains deferred
 until real-time Blofeld execution under the user's policy.

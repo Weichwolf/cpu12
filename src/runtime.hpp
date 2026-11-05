@@ -3,6 +3,7 @@
 #include "cpu12/core.hpp"
 
 #include <cstdint>
+#include <limits>
 
 namespace cpu12::detail {
 inline constexpr std::uint32_t failed_read = 0x100;
@@ -14,11 +15,15 @@ struct NativeContext {
   std::uint16_t address = 0;
   std::uint16_t value = 0;
   std::uint8_t access_size = 0;
+  std::uint8_t read_mask = std::numeric_limits<std::uint8_t>::max();
   std::uint64_t read_callbacks = 0, write_callbacks = 0;
   std::uint64_t fetch_callbacks = 0;
+  std::uint8_t irq_delay = 0;
 };
 
 [[nodiscard]] std::uint32_t read_byte(NativeContext *context, std::uint16_t address) noexcept;
+[[nodiscard]] std::uint32_t read_masked_byte(NativeContext *context,
+                                             MaskedByteRead access) noexcept;
 [[nodiscard]] std::uint32_t
 write_byte(NativeContext *context, std::uint16_t address, std::uint8_t value) noexcept;
 [[nodiscard]] std::uint32_t read_word(NativeContext *context, std::uint16_t address) noexcept;

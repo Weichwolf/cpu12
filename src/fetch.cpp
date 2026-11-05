@@ -8,6 +8,7 @@
 
 #include <array>
 #include <cstddef>
+#include <limits>
 #include <span>
 
 namespace cpu12::detail {
@@ -67,6 +68,7 @@ bool byte(Capture &capture, const Ram ram, NativeContext &context, const Address
       context.address = address;
       context.value = value;
       context.access_size = 1;
+      context.read_mask = std::numeric_limits<Byte>::max();
       return false;
     }
   }

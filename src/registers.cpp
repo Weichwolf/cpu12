@@ -82,6 +82,10 @@ std::optional<Instruction> decode_register(const std::span<const std::uint8_t> b
   if (opcode == nop && bytes.size() == 1) {
     return Instruction{.kind = Kind::nop, .opcode = opcode, .length = 1};
   }
+  constexpr unsigned rti = 0x0b;
+  if (opcode == rti && bytes.size() == 1) {
+    return Instruction{.kind = Kind::return_interrupt, .opcode = opcode, .length = 1};
+  }
   const auto kind = operation(opcode);
   if (!kind) { return {}; }
   const bool mask = *kind == RegisterOp::ccr_and || *kind == RegisterOp::ccr_or;

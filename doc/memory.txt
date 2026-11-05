@@ -35,7 +35,7 @@ arithmetic, flag packing and PC updates remain generated host instructions.
 A refused access retires nothing and leaves architectural CPU registers intact.
 External side effects already performed by a callback remain actual effects.
 The bus fault is latched: run_instruction makes no additional access until the
-caller explicitly establishes a new register boundary. Coordinate restoration
+caller explicitly establishes a new register or recovered reset boundary. Coordinate restoration
 of bus state outside the core; clearing code cache does not clear the fault.
 Reentrant execution returns a fault. Register replacement and cache
 invalidation during active execution throw setup/API errors before mutating
