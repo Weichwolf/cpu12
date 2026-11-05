@@ -156,13 +156,12 @@ void indexed_operation(Code &code,
                        const ResidentOperation &operation,
                        const ResidentPlan &plan,
                        const bool needed_flags) {
-  constexpr std::array<std::uint8_t, 3> index{0x0f, 0xb7, 0xc1};            // MOVZX EAX,CX.
-  constexpr std::array<std::uint8_t, 5> load{0x41, 0x0f, 0xb7, 0x9c, 0x07}; // MOVZX EBX,word RAM.
-  code.raw(index);
+  // Admission proves that ECX stays in range until the final increment.
+  constexpr std::array<std::uint8_t, 5> load{0x41, 0x0f, 0xb7, 0x9c, 0x0f}; // EBX,[R15+RCX+disp].
   code.raw(load);
   code.u32(std::bit_cast<std::uint32_t>(-static_cast<std::int32_t>(plan.indexed_region.first)));
   swap_word(code, 3);
-  constexpr std::array<std::uint8_t, 4> advance{0x66, 0x8d, 0x49, 0x02}; // LEA CX,[RCX+2].
+  constexpr std::array<std::uint8_t, 3> advance{0x8d, 0x49, 0x02}; // LEA ECX,[RCX+2].
   code.raw(advance);
   if (needed_flags) { test_value(code, operation.instruction, plan); }
 }
@@ -408,8 +407,14 @@ void registers(Code &code, const ResidentPlan &plan, const bool store) {
   const auto active = store ? plan.dirty_words : plan.used_words;
   for (std::size_t index = 0; index < word_offsets.size(); ++index) {
     if ((active & (1U << word_registers[index])) == 0) { continue; }
-    code.byte(word_prefix);
-    code.byte(store ? mov_to : mov_from);
+    if (!store && !plan.indexed_region.bytes.empty() &&
+        word_offsets[index] == offsetof(Registers, x)) {
+      constexpr std::array<std::uint8_t, 2> load_index{0x0f, 0xb7}; // MOVZX ECX,word state.
+      code.raw(load_index);
+    } else {
+      code.byte(word_prefix);
+      code.byte(store ? mov_to : mov_from);
+    }
     code.byte(static_cast<std::uint8_t>(rdi_displacement | (word_registers[index] << 3U)));
     code.byte(static_cast<std::uint8_t>(word_offsets[index]));
   }

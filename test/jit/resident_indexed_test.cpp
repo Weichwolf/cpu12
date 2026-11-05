@@ -109,6 +109,42 @@ void previous_index_flags() {
   check(device, initial, 3, wanted);
 }
 
+void final_index_wrap() {
+  constexpr std::array<Byte, 2> zero{0, 0};
+  constexpr std::array<Byte, 2> destination{0x40, 0};
+  constexpr std::array<Byte, 2> repeat{0x36, 0xf5};
+  constexpr auto code = isa::program(isa::opcode<isa::Opcode::ldd_indexed>(),
+                                     post_two,
+                                     isa::opcode<isa::Opcode::cpx_immediate>(),
+                                     zero,
+                                     isa::opcode<isa::Opcode::stx_extended>(),
+                                     destination,
+                                     isa::opcode<isa::Opcode::dbne_relative>(),
+                                     repeat);
+  Device device(code);
+  constexpr Address source = 0xfffe;
+  constexpr Address loaded_word = 0x1234;
+  device.ram[source] = static_cast<Byte>(loaded_word >> 8U);
+  device.ram[source + 1U] = static_cast<Byte>(loaded_word & byte_mask);
+  constexpr std::array<Byte, 3> conditions{0, 0xa1, 0xff};
+  constexpr unsigned retained = 0xf0;
+  for (const auto ccr : conditions) {
+    auto initial = seed;
+    initial.x = source;
+    initial.y = 1;
+    initial.ccr = ccr;
+    auto wanted = initial;
+    wanted.x = 0;
+    wanted.y = 0;
+    wanted.d = loaded_word;
+    wanted.pc = entry + code.size();
+    wanted.ccr = static_cast<Byte>((ccr & retained) | 4U);
+    check(device, initial, 4, wanted);
+    require(device.ram[data] == 0 && device.ram[data + 1] == 0,
+            "CPX and STX must see wrapped guest X even while the host index is wider");
+  }
+}
+
 void split_word_fault() {
   Device device(program);
   constexpr std::array<Address, 2> sources{entry + program.size() - 1, 0xffff};
@@ -150,6 +186,7 @@ void unknown_operand() {
 int main() {
   try {
     boundary_cases();
+    final_index_wrap();
     previous_index_flags();
     unknown_operand();
     split_word_fault();
