@@ -389,7 +389,12 @@ std::size_t admission(Code &code, const ResidentPlan &plan) {
     code.bind(finite);
     constexpr std::array<std::uint8_t, 3> multiply{0x4d, 0x69, 0xda};
     code.raw(multiply);
-    code.u32(static_cast<std::uint32_t>(plan.operations.size()));
+    code.u32(static_cast<std::uint32_t>(plan.operations.size() + plan.backedge_instructions));
+    if (plan.backedge_instructions != 0) {
+      constexpr std::array<std::uint8_t, 3> final_exit{0x49, 0x81, 0xeb}; // SUB R11,imm32.
+      code.raw(final_exit);
+      code.u32(plan.backedge_instructions);
+    }
   } else {
     constexpr std::array<std::uint8_t, 2> count{0x41, 0xbb};
     code.raw(count);

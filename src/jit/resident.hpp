@@ -28,11 +28,15 @@ struct ResidentPlan {
   const Byte *base = nullptr;
   unsigned changed = 0, used_words = 0, dirty_words = 0;
   unsigned counter_offset = 0;
+  // A separate guest backedge retires on every iteration except the final exit.
+  unsigned backedge_instructions = 0;
   bool swapped_d = false, loop = false, increment = false, host_zero = false;
 };
 
 [[nodiscard]] std::optional<ResidentPlan>
 resident_plan(std::span<const BlockInstruction> instructions, const Memory &memory);
+[[nodiscard]] std::optional<ResidentPlan>
+resident_loop_plan(std::span<const BlockInstruction> instructions, const Memory &memory);
 [[nodiscard]] unsigned written_flags(const Instruction &instruction);
 [[nodiscard]] unsigned written_words(const Instruction &instruction);
 [[nodiscard]] unsigned native_word(const Instruction &instruction);

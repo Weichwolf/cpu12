@@ -126,6 +126,9 @@ std::vector<std::uint8_t> emit_block(const std::span<const BlockInstruction> ins
     code.bind(done, finished);
   }
   auto general = std::move(code).take();
+  if (const auto plan = resident_loop_plan(instructions, memory)) {
+    return emit_resident(*plan, general);
+  }
   if (const auto plan = resident_plan(instructions, memory)) {
     return emit_resident(*plan, general);
   }

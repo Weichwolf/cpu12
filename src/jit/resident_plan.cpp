@@ -11,6 +11,7 @@
 #include <limits>
 #include <optional>
 #include <span>
+#include <vector>
 
 namespace cpu12::detail {
 namespace {
@@ -248,4 +249,44 @@ std::optional<ResidentPlan> resident_plan(const std::span<const BlockInstruction
   forward_load(plan);
   return plan;
 }
+
+std::optional<ResidentPlan> resident_loop_plan(const std::span<const BlockInstruction> instructions,
+                                               const Memory &memory) {
+  if (instructions.empty()) { return std::nullopt; }
+  const auto &last = instructions.back();
+  constexpr unsigned equal = 7;
+  constexpr unsigned not_equal = 6;
+  if (last.instruction.kind != Kind::branch || last.instruction.condition != equal) {
+    return std::nullopt;
+  }
+  const auto next = static_cast<Address>(last.pc + last.instruction.length);
+  const auto backedge = parse_block(memory, next);
+  if (backedge.size() != 1) { return std::nullopt; }
+  const auto &jump = backedge.front().instruction;
+  const auto after = static_cast<Address>(next + jump.length);
+  const auto exit =
+      static_cast<Address>(int{next} + std::bit_cast<std::int16_t>(last.instruction.operand));
+  if (exit != after) { return std::nullopt; }
+  Address target = 0;
+  if (jump.kind == Kind::branch && jump.condition == 0) {
+    target = static_cast<Address>(int{after} + std::bit_cast<std::int16_t>(jump.operand));
+  } else if (jump.kind == Kind::jump && jump.addressing == Addressing::extended) {
+    target = jump.address;
+  } else {
+    return std::nullopt;
+  }
+  if (target != instructions.front().pc) { return std::nullopt; }
+  // BEQ exit; BRA/JMP header becomes one native BNE header. The original BEQ
+  // remains the last retired guest instruction on the final iteration.
+  std::vector<BlockInstruction> combined(instructions.begin(), instructions.end());
+  auto &branch = combined.back().instruction;
+  branch.condition = not_equal;
+  branch.length = static_cast<Byte>(branch.length + jump.length);
+  branch.operand = static_cast<Address>(int{target} - int{after});
+  auto plan = resident_plan(combined, memory);
+  if (!plan || !plan->loop) { return std::nullopt; }
+  plan->backedge_instructions = 1;
+  return plan;
+}
+
 }
