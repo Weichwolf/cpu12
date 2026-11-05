@@ -6,20 +6,14 @@
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
 #include "instruction.hpp"
+#include "jit/arena.hpp"
 #include "jit/emitter.hpp"
 #include "jit/interrupt.hpp"
 #include "runtime.hpp"
 
-#include <cerrno>
-#include <cstddef>
 #include <cstdint>
-#include <cstring>
 #include <memory>
 #include <span>
-#include <stdexcept>
-#include <sys/mman.h>
-#include <system_error>
-#include <unistd.h>
 #include <unordered_map>
 
 namespace cpu12::detail {
@@ -39,49 +33,23 @@ asm(".pushsection .text\n"
     ".size cpu12_enter_generated,.-cpu12_enter_generated\n"
     ".popsection\n");
 #endif
-class Executable {
-public:
-  explicit Executable(const std::span<const std::uint8_t> bytes) {
-    const auto page = sysconf(_SC_PAGESIZE);
-    if (page <= 0) { throw std::runtime_error("Cannot determine JIT page size"); }
-    const auto page_size = static_cast<std::size_t>(page);
-    size_ = ((bytes.size() + page_size - 1) / page_size) * page_size;
-    memory_ = mmap(nullptr, size_, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    if (memory_ == MAP_FAILED) {
-      throw std::system_error(errno, std::generic_category(), "JIT mmap");
-    }
-    std::memcpy(memory_, bytes.data(), bytes.size());
-    if (mprotect(memory_, size_, PROT_READ | PROT_EXEC) != 0) {
-      const auto error = errno;
-      munmap(memory_, size_);
-      throw std::system_error(error, std::generic_category(), "JIT mprotect");
-    }
-  }
-
-  ~Executable() { munmap(memory_, size_); }
-
-  Executable(const Executable &) = delete;
-  Executable &operator=(const Executable &) = delete;
-
-  void enter(Registers &registers, NativeContext &context) const noexcept {
+void enter(const void *entry, Registers &registers, NativeContext &context) noexcept {
 #if defined(__x86_64__) && defined(__linux__)
-    cpu12_enter_generated(memory_, &registers, &context);
+  cpu12_enter_generated(entry, &registers, &context);
 #else
-    static_cast<void>(registers);
-    static_cast<void>(context);
+  static_cast<void>(entry);
+  static_cast<void>(registers);
+  static_cast<void>(context);
 #endif
-  }
+}
 
-private:
-  void *memory_ = nullptr;
-  std::size_t size_ = 0;
-};
 }
 
 class Jit::Impl {
 public:
   Ram ram;
-  std::unordered_map<std::uint64_t, std::unique_ptr<Executable>> blocks;
+  ExecutableArena arena;
+  std::unordered_map<std::uint64_t, const void *> blocks;
   Statistics statistics;
 };
 
@@ -114,11 +82,10 @@ bool Jit::execute(const std::span<const std::uint8_t> bytes,
   if (found == impl_->blocks.end()) {
     const auto instruction = decode(bytes);
     if (!instruction) { return false; }
-    found = impl_->blocks.emplace(key, std::make_unique<Executable>(emit(*instruction, impl_->ram)))
-                .first;
+    found = impl_->blocks.emplace(key, impl_->arena.append(emit(*instruction, impl_->ram))).first;
     ++impl_->statistics.compiled_entries;
   }
-  found->second->enter(registers, context);
+  enter(found->second, registers, context);
   if (context.fault == Fault::none) {
     ++impl_->statistics.native_instructions;
     if (context.boundary_control != 0) {
@@ -150,22 +117,21 @@ void Jit::interrupt(const InterruptRequest request, Registers &registers, Native
   auto found = impl_->blocks.find(key);
   if (found == impl_->blocks.end()) {
     found =
-        impl_->blocks
-            .emplace(key, std::make_unique<Executable>(emit_interrupt(request, impl_->ram, frame)))
+        impl_->blocks.emplace(key, impl_->arena.append(emit_interrupt(request, impl_->ram, frame)))
             .first;
     ++impl_->statistics.compiled_entries;
   }
-  found->second->enter(registers, context);
+  enter(found->second, registers, context);
 }
 
 void Jit::resume_stop(Registers &registers, NativeContext &context) {
   constexpr auto key = std::uint64_t{3} << 62U;
   auto found = impl_->blocks.find(key);
   if (found == impl_->blocks.end()) {
-    found = impl_->blocks.emplace(key, std::make_unique<Executable>(emit_stop_wake())).first;
+    found = impl_->blocks.emplace(key, impl_->arena.append(emit_stop_wake())).first;
     ++impl_->statistics.compiled_entries;
   }
-  found->second->enter(registers, context);
+  enter(found->second, registers, context);
 }
 
 Statistics Jit::statistics() const noexcept {
