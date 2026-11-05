@@ -73,7 +73,6 @@ void all_external() {
                   result.value == diagnostic_values[phase] &&
                   result.access_size == sequence[phase].width && core.registers() == seed,
               "A refused RTI phase reports the actual access and preserves every CPU register");
-      core.clear_code_cache();
       require(core.run_instruction(rti).fault == Fault::memory_read && bus.calls == phase + 1,
               "Failed RTI does not replay earlier external reads across cache clearing");
     }

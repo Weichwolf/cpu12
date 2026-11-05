@@ -82,7 +82,6 @@ void refusal(Core &core,
           result.value == fault.value && result.access_size == fault.access_size &&
           core.registers() == before,
       "Refused stack/call access must retain exact actual data, width, address and original CPU");
-  core.clear_code_cache();
   const auto count = core.statistics();
   require(core.run_instruction(code).retired == 0 &&
               core.statistics().read_callbacks == count.read_callbacks &&

@@ -84,7 +84,6 @@ void idle_boundaries() {
               core.registers() == before,
           "Idle step, maximal run budget and captured inputs return promptly without execution");
     }
-    core.clear_code_cache();
     require(core.run(0).state == form.state && core.state().execution == form.state &&
                 core.statistics().native_instructions == statistics.native_instructions &&
                 core.statistics().fetch_callbacks == 0,

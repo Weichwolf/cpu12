@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "cpu12/core.hpp"
+#include "cpu12/isa.hpp"
 #include "cpu12/memory.hpp"
 
 #include <array>
-#include <cstddef>
 #include <cstdint>
 #include <exception>
 #include <iostream>
@@ -20,14 +20,12 @@ void unified() {
   constexpr unsigned data_address = 16;
   constexpr std::uint16_t first_value = 0x1200;
   constexpr std::uint16_t second_value = 0x3400;
-  constexpr std::uint8_t load_immediate = 0x86;
-  constexpr std::uint8_t load_extended = 0xb6;
-  constexpr std::uint8_t immediate_value = 0x7f;
-  std::array<cpu12::Byte, 64> bytes{load_extended, 0, data_address};
+  constexpr auto load_extended = cpu12::isa::opcode<cpu12::isa::Opcode::ldaa_extended>();
+  std::array<cpu12::Byte, 64> bytes{load_extended[0], 0, data_address};
   auto memory = cpu12::Memory::unified(bytes);
   require(memory.storage().bytes.data() == bytes.data() && memory.storage().first == 0,
           "Unified memory is a borrowed byte view without copying");
-  cpu12::Core core(memory, nullptr, {.cache_entries = 1});
+  cpu12::Core core(memory);
   bytes[data_address] = static_cast<std::uint8_t>(first_value >> 8U);
   auto result = core.run_instruction(memory.storage().bytes.first(3));
   require(result.retired == 1 && core.registers().d == first_value && core.registers().pc == 3,
@@ -38,14 +36,37 @@ void unified() {
   require(result.retired == 1 && core.registers().d == second_value &&
               core.statistics().compiled_entries == 1,
           "Cached native code reads current shared RAM");
-  bytes[0] = load_immediate;
-  bytes[1] = immediate_value;
-  core.set_registers({});
-  result = core.run_instruction(memory.storage().bytes.first(2));
-  require(result.retired == 1 &&
-              core.registers().d == static_cast<std::uint16_t>(immediate_value << 8U) &&
-              core.statistics().cache_resets == 1,
-          "Actual changed captured bytes replace code within the configured cache bound");
+}
+
+void retained_code() {
+  constexpr std::uint16_t entries = 1152;
+  constexpr unsigned byte_bits = 8;
+  constexpr unsigned byte_mask = 0xff;
+  constexpr unsigned instruction_bytes = 3;
+  constexpr cpu12::Address stack = 0x9000;
+  constexpr unsigned program_bytes = (entries * instruction_bytes) + 2;
+  constexpr auto load = cpu12::isa::opcode<cpu12::isa::Opcode::ldd_immediate>();
+  std::array<cpu12::Byte, cpu12::address_bytes> bytes{};
+  for (std::uint16_t value = 0; value < entries; ++value) {
+    const auto offset = value * instruction_bytes;
+    bytes[offset] = load[0];
+    bytes[offset + 1] = static_cast<cpu12::Byte>(value >> byte_bits);
+    bytes[offset + 2] = static_cast<cpu12::Byte>(value & byte_mask);
+  }
+  bytes[program_bytes - cpu12::isa::stop.size()] = cpu12::isa::stop[0];
+  bytes[program_bytes - 1] = cpu12::isa::stop[1];
+  cpu12::Core core(cpu12::Memory::unified(bytes));
+  for (unsigned pass = 0; pass < 2; ++pass) {
+    core.set_registers({.sp = stack});
+    const auto result = core.run();
+    require(result.retired == entries + 1U && result.fault == cpu12::Fault::none &&
+                result.state == cpu12::ExecutionState::stopped &&
+                core.registers().d == entries - 1U && core.registers().pc == program_bytes &&
+                core.statistics().compiled_entries == entries + 1U,
+            "A complete unchanged program beyond the old cache capacity is translated only once");
+  }
+  require(core.statistics().native_instructions == (std::uint64_t{entries} + 1U) * 2U,
+          "Both full program passes retain exact native retirement accounting");
 }
 
 struct Device {
@@ -65,8 +86,10 @@ struct Device {
 void external() {
   Device device;
   cpu12::Io peripherals{.owner = &device, .read = &Device::read};
-  cpu12::Core core(cpu12::Memory::external(), &peripherals, {});
-  constexpr std::array<std::uint8_t, 3> instruction{0xb6, 0xff, 0x90};
+  cpu12::Core core(cpu12::Memory::external(), &peripherals);
+  constexpr auto instruction =
+      cpu12::isa::program(cpu12::isa::opcode<cpu12::isa::Opcode::ldaa_extended>(),
+                          std::array<cpu12::Byte, 2>{0xff, 0x90});
   const auto result = core.run_instruction(instruction);
   constexpr std::uint16_t wanted = 0xa500;
   require(result.retired == 1 && core.registers().d == wanted && device.reads == 1,
@@ -79,22 +102,16 @@ void validation() {
     static_cast<void>(cpu12::Memory::unified({}));
   } catch (const std::invalid_argument &) { empty = true; }
   require(empty, "An empty unified memory request cannot silently select an external bus");
-  for (const auto limit : {std::size_t{0}, std::size_t{4097}}) {
-    bool rejected = false;
-    try {
-      const cpu12::Core invalid(cpu12::Memory::external(), nullptr, {.cache_entries = limit});
-    } catch (const std::invalid_argument &) { rejected = true; }
-    require(rejected, "Native code cache bounds must be explicitly valid");
-  }
 }
 }
 
 int main() {
   try {
     unified();
+    retained_code();
     external();
     validation();
-    std::cout << "Memory/Core/Io/Options API, unified storage, cache bounds and explicit external "
+    std::cout << "Memory/Core/Io API, unified storage, retained native code and explicit external "
                  "access passed.\n";
   } catch (const std::exception &error) {
     std::cerr << error.what() << '\n';

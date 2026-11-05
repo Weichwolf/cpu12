@@ -174,7 +174,7 @@ struct Bus {
   std::uint8_t value = 0;
   unsigned reads = 0, writes = 0;
   bool reject_read = false, reject_write = false, reenter = false;
-  bool recursive_refused = false, registers_refused = false, cache_refused = false;
+  bool recursive_refused = false, registers_refused = false;
   cpu12::Core *core = nullptr;
   cpu12::Registers at_access;
   static bool read(void *owner, std::uint16_t address, std::uint8_t &value) noexcept;
@@ -193,9 +193,6 @@ bool Bus::read(void *const owner, const std::uint16_t address, std::uint8_t &val
     try {
       bus.core->set_registers({});
     } catch (const std::logic_error &) { bus.registers_refused = true; }
-    try {
-      bus.core->clear_code_cache();
-    } catch (const std::logic_error &) { bus.cache_refused = true; }
   }
   value = bus.value;
   return address == bus.address && !bus.reject_read;
@@ -245,7 +242,7 @@ void bus_operations() {
             {.input = {.opcode = load_a, .left = 0, .right = 1, .ccr = 0},
              .address = bus.address,
              .extended = true});
-  require(bus.recursive_refused && bus.registers_refused && bus.cache_refused,
+  require(bus.recursive_refused && bus.registers_refused,
           "Callbacks cannot reenter or free/change active CPU state/code");
   bus.reenter = false;
   bus.reject_write = true;
@@ -260,11 +257,11 @@ void bus_operations() {
               bus.value == fault.value && core.registers() == seed,
           "A real refused bus write retains its side effect and reports exact context without CPU "
           "retirement");
-  core.clear_code_cache();
   const auto repeated = core.run_instruction(instruction.view());
-  require(repeated.fault == fault.fault && repeated.address == fault.address &&
-              bus.writes == writes && core.statistics().native_instructions == retired,
-          "A latched fault prevents silent duplicate bus traffic even after cache invalidation");
+  require(
+      repeated.fault == fault.fault && repeated.address == fault.address && bus.writes == writes &&
+          core.statistics().native_instructions == retired,
+      "A latched fault prevents silent duplicate bus traffic across repeated dispatch attempts");
   bus.value = 0;
   bus.reject_write = false;
   core.set_registers(seed); // Caller explicitly restores both bus and CPU boundary.

@@ -346,7 +346,6 @@ void boundaries_and_keys() {
           core.statistics().write_callbacks == 0,
       "Known RAM word accesses wrap ffff to zero without out-of-range host memory or callbacks");
   constexpr std::array<unsigned, 4> immediates{0x1234, 0xab34, 0x12cd, 0x1234};
-  core.clear_code_cache();
   const auto count = core.statistics().compiled_entries;
   for (const auto value : immediates) {
     run_case(core,

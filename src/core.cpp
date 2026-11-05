@@ -36,8 +36,7 @@ reset_vector(const Ram ram, detail::NativeContext &context, const Address vector
 
 class Core::Impl {
 public:
-  Impl(const Ram memory, const Io io, const Options options)
-      : ram(memory), context{.io = io}, jit(memory, options) {}
+  Impl(const Ram memory, const Io io) : ram(memory), context{.io = io}, jit(memory) {}
 
   const bool supported = Core::native_supported();
   Registers registers;
@@ -90,8 +89,8 @@ public:
   }
 };
 
-Core::Core(const Memory memory, Io *const io, const Options options)
-    : impl_(std::make_unique<Impl>(memory.storage(), io != nullptr ? *io : Io{}, options)) {}
+Core::Core(const Memory memory, Io *const io)
+    : impl_(std::make_unique<Impl>(memory.storage(), io != nullptr ? *io : Io{})) {}
 
 Core::~Core() = default;
 
@@ -357,8 +356,4 @@ Statistics Core::statistics() const noexcept {
   return result;
 }
 
-void Core::clear_code_cache() {
-  if (impl_->active) { throw std::logic_error("Cannot invalidate active CPU12 code"); }
-  impl_->jit.clear();
-}
 }

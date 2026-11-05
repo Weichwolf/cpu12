@@ -241,7 +241,6 @@ void indirect_faults() {
               fault.opcode == code[0] && fault.address == port.address && fault.access_size == 2 &&
               core.registers() == port.before && port.calls == 1 && port.observed,
           "Indirect JMP refuses at its actual logical pointer access, without changing PC");
-  core.clear_code_cache();
   require(core.run_instruction(code).retired == 0 && port.calls == 1,
           "A latched indirect JMP fault cannot repeat its pointer access");
   port.accept = true;

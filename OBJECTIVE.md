@@ -24,7 +24,7 @@ Commit/push verified increments to configured origin/main and keep this reposito
 private. Passing an initial captured-instruction subset is not completion.
 
 Keep public integration consistent with dsp56300: explicit typed Memory views,
-a Core(Memory, Io*, Options) setup and named captured-instruction execution.
+a Core(Memory, Io*) setup and named captured-instruction execution.
 Support common storage ownership with architecture-native units and explicit
 aliases, without a virtual memory manager in direct-RAM execution. Emulation is
 single-owner; separate host MIDI/audio queues do not change virtual clocks.

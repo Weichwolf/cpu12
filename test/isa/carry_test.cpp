@@ -231,7 +231,6 @@ void external() {
                   failure.address == address && failure.value == operand &&
                   failure.access_size == 1 && core.registers() == port.before && port.calls == 1,
               "Rejected carry-ALU read retains actual context and original CPU");
-      core.clear_code_cache();
       require(core.run_instruction(code).retired == 0 && port.calls == 1,
               "Rejected carry-ALU reads do not replay after cache invalidation");
       port.accept = true;

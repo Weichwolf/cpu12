@@ -11,7 +11,7 @@
 namespace cpu12::detail {
 class Jit {
 public:
-  explicit Jit(Ram ram, Options options);
+  explicit Jit(Ram ram);
   ~Jit();
   Jit(const Jit &) = delete;
   Jit &operator=(const Jit &) = delete;
@@ -20,7 +20,6 @@ public:
   execute(std::span<const std::uint8_t> bytes, Registers &registers, NativeContext &context);
   void interrupt(InterruptRequest request, Registers &registers, NativeContext &context);
   void resume_stop(Registers &registers, NativeContext &context);
-  void clear();
   [[nodiscard]] Statistics statistics() const noexcept;
 
 private:

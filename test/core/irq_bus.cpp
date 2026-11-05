@@ -82,7 +82,6 @@ void failures() {
               result.address == sequence[phase].address && result.value == sequence[phase].value &&
               result.access_size == sequence[phase].width && core.registers() == seed,
           "Rejected IRQ vector/frame phase reports actual access without partial CPU publication");
-      core.clear_code_cache();
       require(
           core.interrupt({.vector = vector}).fault == cause && bus.calls == phase + 1 &&
               core.step().fault == cause,

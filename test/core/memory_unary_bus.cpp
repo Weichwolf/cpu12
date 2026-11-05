@@ -184,7 +184,6 @@ void check_failure(Core &core,
           result.value == wanted.fault.value && result.access_size == wanted.fault.access_size &&
           core.registers() == port.before,
       "Refused unary pointer/read/write phase retains exact context and all original CPU state");
-  core.clear_code_cache();
   const auto stats = core.statistics();
   const auto count = port.used;
   require(core.run_instruction(code).retired == 0 && port.used == count &&

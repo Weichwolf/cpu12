@@ -5,14 +5,14 @@
   remain the objective. Initial subsets are incomplete. See OBJECTIVE.md.
 - Keep board clocks, peripherals and application firmware in consumers. No foreign
   CPU core, Ghidra or Blofeld dependency; use independently authored test programs.
-- Use Core(Memory, Io*, Options) with typed borrowed memory, explicit lifetimes,
+- Use Core(Memory, Io*) with typed borrowed memory, explicit lifetimes,
   aliases, invalidation and bounded execution. The core has one execution owner.
 - Native JIT is the default target. Unsupported ISA/host paths fail visibly with
   operation, address and PC; never fabricate retirement or conceal fallback gaps.
 - Publish reviewed increments only to configured origin/main; coordinate revision
   changes with the Blofeld consumer. Preserve dsp56300 source attribution.
 
-- Keep the same minimal public Core/Memory/Io/Options API shape in both cores.
+- Keep the same minimal public Core/Memory/Io API shape in both cores.
   Core owns its state; optional read-only state inspection is outside normal use.
   Remove checkpoint/restore APIs and their implementation completely. Preserve
   ISA, wait and interrupt behavior; state inspection is read-only. Expose no

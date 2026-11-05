@@ -93,13 +93,8 @@ struct State {
   bool operator==(const State &) const = default;
 };
 
-struct Options {
-  // Bounded native code storage; each compiled entry occupies one host page.
-  std::size_t cache_entries = 1024;
-};
-
 struct Statistics {
-  std::uint64_t native_instructions = 0, compiled_entries = 0, cache_resets = 0;
+  std::uint64_t native_instructions = 0, compiled_entries = 0;
   std::uint64_t read_callbacks = 0, write_callbacks = 0;
   std::uint64_t fetch_callbacks = 0;
 };
@@ -108,7 +103,7 @@ struct Statistics {
 // faults latch until explicit register replacement or a recovered reset boundary.
 class Core {
 public:
-  explicit Core(Memory memory = Memory::external(), Io *io = nullptr, Options options = {});
+  explicit Core(Memory memory = Memory::external(), Io *io = nullptr);
   ~Core();
   Core(const Core &) = delete;
   Core &operator=(const Core &) = delete;
@@ -132,7 +127,6 @@ public:
   [[nodiscard]] RunResult
   run(std::uint32_t instruction_budget = std::numeric_limits<std::uint32_t>::max());
   [[nodiscard]] Statistics statistics() const noexcept;
-  void clear_code_cache();
 
 private:
   class Impl;

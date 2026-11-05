@@ -81,18 +81,12 @@ private:
 class Jit::Impl {
 public:
   Ram ram;
-  std::size_t cache_entries = 0;
   std::unordered_map<std::uint64_t, std::unique_ptr<Executable>> blocks;
   Statistics statistics;
 };
 
-Jit::Jit(const Ram ram, const Options options) : impl_(std::make_unique<Impl>()) {
-  constexpr std::size_t maximum_entries = 4096;
-  if (options.cache_entries == 0 || options.cache_entries > maximum_entries) {
-    throw std::invalid_argument("CPU12 cache_entries must be in [1,4096]");
-  }
+Jit::Jit(const Ram ram) : impl_(std::make_unique<Impl>()) {
   impl_->ram = ram;
-  impl_->cache_entries = options.cache_entries;
 }
 
 Jit::~Jit() = default;
@@ -120,7 +114,6 @@ bool Jit::execute(const std::span<const std::uint8_t> bytes,
   if (found == impl_->blocks.end()) {
     const auto instruction = decode(bytes);
     if (!instruction) { return false; }
-    if (impl_->blocks.size() == impl_->cache_entries) { clear(); }
     found = impl_->blocks.emplace(key, std::make_unique<Executable>(emit(*instruction, impl_->ram)))
                 .first;
     ++impl_->statistics.compiled_entries;
@@ -156,7 +149,6 @@ void Jit::interrupt(const InterruptRequest request, Registers &registers, Native
                    (static_cast<std::uint64_t>(request.kind) << kind_shift) | request.vector;
   auto found = impl_->blocks.find(key);
   if (found == impl_->blocks.end()) {
-    if (impl_->blocks.size() == impl_->cache_entries) { clear(); }
     found =
         impl_->blocks
             .emplace(key, std::make_unique<Executable>(emit_interrupt(request, impl_->ram, frame)))
@@ -170,16 +162,10 @@ void Jit::resume_stop(Registers &registers, NativeContext &context) {
   constexpr auto key = std::uint64_t{3} << 62U;
   auto found = impl_->blocks.find(key);
   if (found == impl_->blocks.end()) {
-    if (impl_->blocks.size() == impl_->cache_entries) { clear(); }
     found = impl_->blocks.emplace(key, std::make_unique<Executable>(emit_stop_wake())).first;
     ++impl_->statistics.compiled_entries;
   }
   found->second->enter(registers, context);
-}
-
-void Jit::clear() {
-  impl_->blocks.clear();
-  ++impl_->statistics.cache_resets;
 }
 
 Statistics Jit::statistics() const noexcept {

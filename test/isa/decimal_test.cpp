@@ -239,7 +239,6 @@ void fault_boundary() {
   before.ccr = half_flag;
   core.set_registers(before);
   unsupported(core, before);
-  core.clear_code_cache();
   const auto repeated = core.run_instruction(decimal_code);
   require(
       repeated.fault == Fault::unsupported_state && repeated.value == actual_input(before) &&

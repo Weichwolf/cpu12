@@ -98,7 +98,6 @@ void write_phases() {
         require(bus.image[low] == (expected[index].value & mask),
                 "Earlier and rejecting write effects remain in actual external storage");
       }
-      core.clear_code_cache();
       require(core.run(idle_budget).fault == Fault::memory_write && bus.writes == phase + 1,
               "A failed wait cannot replay its actual partial writes");
       core.set_registers(seed);
@@ -122,7 +121,6 @@ void wake_phases() {
     core.set_registers(seed);
     enter(core, bus.image, seed, form);
     const auto saved = core.state();
-    core.clear_code_cache();
     require(core.step().state == form.state && core.run(idle_budget).state == form.state &&
                 core.run_instruction(nop).state == form.state && bus.fetches == 0 &&
                 bus.reads == 0 && bus.writes == 5,

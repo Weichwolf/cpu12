@@ -47,6 +47,8 @@ optional I/O. Unsupported instructions or modes report explicit faults.
 
 The `cpu12-kernel-bench` target checks ALU/flags, RAM read-modify-write and
 counted-branch fixtures. Run `build/release/cpu12-kernel-bench` for cold-run and
-median warm throughput; warm timings include input reset and result verification.
+median warm throughput against a checked x86-64 ASM reference. Both paths include
+input reset, STOP frame writes and result verification. `jit_to_host_percent` is
+100 at equal throughput; it includes execution-code differences and Core overhead.
 
 [License](LICENSE)

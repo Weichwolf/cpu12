@@ -91,7 +91,6 @@ void deferral() {
   const auto delayed = core.interrupt({.vector = vector});
   require(!delayed.accepted && delayed.fault == Fault::none,
           "A deferred request performs no interrupt entry");
-  core.clear_code_cache();
   require(
       !core.interrupt_ready(InterruptKind::maskable) && core.run_instruction(nop).retired == 1 &&
           core.interrupt_ready(InterruptKind::maskable),

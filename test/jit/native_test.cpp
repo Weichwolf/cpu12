@@ -141,13 +141,12 @@ void refusal(cpu12::Core &core) {
   require(core.run_instruction({}).fault == cpu12::Fault::invalid_input &&
               core.statistics().native_instructions == count,
           "Invalid input and refusals retire no native instruction");
-  core.clear_code_cache();
   constexpr std::array<std::uint8_t, 1> nop{0xa7};
   auto wanted = state;
   wanted.pc = static_cast<std::uint16_t>(wanted.pc + 1U);
   const auto result = core.run_instruction(nop);
   require(result.retired == 1 && core.registers() == wanted,
-          "Cache clear and NOP retain all non-PC registers");
+          "Native NOP retain all non-PC registers");
   ++cases;
 }
 }

@@ -20,10 +20,9 @@ void deferred_irq() {
   require(core.run_instruction(cli).retired == 1 && !core.interrupt_ready(InterruptKind::maskable),
           "CLI establishes the architectural following-instruction delay");
   const auto saved = core.state();
-  core.clear_code_cache();
   require(saved.irq_delay == 1 && core.state() == saved &&
               !core.interrupt({.vector = vector}).accepted,
-          "Read-only inspection and code-cache clearing preserve the pending IRQ delay");
+          "Read-only inspection and code inspection preserves the pending IRQ delay");
   enter(core, image, saved.registers, forms[0]);
   require(core.interrupt_ready(InterruptKind::maskable) &&
               core.interrupt({.vector = vector}).accepted,

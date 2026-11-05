@@ -47,7 +47,6 @@ void failure_and_recovery() {
               result.address == vector && result.value == bus.target && result.access_size == 2 &&
               core.registers() == seed && bus.words == 1 && bus.unchanged,
           "A refused vector read leaves CPU state unchanged and reports the real access");
-  core.clear_code_cache();
   require(core.step().fault == Fault::memory_read && bus.words == 1,
           "A failed reset latches without retrying its vector through instruction execution");
   bus.allow = true;

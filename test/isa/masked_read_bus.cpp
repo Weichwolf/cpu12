@@ -23,7 +23,6 @@ void refused() {
               result.read_mask == branch[3] && core.registers() == seed && bus.selected == 1 &&
               bus.full == 0 && bus.value == 0,
           "Refused selected reads retain the actual diagnostic value and never retry a full read");
-  core.clear_code_cache();
   require(core.run_instruction(branch).fault == Fault::memory_read && bus.selected == 1 &&
               bus.full == 0,
           "Masked-read failures latch without repeating destructive side effects");

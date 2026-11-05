@@ -277,7 +277,6 @@ void indirect_bus() {
                 actual.address == (pointer_failure ? pointer_address : port) &&
                 actual.access_size == (pointer_failure ? 2 : 1) && core.registers() == before,
             "Indirect pointer/operand failures retain exact phase, address, width and CPU state");
-    core.clear_code_cache();
     require(core.run_instruction(load).retired == 0 && bus.reads + bus.word_reads == count,
             "A failed second indirect phase cannot replay an accepted pointer read");
   }

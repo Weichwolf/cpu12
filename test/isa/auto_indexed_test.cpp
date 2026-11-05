@@ -238,7 +238,6 @@ void faults() {
                   failure.access_size == 2 && port.payload == point.updated(before).x &&
                   core.registers() == before,
               "Rejected auto stores retain actual adjusted-source effects and original CPU state");
-      core.clear_code_cache();
       require(core.run_instruction(point.code(store_x)).retired == 0 && port.writes == 1,
               "An auto-index store fault cannot silently repeat the write or index update");
       port.accept = true;

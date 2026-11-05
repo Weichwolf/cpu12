@@ -106,7 +106,6 @@ void failed(Core &core, const Capture &captured, const Port &port, const unsigne
           "Refused bit read/write retains exact context and all original CPU state");
   const auto reads = port.reads;
   const auto writes = port.writes;
-  core.clear_code_cache();
   require(core.run_instruction(captured.code.view()).fault == fault && port.reads == reads &&
               port.writes == writes && core.registers() == port.before,
           "Latched bit faults do not replay actual external read/write effects");

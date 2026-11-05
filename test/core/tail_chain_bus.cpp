@@ -110,10 +110,10 @@ void failed_vector() {
   } catch (const std::logic_error &) { refused = true; }
   require(refused && core.state() == fault,
           "A board poll cannot discard a failed boundary or its diagnostic metadata");
-  core.clear_code_cache();
-  require(core.interrupt({.vector = vector}).fault == Fault::memory_read &&
-              core.step().fault == Fault::memory_read && bus.reads == 6,
-          "Fault latching blocks vector replay and code execution across cache invalidation");
+  require(
+      core.interrupt({.vector = vector}).fault == Fault::memory_read &&
+          core.step().fault == Fault::memory_read && bus.reads == 6,
+      "Fault latching blocks vector replay and code execution across repeated dispatch attempts");
   for (unsigned index = 0; index < sequence.size(); ++index) {
     require(bus.trace[index] == sequence[index],
             "External RTI reads CCR,B:A,X,PC,Y before the one pending vector read");

@@ -116,7 +116,6 @@ void fault(
           "changes");
   const auto used = port.used;
   const auto stats = core.statistics();
-  core.clear_code_cache();
   require(core.run_instruction(wanted.code.view()).fault == kind && port.used == used &&
               core.statistics().read_callbacks == stats.read_callbacks &&
               core.statistics().write_callbacks == stats.write_callbacks &&

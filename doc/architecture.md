@@ -6,7 +6,7 @@ implementation target, not a claim that the current migration is complete.
 ```text
 consumer: memory + peripheral state + virtual time + event arbitration
                             |
-                  Core(Memory, Io*, Options)
+                  Core(Memory, Io*)
                             |
                ISA frontend -> host-JIT concept -> native code
                                    |                    |
@@ -50,3 +50,11 @@ and keep fault/diagnostic slow paths out of hot instruction streams. Keep active
 Core data compact and retain live guest values in host registers across chained
 blocks. Qualify locality with code/data working-set and cache measurements; layout
 alone does not establish that a whole hot path fits a particular host cache.
+
+I/O rejection contract: a callback returning false is a host diagnostic failure,
+not an emulated HC12 bus exception. Interrupt admission publishes registers only
+after the vector and complete frame succeed. On rejection, registers retain the
+pre-entry values; real external writes already performed remain visible. The
+fault latches and later calls cannot replay those writes or vector reads. Tests
+exercise refusal at every vector/frame access, including wrapped stack addresses.
+This software contract does not assert hardware SP visibility during a bus cycle.

@@ -114,7 +114,6 @@ void irq_deferral() {
               !core.state().returned_frame && core.state().irq_delay == 1 &&
               !core.interrupt_ready(InterruptKind::maskable),
           "CLI replaces returned-frame status with the genuine following-instruction IRQ delay");
-  core.clear_code_cache();
   require(core.run_instruction(nop).retired == 1 && core.interrupt_ready(InterruptKind::maskable) &&
               !core.interrupt_frame_available() && core.interrupt({.vector = vector}).accepted,
           "After the following instruction, normal entry stacks current context instead of old "

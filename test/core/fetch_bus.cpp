@@ -24,14 +24,10 @@ struct Bus {
     guarded &= core->step().fault == Fault::reentrant && core->run(0).fault == Fault::reentrant &&
                core->run_instruction(nop).fault == Fault::reentrant;
     bool registers = false;
-    bool cache = false;
     try {
       core->set_registers({});
     } catch (const std::logic_error &) { registers = true; }
-    try {
-      core->clear_code_cache();
-    } catch (const std::logic_error &) { cache = true; }
-    guarded &= registers && cache;
+    guarded &= registers;
   }
 
   static bool fetch(void *owner, const Address address, Byte &value) noexcept {
@@ -71,10 +67,9 @@ void failed_phases() {
       require(bus.addresses[index] == static_cast<Address>(seed.pc + index),
               "Fetch callback effects retain exact byte order across address wrap");
     }
-    core.clear_code_cache();
     require(core.run(10).fault == Fault::instruction_fetch && bus.calls == phase + 1 &&
                 core.statistics().native_instructions == 0,
-            "A fetch fault remains latched across cache clearing without replay");
+            "A fetch fault remains latched across repeated calls without replay");
     constexpr std::array<Byte, 1> nop{0xa7};
     core.set_registers(seed);
     require(core.run_instruction(nop).retired == 1 && bus.calls == phase + 1,
@@ -125,7 +120,7 @@ void separation() {
   target.set_registers(seed);
   require(target.step().retired == 1 && guarded.guarded && guarded.calls == 1 &&
               target.statistics().fetch_callbacks == 1,
-          "Fetch callbacks reject recursive execution and register/cache mutation");
+          "Fetch callbacks reject recursive execution and register mutation");
   ++native;
 }
 
