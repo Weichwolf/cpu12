@@ -48,7 +48,8 @@ bool loops(const std::span<const BlockInstruction> instructions) {
 
 // These operations cannot observe CCR/PC, call an owner, or fail after prior
 // state publication was elided. Unknown paths are observation barriers, including live
-// knownness, indexed addresses and reads routed through a read-only grant.
+// knownness and indexed addresses. Initialized read-only data is ordinary RAM;
+// writes still require the complete width in a writable grant.
 bool ordinary_access(const Instruction &instruction, const Memory &memory) {
   if (instruction.addressing == Addressing::immediate) { return true; }
   if (instruction.addressing != Addressing::direct &&
@@ -57,7 +58,8 @@ bool ordinary_access(const Instruction &instruction, const Memory &memory) {
   }
   const auto width = instruction.word ? 2U : 1U;
   return std::ranges::any_of(memory.regions(), [&instruction, width](const auto &region) {
-    if (!region.writable || !region.known.empty() || instruction.address < region.first) {
+    if ((instruction.kind == Kind::store && !region.writable) || !region.known.empty() ||
+        instruction.address < region.first) {
       return false;
     }
     const auto offset = static_cast<std::size_t>(instruction.address - region.first);
