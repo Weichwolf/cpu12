@@ -3,53 +3,22 @@
 #include "cpu12/isa.hpp"
 #include "cpu12/memory.hpp"
 #include "reference.hpp"
+#include "resident_fixture.hpp"
 
-#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
 #include <exception>
 #include <iostream>
 #include <span>
-#include <stdexcept>
 
 namespace {
 using namespace cpu12;
-constexpr Address entry = 0x0200, data = 0x4000;
+using namespace cpu12::test::resident;
 constexpr unsigned byte_bits = 8, byte_mask = 0xff, word_values = 65536;
 constexpr unsigned word_mask = word_values - 1;
 constexpr unsigned flag_c = 1, flag_v = 2, flag_z = 4, flag_n = 8, flags_nzvc = 15;
 constexpr Address sign_word = 0x8000;
-constexpr Registers seed{.pc = entry, .d = 0xa55a, .x = 0x1234, .y = 0x5678, .sp = 0x9000};
-
-void require(const bool condition, const char *message) {
-  if (!condition) { throw std::runtime_error(message); }
-}
-
-struct Device {
-  std::array<Byte, address_bytes> ram{};
-  std::array<Ram, 3> regions;
-  Core core;
-
-  explicit Device(const std::span<const Byte> program)
-      : regions{Ram{.first = 0, .bytes = std::span(ram).first(entry)},
-                Ram{.first = entry,
-                    .bytes = std::span(ram).subspan(entry, program.size()),
-                    .writable = false},
-                Ram{.first = static_cast<Address>(entry + program.size()),
-                    .bytes = std::span(ram).subspan(entry + program.size())}},
-        core(Memory::mapped(regions)) {
-    std::ranges::copy(program, ram.begin() + entry);
-  }
-
-  void check(const Registers initial, const unsigned count, const Registers expected) {
-    core.set_registers(initial);
-    const auto result = core.run(count);
-    require(result.fault == Fault::none && result.state == ExecutionState::running &&
-                result.retired == count && core.registers() == expected,
-            "Resident native region differs from independent register/flag expectations");
-  }
-};
 
 struct ByteForm {
   Byte encoding = 0;

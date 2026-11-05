@@ -13,6 +13,8 @@
 #include "runtime.hpp"
 
 #include <algorithm>
+#include <array>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -58,6 +60,14 @@ bool same_region(const Ram &left, const Ram &right) noexcept {
          left.identity == right.identity;
 }
 
+constexpr unsigned page_shift = 8;
+constexpr std::size_t page_entries = 1U << page_shift;
+constexpr unsigned page_mask = static_cast<unsigned>(page_entries - 1);
+
+struct EntryPage {
+  std::array<std::unique_ptr<NativeBlock>, page_entries> entries;
+};
+
 struct Mapping {
   explicit Mapping(const Memory &requested)
       : grants(requested.regions().begin(), requested.regions().end()), memory(Memory::external()) {
@@ -71,7 +81,7 @@ struct Mapping {
   std::vector<Ram> grants;
   Memory memory;
   std::unordered_map<std::uint64_t, const void *> blocks;
-  std::unordered_map<Address, NativeBlock> native_regions;
+  std::array<std::unique_ptr<EntryPage>, page_entries> native_regions;
 
   [[nodiscard]] bool matches(const Memory &requested) const noexcept {
     const auto regions = requested.regions();
@@ -157,15 +167,20 @@ std::optional<RunResult>
 Jit::run_block(const std::uint32_t budget, Registers &registers, NativeContext &context) {
   if (context.cpu.irq_delay != 0 || context.cpu.returned_frame) { return std::nullopt; }
   auto &mapping = *impl_->current;
-  auto found = mapping.native_regions.find(registers.pc);
-  if (found == mapping.native_regions.end()) {
-    NativeBlock block{.instructions = parse_block(mapping.memory, registers.pc)};
-    if (block.instructions.empty()) { return std::nullopt; }
-    block.entry = impl_->arena.append(emit_block(block.instructions, mapping.memory));
-    found = mapping.native_regions.emplace(registers.pc, std::move(block)).first;
+  auto &page = mapping.native_regions[registers.pc >> page_shift];
+  auto *entry = page ? page->entries[registers.pc & page_mask].get() : nullptr;
+  if (entry == nullptr) {
+    auto instructions = parse_block(mapping.memory, registers.pc);
+    if (instructions.empty()) { return std::nullopt; }
+    auto block = std::make_unique<NativeBlock>();
+    block->instructions = std::move(instructions);
+    block->entry = impl_->arena.append(emit_block(block->instructions, mapping.memory));
+    if (!page) { page = std::make_unique<EntryPage>(); }
+    entry = block.get();
+    page->entries[registers.pc & page_mask] = std::move(block);
     ++impl_->statistics.compiled_entries;
   }
-  const auto &block = found->second;
+  const auto &block = *entry;
   const auto retired = enter_block(block.entry, registers, context, budget);
   impl_->statistics.native_instructions += retired;
   const auto index = context.fault != Fault::none ? retired % block.instructions.size()

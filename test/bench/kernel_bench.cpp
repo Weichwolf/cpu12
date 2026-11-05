@@ -2,14 +2,19 @@
 #include "cpu12/core.hpp"
 #include "cpu12/isa.hpp"
 #include "cpu12/memory.hpp"
+#include "jit/arena.hpp"
+#include "jit/block.hpp"
 #include "kernel_host.hpp"
+#include "runtime.hpp"
 
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <exception>
 #include <iostream>
+#include <limits>
 #include <ratio>
 #include <span>
 #include <stdexcept>
@@ -82,11 +87,10 @@ constexpr std::array fixtures{Fixture{.name = "alu-flags",
                                       .expected_ccr = 4,
                                       .host = test::host::branches}};
 
-void execute(Core &core, std::array<Byte, address_bytes> &ram, const Fixture &fixture) {
-  ram[data] = 0;
-  core.set_registers({.pc = entry, .x = iterations, .sp = stack});
-  const auto result = core.run();
-  const auto state = core.state();
+void verify(const State &state,
+            const RunResult result,
+            const Fixture &fixture,
+            const std::array<Byte, address_bytes> &ram) {
   constexpr Address frame_bytes = 9;
   if (result.fault != Fault::none || result.retired != fixture.instructions ||
       state.execution != ExecutionState::stopped || state.registers.d != fixture.expected_d ||
@@ -102,6 +106,55 @@ void execute(Core &core, std::array<Byte, address_bytes> &ram, const Fixture &fi
     throw std::runtime_error("Guest benchmark failed independent result expectations");
   }
 }
+
+void execute(Core &core, std::array<Byte, address_bytes> &ram, const Fixture &fixture) {
+  ram[data] = 0;
+  core.set_registers({.pc = entry, .x = iterations, .sp = stack});
+  const auto result = core.run();
+  verify(core.state(), result, fixture, ram);
+}
+
+// Test-only use of the production parser/emitter/entry bridge; no Core API is added.
+class NativeRun {
+public:
+  NativeRun(const Memory &memory_map, const Fixture &fixture) {
+    const auto stop = static_cast<Address>(entry + fixture.program.size() - isa::stop.size());
+    const std::array entries{entry, stop};
+    for (std::size_t index = 0; index < entries.size(); ++index) {
+      const auto instructions = detail::parse_block(memory_map, entries[index]);
+      if (instructions.empty()) { throw std::runtime_error("Missing native benchmark region"); }
+      const auto bytes = detail::emit_block(instructions, memory_map);
+      code_bytes_ += bytes.size();
+      blocks[index] = arena.append(bytes);
+    }
+  }
+
+  void execute(std::array<Byte, address_bytes> &ram, const Fixture &fixture) {
+    ram[data] = 0;
+    context.cpu = {};
+    context.cpu.registers = {.pc = entry, .x = iterations, .sp = stack};
+    context.fault = Fault::none;
+    constexpr auto budget = std::numeric_limits<std::uint32_t>::max();
+    std::uint32_t retired = 0;
+    for (const auto *block : blocks) {
+      retired += detail::enter_block(block, context.cpu.registers, context, budget - retired);
+      if (context.fault != Fault::none || context.cpu.execution != ExecutionState::running) {
+        break;
+      }
+    }
+    verify(context.cpu, {.retired = retired, .fault = context.fault}, fixture, ram);
+  }
+
+  [[nodiscard]] const State &state() const { return context.cpu; }
+
+  [[nodiscard]] std::size_t code_bytes() const { return code_bytes_; }
+
+private:
+  std::size_t code_bytes_ = 0;
+  detail::ExecutableArena arena;
+  detail::NativeContext context{};
+  std::array<const void *, 2> blocks{};
+};
 
 void execute_host(std::array<Byte, address_bytes> &ram, const Fixture &fixture) {
   ram[data] = 0;
@@ -197,13 +250,21 @@ void measure(const Fixture &fixture) {
                                .bytes = std::span(ram).subspan(entry, fixture.program.size()),
                                .writable = false},
                            Ram{.first = code_end, .bytes = std::span(ram).subspan(code_end)}};
-  Core core(Memory::mapped(regions));
+  const auto memory_map = Memory::mapped(regions);
+  Core core(memory_map);
   const auto cold_start = Clock::now();
   execute(core, ram, fixture);
   const auto cold = Clock::now() - cold_start;
+  NativeRun native(memory_map, fixture);
+  const auto expected_ram = ram;
+  native.execute(ram, fixture);
+  if (native.state() != core.state() || ram != expected_ram) {
+    throw std::runtime_error("Direct production native entries and Core effects differ");
+  }
   execute_host(host_ram, fixture);
   if (host_ram != ram) { throw std::runtime_error("Host ASM and JIT memory effects differ"); }
   const auto seconds = median([&] { execute(core, ram, fixture); });
+  const auto native_seconds = median([&] { native.execute(ram, fixture); });
   const auto host_seconds = median([&] { execute_host(host_ram, fixture); });
   if (host_ram != ram) { throw std::runtime_error("Warm host ASM and JIT memory effects differ"); }
   constexpr double million = 1e6;
@@ -216,7 +277,13 @@ void measure(const Fixture &fixture) {
             << " warm_mips=" << (fixture.instructions * repetitions) / seconds / million
             << " host_asm_ns_per_instruction="
             << (host_seconds * nanoseconds_per_second) / (fixture.instructions * repetitions)
-            << " jit_to_host_percent=" << (host_seconds / seconds) * percent << '\n';
+            << " jit_to_host_percent=" << (host_seconds / seconds) * percent
+            << " native_entries_to_host_percent=" << (host_seconds / native_seconds) * percent
+            << " native_entries_ns_per_instruction="
+            << (native_seconds * nanoseconds_per_second) / (fixture.instructions * repetitions)
+            << " core_over_native_ns_per_run="
+            << ((seconds - native_seconds) * nanoseconds_per_second) / repetitions
+            << " native_code_bytes=" << native.code_bytes() << '\n';
 }
 }
 
@@ -225,8 +292,9 @@ int main() {
     verify_arithmetic_host();
     verify_memory_host();
     // Warm measurements include register/input reset and correctness verification.
-    std::cout << "comparison=asm_with_stop_vs_core warm_scope=reset+run+verify trials=" << trials
-              << " repetitions=" << repetitions << '\n';
+    std::cout
+        << "comparison=asm_with_stop_vs_core_and_native_entries warm_scope=reset+run+verify trials="
+        << trials << " repetitions=" << repetitions << '\n';
     for (const auto &fixture : fixtures) { measure(fixture); }
     return 0;
   } catch (const std::exception &error) {

@@ -115,6 +115,45 @@ void fold(ResidentPlan &plan) {
   }
 }
 
+void forward_load(ResidentPlan &plan) {
+  if (!plan.loop) { return; }
+  ResidentOperation *load = nullptr;
+  const ResidentOperation *store = nullptr;
+  for (auto &operation : plan.operations) {
+    if (operation.instruction.kind == Kind::nop) { continue; }
+    load = &operation;
+    break;
+  }
+  if (load == nullptr || load->instruction.kind != Kind::load || load->pointer == nullptr ||
+      load->flags != 0) {
+    return;
+  }
+  const auto origin = reinterpret_cast<std::uintptr_t>(load->pointer);
+  const auto width = load->instruction.word ? 2U : 1U;
+  for (const auto &operation : plan.operations) {
+    if (operation.instruction.kind != Kind::store) { continue; }
+    const auto address = reinterpret_cast<std::uintptr_t>(operation.pointer);
+    const auto written = operation.instruction.word ? 2U : 1U;
+    const bool overlap = address >= origin ? address - origin < width : origin - address < written;
+    if (overlap) { store = &operation; }
+  }
+  if (store == nullptr || store->pointer != load->pointer ||
+      store->instruction.word != load->instruction.word ||
+      value_lanes(store->instruction) != value_lanes(load->instruction)) {
+    return;
+  }
+  bool after_store = false;
+  for (const auto &operation : plan.operations) {
+    if (after_store && written_words(operation.instruction) != 0 &&
+        (value_lanes(operation.instruction) & value_lanes(load->instruction)) != 0) {
+      return;
+    }
+    after_store |= &operation == store;
+  }
+  // First iteration still reads real RAM; each later iteration forwards the last store.
+  load->initial_load = true;
+}
+
 void analyze(ResidentPlan &plan) {
   unsigned live = flags_nzvc | flag_h;
   unsigned overwritten = 0;
@@ -206,6 +245,7 @@ std::optional<ResidentPlan> resident_plan(const std::span<const BlockInstruction
   }
   fold(plan);
   analyze(plan);
+  forward_load(plan);
   return plan;
 }
 }

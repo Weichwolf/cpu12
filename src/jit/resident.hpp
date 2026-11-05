@@ -18,7 +18,7 @@ struct ResidentOperation {
   Instruction instruction;
   Address pc = 0;
   unsigned flags = 0;
-  bool deferred = false, branch_zero = false;
+  bool deferred = false, branch_zero = false, initial_load = false;
   const Byte *pointer = nullptr;
   std::int32_t displacement = 0;
 };

@@ -67,5 +67,11 @@ counted-branch fixtures. Run `build/release/cpu12-kernel-bench` for cold-run and
 median warm throughput against a checked x86-64 ASM reference. Both paths include
 input reset, STOP frame writes and result verification. `jit_to_host_percent` is
 100 at equal throughput; it includes execution-code differences and Core overhead.
+The benchmark also calls the same production loop and STOP translations directly
+through private test interfaces. `native_entries_to_host_percent` measures that
+scope; `core_over_native_ns_per_run` reports its time difference from Core.run.
+Both scopes include input reset, native state publication, STOP and verification.
+`native_code_bytes` includes retained native paths for shorter execution grants.
+The performance gate applies to full Core.run across representative workloads.
 
 [License](LICENSE)

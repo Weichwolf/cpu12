@@ -208,7 +208,10 @@ void immediate_operation(Code &code,
 void body(Code &code, const ResidentPlan &plan, EmissionState &state) {
   for (const auto &operation : plan.operations) {
     const auto &instruction = operation.instruction;
-    if (instruction.kind == Kind::nop || instruction.kind == Kind::branch) { continue; }
+    if (instruction.kind == Kind::nop || instruction.kind == Kind::branch ||
+        operation.initial_load) {
+      continue;
+    }
     const bool needed_flags =
         (!operation.deferred && operation.flags != 0) || operation.branch_zero;
     if ((instruction.kind == Kind::compare || instruction.kind == Kind::bit_test) &&
@@ -414,6 +417,9 @@ std::vector<std::uint8_t> emit_resident(const ResidentPlan &plan,
     constexpr std::array<std::uint8_t, 2> memory{0x49, 0xbf};
     code.raw(memory);
     code.u64(reinterpret_cast<std::uintptr_t>(plan.base));
+  }
+  for (const auto &operation : plan.operations) {
+    if (operation.initial_load) { memory_operation(code, operation, plan, false); }
   }
   const auto loop = code.size();
   EmissionState state;
