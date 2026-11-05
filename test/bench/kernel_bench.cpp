@@ -50,6 +50,15 @@ constexpr auto memory = isa::program(isa::opcode<isa::Opcode::ldaa_extended>(),
                                      isa::opcode<isa::Opcode::bne_relative>(),
                                      memory_backedge,
                                      isa::stop);
+constexpr std::array<Byte, 1> exit_offset{2}, control_backedge{0xf8};
+constexpr auto control = isa::program(isa::opcode<isa::Opcode::addd_immediate>(),
+                                      add_operand,
+                                      isa::opcode<isa::Opcode::dex>(),
+                                      isa::opcode<isa::Opcode::beq_relative>(),
+                                      exit_offset,
+                                      isa::opcode<isa::Opcode::bra_relative>(),
+                                      control_backedge,
+                                      isa::stop);
 constexpr auto branches = isa::program(isa::opcode<isa::Opcode::dex>(),
                                        isa::opcode<isa::Opcode::bne_relative>(),
                                        branch_backedge,
@@ -60,6 +69,7 @@ struct Fixture {
   std::span<const Byte> program;
   std::uint32_t instructions;
   Address expected_d;
+  Address extra_entry = 0;
   Byte expected_memory;
   Byte expected_ccr;
   test::host::Result (*host)(Byte &);
@@ -85,7 +95,15 @@ constexpr std::array fixtures{Fixture{.name = "alu-flags",
                                       .expected_d = 0,
                                       .expected_memory = 0,
                                       .expected_ccr = 4,
-                                      .host = test::host::branches}};
+                                      .host = test::host::branches},
+                              Fixture{.name = "multi-block-control",
+                                      .program = control,
+                                      .instructions = iterations * 4,
+                                      .expected_d = iterations * 3,
+                                      .extra_entry = entry + 6,
+                                      .expected_memory = 0,
+                                      .expected_ccr = 4,
+                                      .host = test::host::control}};
 
 void verify(const State &state,
             const RunResult result,
@@ -120,14 +138,19 @@ class NativeRun {
 public:
   NativeRun(const Memory &memory_map, const Fixture &fixture) {
     const auto stop = static_cast<Address>(entry + fixture.program.size() - isa::stop.size());
-    const std::array entries{entry, stop};
-    for (std::size_t index = 0; index < entries.size(); ++index) {
-      const auto instructions = detail::parse_block(memory_map, entries[index]);
+    const std::array entries{entry, stop, fixture.extra_entry};
+    for (const auto address : entries) {
+      if (address == 0) { continue; }
+      if ((address >> detail::native_page_shift) != (entry >> detail::native_page_shift)) {
+        throw std::runtime_error("Benchmark native entries must fit their shared index page");
+      }
+      const auto instructions = detail::parse_block(memory_map, address);
       if (instructions.empty()) { throw std::runtime_error("Missing native benchmark region"); }
       const auto bytes = detail::emit_block(instructions, memory_map);
       code_bytes_ += bytes.size();
-      blocks[index] = arena.append(bytes);
+      page[address & page_mask] = arena.append(bytes);
     }
+    index_[entry >> detail::native_page_shift] = page.data();
   }
 
   void execute(std::array<Byte, address_bytes> &ram, const Fixture &fixture) {
@@ -136,22 +159,15 @@ public:
     context.cpu.registers = {.pc = entry, .x = iterations, .sp = stack};
     context.fault = Fault::none;
     constexpr auto budget = std::numeric_limits<std::uint32_t>::max();
-    std::uint32_t retired = 0;
-    detail::ExitLocation location;
-    for (const auto *block : blocks) {
-      const auto result =
-          detail::enter_block(block, context.cpu.registers, context, budget - retired);
-      retired += result.retired;
-      location = result.location;
-      if (context.fault != Fault::none || context.cpu.execution != ExecutionState::running) {
-        break;
-      }
-    }
-    verify(
-        context.cpu,
-        {.retired = retired, .fault = context.fault, .pc = location.pc, .opcode = location.opcode},
-        fixture,
-        ram);
+    const auto result = detail::enter_blocks(
+        page[entry & page_mask], context.cpu.registers, context, budget, index_);
+    verify(context.cpu,
+           {.retired = result.retired,
+            .fault = context.fault,
+            .pc = result.location.pc,
+            .opcode = result.location.opcode},
+           fixture,
+           ram);
   }
 
   [[nodiscard]] const State &state() const { return context.cpu; }
@@ -162,7 +178,9 @@ private:
   std::size_t code_bytes_ = 0;
   detail::ExecutableArena arena;
   detail::NativeContext context{};
-  std::array<const void *, 2> blocks{};
+  static constexpr unsigned page_mask = detail::native_page_entries - 1;
+  detail::NativePage page{};
+  detail::NativeIndex index_{};
 };
 
 void execute_host(std::array<Byte, address_bytes> &ram, const Fixture &fixture) {
@@ -204,6 +222,13 @@ void verify_arithmetic_host() {
       const auto expected = (before_last + 3U) & word_mask;
       const auto ccr = zero | (expected >= sign ? negative : 0U) |
                        static_cast<unsigned>(before_last + 3U > word_mask);
+      const auto control_result = test::host::control_result(state);
+      const auto overflow = before_last < sign && before_last + 3U >= sign ? 2U : 0U;
+      if (control_result.d != expected || control_result.x != 0 ||
+          control_result.ccr != (ccr | overflow)) {
+        throw std::runtime_error(
+            "Host control ASM disagrees with independent overflow expectation");
+      }
       if (result.d != expected || result.x != 0 || result.ccr != ccr) {
         throw std::runtime_error("Host ALU ASM disagrees with independent modular sum/final flags");
       }

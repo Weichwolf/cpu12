@@ -81,6 +81,25 @@ inline Result arithmetic(Byte & /*memory*/) {
   return arithmetic_result(state);
 }
 
+inline Result control_result(const KernelRegisters state) {
+  auto result = arithmetic_result(state);
+  // ADDD #3 overflow is live through DEX and both branches. Rematerialize its
+  // final value instead of saving host flags on every loop iteration.
+  constexpr Address first_overflow = 0x8000;
+  constexpr Address last_overflow = 0x8002;
+  constexpr Byte overflow = 2;
+  if (state.value >= first_overflow && state.value <= last_overflow) {
+    result.ccr = static_cast<Byte>(result.ccr | overflow);
+  }
+  return result;
+}
+
+inline Result control(Byte & /*memory*/) {
+  KernelRegisters state;
+  arithmetic_kernel(state);
+  return control_result(state);
+}
+
 inline Result memory(Byte &payload) {
   KernelRegisters state;
   memory_kernel(state, payload);
