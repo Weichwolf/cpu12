@@ -216,7 +216,15 @@ void memory_operation(Code &code,
   const bool store = instruction.kind == Kind::store;
   auto reg = instruction.word ? native_word(instruction) : byte_register(instruction, plan);
   const bool high = !instruction.word && reg >= native_high;
-  if (instruction.word && store) { swap_word(code, reg); }
+  const auto value_register = reg;
+  if (instruction.word && store) {
+    // Convert a scratch copy so later operations can use the unchanged guest value.
+    code.byte(word_prefix);
+    code.byte(mov_to);
+    code.byte(static_cast<std::uint8_t>(register_operand | (reg << 3U)));
+    swap_word(code, 0);
+    reg = 0;
+  }
   if (high && store) {
     code.byte(mov8_to);
     code.byte(static_cast<std::uint8_t>(register_operand | (reg << 3U)));
@@ -232,12 +240,12 @@ void memory_operation(Code &code,
     code.byte(mov8_to);
     code.byte(static_cast<std::uint8_t>(register_operand | byte_register(instruction, plan)));
   }
-  if (instruction.word) { swap_word(code, reg); }
+  if (instruction.word && !store) { swap_word(code, reg); }
   if (needed_flags) { test_value(code, instruction, plan); }
   if (operation.cache_store) {
     constexpr std::array<std::uint8_t, 3> cache{word_prefix, rex_b, mov_to};
     code.raw(cache);
-    code.byte(static_cast<std::uint8_t>(register_operand | (reg << 3U) | 4U));
+    code.byte(static_cast<std::uint8_t>(register_operand | (value_register << 3U) | 4U));
   }
 }
 

@@ -203,11 +203,53 @@ void run_form(const Form form) {
     }
   }
 }
+
+struct WordStore {
+  Byte opcode;
+  Address Registers::*value;
+};
+
+void word_store_sources() {
+  constexpr std::array stores{
+      WordStore{.opcode = isa::opcode<isa::Opcode::std_extended>()[0], .value = &Registers::d},
+      WordStore{.opcode = isa::opcode<isa::Opcode::stx_extended>()[0], .value = &Registers::x},
+      WordStore{.opcode = isa::opcode<isa::Opcode::sty_extended>()[0], .value = &Registers::y},
+      WordStore{.opcode = isa::opcode<isa::Opcode::sts_extended>()[0], .value = &Registers::sp}};
+  constexpr std::array<Address, 5> inputs{0, 1, 0x7fff, 0x8000, 0xffff};
+  constexpr Address sign = 0x8000;
+  constexpr Byte guard = 0xa5;
+  for (const auto form : stores) {
+    auto program = isa::program(isa::opcode<isa::Opcode::std_extended>(), destination);
+    program[0] = form.opcode;
+    Device device(program);
+    for (const auto value : inputs) {
+      for (unsigned ccr = 0; ccr <= byte_mask; ++ccr) {
+        auto initial = seed;
+        initial.*(form.value) = value;
+        initial.ccr = static_cast<Byte>(ccr);
+        auto wanted = initial;
+        wanted.pc = entry + program.size();
+        wanted.ccr = static_cast<Byte>((ccr & ~(flags_nzvc ^ flag_c)) | (value == 0 ? flag_z : 0U) |
+                                       (value >= sign ? flag_n : 0U));
+        device.ram[alias_address - 1] = guard;
+        device.ram[alias_address + 2] = guard;
+        device.check(initial, 1, wanted);
+        require(device.ram[alias_address] == value >> byte_bits &&
+                    device.ram[alias_address + 1] == (value & byte_mask) &&
+                    device.ram[alias_address - 1] == guard &&
+                    device.ram[alias_address + 2] == guard,
+                "A word store must preserve all guest registers, flags and adjacent bytes");
+      }
+    }
+  }
+}
+
 }
 
 int main() {
   try {
     for (const auto form : forms) { run_form(form); }
+    word_store_sources();
     std::cout << "Native loop RAM forwarding, physical aliases and non-forwardable stores passed\n";
     return 0;
   } catch (const std::exception &error) {
