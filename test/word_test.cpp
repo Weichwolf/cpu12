@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "cpu12/core.hpp"
+#include "cpu12/memory.hpp"
 #include "reference.hpp"
 
 #include <array>
@@ -250,11 +251,11 @@ bool WordBus::byte_read(void *const owner,
 
 void bus_contract() {
   WordBus bus;
-  cpu12::Core core({},
-                   {.owner = &bus,
-                    .read = &WordBus::byte_read,
-                    .read_word = &WordBus::read,
-                    .write_word = &WordBus::write});
+  cpu12::Io io{.owner = &bus,
+               .read = &WordBus::byte_read,
+               .read_word = &WordBus::read,
+               .write_word = &WordBus::write};
+  cpu12::Core core(cpu12::Memory::external(), &io);
   for (const auto &operation : operations) {
     for (const auto right : partners) {
       bus.value = static_cast<std::uint16_t>(right);
@@ -312,7 +313,8 @@ void bus_contract() {
   require(read.fault == cpu12::Fault::memory_read && read.access_size == 2 &&
               read.address == bus.address && read.retired == 0 && core.registers() == seed,
           "Failed word reads cannot commit flags or destination registers");
-  cpu12::Core missing({}, {.owner = &bus, .read = &WordBus::byte_read});
+  cpu12::Io missing_io{.owner = &bus, .read = &WordBus::byte_read};
+  cpu12::Core missing(cpu12::Memory::external(), &missing_io);
   missing.set_registers(seed);
   require(missing.run_instruction(load.view()).fault == cpu12::Fault::memory_read &&
               bus.byte_calls == 0,
@@ -321,7 +323,7 @@ void bus_contract() {
 
 void boundaries_and_keys() {
   std::array<std::uint8_t, word_range> ram{};
-  cpu12::Core core({.bytes = ram});
+  cpu12::Core core(cpu12::Memory::unified(ram));
   constexpr std::uint16_t last = 0xffff;
   constexpr unsigned pattern = 0x1234;
   place(ram, last, pattern);
@@ -361,8 +363,8 @@ void boundaries_and_keys() {
   WordBus bus;
   bus.value = pattern;
   bus.ram_high = high.data();
-  cpu12::Core mixed({.first = port_address, .bytes = high},
-                    {.owner = &bus, .read_word = &WordBus::read, .write_word = &WordBus::write});
+  cpu12::Io io{.owner = &bus, .read_word = &WordBus::read, .write_word = &WordBus::write};
+  cpu12::Core mixed(cpu12::Memory::window({.first = port_address, .bytes = high}), &io);
   run_case(mixed,
            {.operation = operations[0],
             .form = Form::extended,
@@ -388,7 +390,7 @@ int main() {
   try {
     require(cpu12::Core::native_supported(), "Native host required");
     std::array<std::uint8_t, word_range> ram{};
-    cpu12::Core core({.bytes = ram});
+    cpu12::Core core(cpu12::Memory::unified(ram));
     arithmetic_matrix(core, ram, Form::immediate);
     arithmetic_matrix(core, ram, Form::direct);
     arithmetic_matrix(core, ram, Form::extended);

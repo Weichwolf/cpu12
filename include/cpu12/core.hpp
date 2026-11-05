@@ -109,8 +109,6 @@ struct Statistics {
 class Core {
 public:
   explicit Core(Memory memory = Memory::external(), Io *io = nullptr, Options options = {});
-  // Raw-window compatibility entry; new integrations use Memory explicitly.
-  explicit Core(Ram ram, Io io = {});
   ~Core();
   Core(const Core &) = delete;
   Core &operator=(const Core &) = delete;
@@ -131,8 +129,10 @@ public:
   [[nodiscard]] EventResult interrupt(InterruptRequest request);
   // Report an asserted masked XIRQ while stopped; no vector is serviced.
   [[nodiscard]] EventResult resume_from_stop();
-  // Instruction budget, not a cycle budget. The result counts completed instructions.
-  [[nodiscard]] RunResult run(std::uint32_t instruction_budget);
+  // Runs until a fault, sleep or instruction-counter limit. Explicit limits are
+  // available for deterministic control; the default needs no consumer quantum.
+  [[nodiscard]] RunResult
+  run(std::uint32_t instruction_budget = std::numeric_limits<std::uint32_t>::max());
   [[nodiscard]] Statistics statistics() const noexcept;
   void clear_code_cache();
 

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-only
+#include "cpu12/isa.hpp"
 #include "instruction.hpp"
 
 #include <array>
@@ -10,14 +11,14 @@ namespace cpu12::detail {
 namespace {
 std::optional<Instruction> page_register(const std::span<const std::uint8_t> bytes) {
   if (bytes.size() != 2) { return {}; }
-  constexpr unsigned prefix = 0x18;
+  constexpr unsigned prefix = isa::stop[0];
   if (bytes[0] != prefix) { return {}; }
-  constexpr unsigned stop = 0x3e;
+  constexpr unsigned stop = isa::stop[1];
   if (bytes[1] == stop) { return Instruction{.kind = Kind::stop, .opcode = prefix, .length = 2}; }
-  constexpr unsigned add = 6;
-  constexpr unsigned decimal = 7;
-  constexpr unsigned subtract = 0x16;
-  constexpr unsigned compare = 0x17;
+  constexpr unsigned add = isa::aba[1];
+  constexpr unsigned decimal = isa::daa[1];
+  constexpr unsigned subtract = isa::sba[1];
+  constexpr unsigned compare = isa::cba[1];
   RegisterOp operation;
   switch (bytes[1]) {
     case add: operation = RegisterOp::add_b; break;
@@ -79,16 +80,16 @@ std::optional<RegisterOp> operation(const unsigned opcode) {
 std::optional<Instruction> decode_register(const std::span<const std::uint8_t> bytes) {
   if (bytes.empty()) { return {}; }
   if (const auto instruction = page_register(bytes)) { return instruction; }
-  constexpr unsigned nop = 0xa7;
+  constexpr unsigned nop = isa::nop[0];
   const auto opcode = bytes[0];
   if (opcode == nop && bytes.size() == 1) {
     return Instruction{.kind = Kind::nop, .opcode = opcode, .length = 1};
   }
-  constexpr unsigned rti = 0x0b;
+  constexpr unsigned rti = isa::rti[0];
   if (opcode == rti && bytes.size() == 1) {
     return Instruction{.kind = Kind::return_interrupt, .opcode = opcode, .length = 1};
   }
-  constexpr unsigned wait = 0x3e;
+  constexpr unsigned wait = isa::wai[0];
   if (opcode == wait && bytes.size() == 1) {
     return Instruction{.kind = Kind::wait, .opcode = opcode, .length = 1};
   }

@@ -93,9 +93,6 @@ public:
 Core::Core(const Memory memory, Io *const io, const Options options)
     : impl_(std::make_unique<Impl>(memory.storage(), io != nullptr ? *io : Io{}, options)) {}
 
-Core::Core(const Ram ram, const Io io)
-    : impl_(std::make_unique<Impl>(Memory::window(ram).storage(), io, Options{})) {}
-
 Core::~Core() = default;
 
 bool Core::native_supported() noexcept {
@@ -198,7 +195,26 @@ RunResult Core::run_instruction(const std::span<const std::uint8_t> bytes) {
 }
 
 RunResult Core::step() {
-  return run(1);
+  RunResult result{.state = state(), .pc = impl_->registers.pc};
+  if (impl_->active) {
+    result.fault = Fault::reentrant;
+    return result;
+  }
+  if (impl_->failure.fault != Fault::none) { return impl_->failure; }
+  if (!impl_->supported) {
+    result.fault = Fault::unsupported_host;
+    return result;
+  }
+  if (result.state != ExecutionState::running) { return result; }
+  impl_->active = true;
+  try {
+    result = impl_->step();
+  } catch (...) {
+    impl_->active = false;
+    throw;
+  }
+  impl_->active = false;
+  return result;
 }
 
 RunResult Core::run(const std::uint32_t instruction_budget) {

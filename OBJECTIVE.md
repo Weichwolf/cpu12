@@ -14,10 +14,10 @@ correct side exits. Preserve instrument-visible behavior and musical timing in
 the integrating Blofeld Desktop SL emulator: MIDI <-> emulator -> audio.
 
 Use C++23/LLVM19, CMake/Ninja, strict diagnostics and independent directed tests.
-Use optimized Release. Until original Blofeld firmware reaches real time,
-suspend execution tests except optimized startup/throughput probes capped at
-10 host seconds. Fail unless playable; never automatically retry or extend.
-Keep strict compilation, formatting and static analysis; do not weaken checks. Run fuzzing only when explicitly requested.
+Run affected core correctness tests, including independent expectations and
+appropriate sanitizer coverage, before publishing source changes. Core tests
+remain active before the integrating instrument reaches real time. Keep strict
+compilation, formatting and static analysis; never weaken checks. Run fuzzing only when explicitly requested.
 Keep manufacturer assets and application firmware out of source and tests.
 Commit/push verified increments to configured origin/main and keep this repository
 private. Passing an initial captured-instruction subset is not completion.

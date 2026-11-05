@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "cpu12/core.hpp"
+#include "cpu12/memory.hpp"
 #include "reference.hpp"
 
 #include <array>
@@ -86,7 +87,7 @@ void read_case(cpu12::Core &core, const ReadCase &test) {
 
 void ram_arithmetic() {
   std::array<std::uint8_t, address_bytes> ram{};
-  cpu12::Core core({.bytes = ram});
+  cpu12::Core core(cpu12::Memory::unified(ram));
   constexpr std::array<unsigned, 16> opcodes{0x86,
                                              0xc6,
                                              0x8b,
@@ -155,7 +156,7 @@ void store_case(cpu12::Core &core, const std::span<const std::uint8_t> ram, cons
 
 void ram_stores() {
   std::array<std::uint8_t, address_bytes> ram{};
-  cpu12::Core core({.bytes = ram});
+  cpu12::Core core(cpu12::Memory::unified(ram));
   for (const bool extended : {false, true}) {
     const auto address = extended ? extended_address : direct_address;
     for (const bool b : {false, true}) {
@@ -215,7 +216,8 @@ bool Bus::write(void *const owner, const cpu12::ByteWrite access) noexcept {
 
 void bus_operations() {
   Bus bus;
-  cpu12::Core core({}, {.owner = &bus, .read = &Bus::read, .write = &Bus::write});
+  cpu12::Io io{.owner = &bus, .read = &Bus::read, .write = &Bus::write};
+  cpu12::Core core(cpu12::Memory::external(), &io);
   bus.core = &core;
   constexpr std::array<unsigned, 8> opcodes{0x86, 0xc6, 0x8b, 0xcb, 0x80, 0xc0, 0x81, 0xc1};
   constexpr std::array<unsigned, 5> inputs{0, 1, 127, 128, 255};
@@ -289,7 +291,7 @@ void bus_operations() {
 void boundaries() {
   std::array<std::uint8_t, 1> byte{0x80};
   constexpr std::uint16_t last = 0xffff;
-  cpu12::Core core({.first = last, .bytes = byte});
+  cpu12::Core core(cpu12::Memory::window({.first = last, .bytes = byte}));
   read_case(core,
             {.input = {.opcode = load_a, .left = 0, .right = sign_bit, .ccr = 0},
              .address = last,
@@ -305,11 +307,11 @@ void boundaries() {
   std::array<std::uint8_t, 2> oversized{};
   bool rejected = false;
   try {
-    const cpu12::Core invalid({.first = last, .bytes = oversized});
+    const cpu12::Core invalid(cpu12::Memory::window({.first = last, .bytes = oversized}));
   } catch (const std::invalid_argument &) { rejected = true; }
   require(rejected, "RAM windows cannot exceed the 16-bit address space");
   std::array<std::uint8_t, address_bytes> ram{};
-  cpu12::Core cached({.bytes = ram});
+  cpu12::Core cached(cpu12::Memory::unified(ram));
   constexpr std::array<std::uint16_t, 3> addresses{direct_address, other_address, direct_address};
   unsigned value = 0;
   for (const auto address : addresses) {

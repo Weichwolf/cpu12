@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "cpu12/core.hpp"
+#include "cpu12/isa.hpp"
 #include "cpu12/memory.hpp"
 #include "fetch_model.hpp"
 
@@ -11,6 +12,35 @@ namespace {
 constexpr Address start = 0x200;
 constexpr Registers seed{.pc = start, .d = 0x55aa, .y = 0xa55a, .sp = 0x9000, .ccr = 0xa1};
 using Storage = std::array<Byte, address_bytes>;
+constexpr std::array<Byte, 1> expected_nop{0xa7}, expected_load_immediate{0x86},
+    expected_load_extended{0xb6};
+constexpr std::array<Byte, 2> expected_stop{0x18, 0x3e};
+static_assert(isa::nop == expected_nop);
+static_assert(isa::stop == expected_stop);
+static_assert(isa::opcode<isa::Opcode::ldaa_immediate>() == expected_load_immediate);
+static_assert(isa::opcode<isa::Opcode::ldaa_extended>() == expected_load_extended);
+
+void default_run() {
+  constexpr auto program = isa::program(isa::nop, isa::stop);
+  Storage storage{};
+  std::ranges::copy(program, storage.begin() + start);
+  auto expected_memory = storage;
+  Core core(Memory::unified(storage));
+  auto before = seed;
+  before.ccr = 0;
+  core.set_registers(before);
+  auto expected = before;
+  expected.pc = start + program.size();
+  expected.sp = seed.sp - 9;
+  constexpr std::array<Byte, 9> frame{0, 0xaa, 0x55, 0, 0, 0xa5, 0x5a, 2, 3};
+  std::ranges::copy(frame, expected_memory.begin() + expected.sp);
+  const auto result = core.run();
+  require(result.retired == 2 && result.fault == Fault::none &&
+              result.state == ExecutionState::stopped && core.registers() == expected &&
+              storage == expected_memory,
+          "Default run stops at guest STOP with exact PC, SP, saved frame and preserved flags");
+  native += 2;
+}
 
 void loop() {
   constexpr std::array<Byte, 14> program{
@@ -164,6 +194,7 @@ void bank_change() {
 }
 
 void program_cases() {
+  default_run();
   loop();
   partial_budget_failure();
   calls();
