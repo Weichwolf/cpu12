@@ -1,7 +1,7 @@
 # cpu12
 
-- Build an independent, general CPU12/HC12 native JIT library; keep Weichwolf/cpu12
-  private. Complete ISA, flags, addressing, reset, interrupts, waits and readable state
+- Build an independent, general CPU12/HC12 native JIT library in public Weichwolf/cpu12.
+  Complete ISA, flags, addressing, reset, interrupts, waits and readable state
   remain the objective. Initial subsets are incomplete. See OBJECTIVE.md.
 - Keep board clocks, peripherals and application firmware in consumers. No foreign
   CPU core, Ghidra or Blofeld dependency; use independently authored test programs.
