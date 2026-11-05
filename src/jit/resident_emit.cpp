@@ -217,6 +217,7 @@ void memory_operation(Code &code,
   auto reg = instruction.word ? native_word(instruction) : byte_register(instruction, plan);
   const bool high = !instruction.word && reg >= native_high;
   const auto value_register = reg;
+#if !defined(__MOVBE__)
   if (instruction.word && store) {
     // Convert a scratch copy so later operations can use the unchanged guest value.
     code.byte(word_prefix);
@@ -225,6 +226,7 @@ void memory_operation(Code &code,
     swap_word(code, 0);
     reg = 0;
   }
+#endif
   if (high && store) {
     code.byte(mov8_to);
     code.byte(static_cast<std::uint8_t>(register_operand | (reg << 3U)));
@@ -233,7 +235,15 @@ void memory_operation(Code &code,
   if (instruction.word) { code.byte(word_prefix); }
   code.byte(rex_b); // R15 is the fixed memory base; displacement remains compile-time data.
   constexpr std::array<std::array<std::uint8_t, 2>, 2> opcodes{{{0x8a, 0x88}, {0x8b, 0x89}}};
-  code.byte(opcodes[static_cast<std::size_t>(instruction.word)][static_cast<std::size_t>(store)]);
+#if defined(__MOVBE__)
+  if (instruction.word && store) {
+    constexpr std::array<std::uint8_t, 3> movbe_store{0x0f, 0x38, 0xf1};
+    code.raw(movbe_store);
+  } else
+#endif
+  {
+    code.byte(opcodes[static_cast<std::size_t>(instruction.word)][static_cast<std::size_t>(store)]);
+  }
   code.byte(static_cast<std::uint8_t>(r15_displacement | (reg << 3U)));
   code.u32(std::bit_cast<std::uint32_t>(operation.displacement));
   if (high && !store) {
