@@ -22,7 +22,8 @@
       "BSET/BCLR and BRSET/BRCLR: direct/extended/indexed encodings, masks, flags, signed8 branch tails, excluded indirect forms and general next-instruction PC reference",
       "MOVB/MOVW encodings and unchanged CCR, single-postbyte addressing restrictions; section3.10.1 and Table3-3 distinguish HCS12 next-PC semantics from unsupported original M68HC12 queue offsets",
       "MUL/EMUL/EMULS, IDIV/IDIVS, EDIV/EDIVS and FDIV: product/quotient widths, rounding carry, flags, zero/overflow and explicitly indeterminate fields",
-      "ABA/SBA/CBA, ABX/ABY assembler aliases and DAA: accumulator arithmetic/flags, nine qualified A/C/H input rows, preserved H and undefined V"
+      "ABA/SBA/CBA, ABX/ABY assembler aliases and DAA: accumulator arithmetic/flags, nine qualified A/C/H input rows, preserved H and undefined V",
+      "Instruction object-code length entries and Table3-2 indexed extensions for logical byte fetching; physical prefetch/bus-cycle timing is not claimed"
     ],
     "redistributed": false
   }

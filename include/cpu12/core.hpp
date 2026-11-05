@@ -33,6 +33,7 @@ struct Io {
   bool (*write)(void *, ByteWrite) noexcept = nullptr;
   bool (*read_word)(void *, std::uint16_t, std::uint16_t &) noexcept = nullptr;
   bool (*write_word)(void *, WordWrite) noexcept = nullptr;
+  bool (*fetch)(void *, std::uint16_t, std::uint8_t &) noexcept = nullptr;
 };
 enum class Fault : std::uint8_t {
   none,
@@ -42,7 +43,8 @@ enum class Fault : std::uint8_t {
   memory_read,
   memory_write,
   reentrant,
-  unsupported_state
+  unsupported_state,
+  instruction_fetch
 };
 
 struct RunResult {
@@ -63,11 +65,11 @@ struct Options {
 struct Statistics {
   std::uint64_t native_instructions = 0, compiled_entries = 0, cache_resets = 0;
   std::uint64_t read_callbacks = 0, write_callbacks = 0;
+  std::uint64_t fetch_callbacks = 0;
 };
 
-// Captured instructions have already been fetched by the caller. Board timing,
-// code fetch and interrupts are not implemented by this initial API. Native
-// execution faults latch until explicit register replacement, preventing replay.
+// Board clocks and interrupts are not implemented by this initial API. Native
+// execution and fetched-instruction faults latch until explicit register replacement.
 class Core {
 public:
   explicit Core(Memory memory = Memory::external(), Io *io = nullptr, Options options = {});
@@ -78,9 +80,12 @@ public:
   Core &operator=(const Core &) = delete;
   [[nodiscard]] static bool native_supported() noexcept;
   [[nodiscard]] Registers registers() const noexcept;
-  // An explicit fresh boundary clears a latched bus fault; coordinate bus state externally.
+  // An explicit fresh boundary clears a latched fault; coordinate bus state externally.
   void set_registers(Registers registers);
   [[nodiscard]] RunResult run_instruction(std::span<const std::uint8_t> bytes);
+  [[nodiscard]] RunResult step();
+  // Instruction budget, not a cycle budget. The result counts completed instructions.
+  [[nodiscard]] RunResult run(std::uint32_t instruction_budget);
   [[nodiscard]] Statistics statistics() const noexcept;
   void clear_code_cache();
 

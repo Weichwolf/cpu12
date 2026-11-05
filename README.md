@@ -35,10 +35,13 @@ owners outlive the core. The lightweight callback table is copied at
 construction. `Options::cache_entries` bounds native code storage; invalid
 bounds fail at setup.
 
-The captured `run_instruction(bytes)` API accepts at most six bytes and
-separates CPU semantics from the
-caller's fetch, clocks and board model. Interrupt entry, reset and waits remain
-required work, along with remaining ISA and bounded native regions. The current
+The captured `run_instruction(bytes)` API accepts at most six bytes.
+`step()` fetches a complete instruction from current RAM or the explicit
+`Io.fetch` callback and executes it natively. `run(instruction_budget)` executes
+bounded instruction sequences; it does not supply cycle timing or interrupts.
+[Fetched execution](doc/fetch.txt) records exact byte accesses, separate code/data
+transports, changed code and fault latching. Interrupt entry, reset and waits
+remain required work, along with remaining ISA and bounded native regions. The current
 RAM/bus contract is described in [memory.txt](doc/memory.txt) and
 [indexed.txt](doc/indexed.txt), [control transfers](doc/control.txt) and
 [stack/subroutines](doc/stack.txt). [Register/carry ALU](doc/alu.txt) records

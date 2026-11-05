@@ -1,11 +1,15 @@
 CPU12 coverage — incomplete
 
-Current public API: Core(Memory, Io*, Options), run_instruction(captured_bytes).
-Borrowed byte views provide unified/window/external layouts; native cache bounds
-are checked at construction. Captured execution still delegates fetching and
-board time to its owner.
+Current public API: Core(Memory, Io*, Options), run_instruction(captured_bytes),
+step() and run(instruction_budget). Borrowed byte views provide
+unified/window/external layouts; native cache bounds are checked at construction.
+Fetched execution uses explicit code transport; clocks and interrupts remain
+outside the currently implemented execution contract.
 
 Initial native implementation on x86-64/Linux:
+- Logical byte fetching from current RAM or explicit Io.fetch, separate from data.
+- Bounded instruction sequences, precise fetched faults, address wrapping and
+  byte/length cache keys for changed code; no physical prefetch/timing claim.
 - Captured NOP.
 - Immediate LDAA/B, ADDA/B, SUBA/B, CMPA/B, ANDA/B, ORAA/B, EORA/B, BITA/B.
 - ADCA/B and SBCA/B in immediate/direct/extended/all existing indexed forms.
@@ -69,7 +73,7 @@ Open requirements:
 - The remaining ISA and its addressing/control/stack forms, factory temporaries.
 - Original M68HC12 move-queue PC corrections; current moves use HCS12 semantics.
 - Additional memory-window types and multi-byte/per-instruction access boundaries.
-- Native regions, fetch ownership/code invalidation and event/timing budgets.
+- Native regions, executable mapping/invalidation contracts and event/timing budgets.
 - Reset, interrupt priorities/entry/return, ANDCC IRQ-recognition delay,
   wait/stop and complete checkpoints.
 - Integration and state ownership with blofeld-emu; no emulator dependency pin yet.
@@ -82,11 +86,14 @@ remains physically unmeasured. stack.txt records the distinction.
 
 No native throughput or real-time claim is made from correctness test duration.
 Broad QA is deferred until original Blofeld firmware runs in real time, as the
-user requested. No fuzzing was run. Current accumulator-reference.json pins
-50432704 accepted native accumulator/BCD cases, 40961 explicit unqualified-state
-boundaries and all fifteen previous consumers against one coherent library.
-The DAA domain/result reductions have two UNSAT proofs and one SAT negative
-control. Undefined V preservation is checked separately from defined fields.
+user requested. No fuzzing was run. Current fetch-reference.json pins
+14576 independent fetch shapes/boundaries, 333 native program retirements and
+all sixteen previous consumers against one coherent optimized library.
+Authored loops, real call/return stacks, guest self-modification, external bank
+changes, byte-exact faults, reentrancy and no-replay boundaries are included.
+Historical accumulator-reference.json pins 50432704 accumulator/BCD cases and
+40961 unqualified-state boundaries, with DAA domain/result proofs and an
+explicit undefined-V policy.
 Historical multiply-divide-reference.json pins 48287746 multiplication/division
 cases, including 9438977 with explicit indeterminate policy in addition to
 defined-field checks, plus its signed16 range proof and negative controls.
