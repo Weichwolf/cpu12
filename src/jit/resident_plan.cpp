@@ -30,8 +30,38 @@ const Byte *pointer(const Memory &memory, const Instruction &instruction) {
   return nullptr;
 }
 
+bool indexed_load(const Instruction &instruction) {
+  return instruction.kind == Kind::load && instruction.word &&
+         instruction.target == WordTarget::d && instruction.addressing == Addressing::indexed &&
+         instruction.indexed.base == IndexBase::x &&
+         instruction.indexed.offset == IndexOffset::constant && instruction.indexed.update == 2 &&
+         instruction.indexed.displacement == 0 && !instruction.indexed.indirect;
+}
+
+bool indexed_memory(ResidentPlan &plan, const Memory &memory) {
+  unsigned accesses = 0;
+  for (const auto &operation : plan.operations) {
+    if (indexed_load(operation.instruction)) {
+      ++accesses;
+    } else if ((written_words(operation.instruction) & (1U << 1U)) != 0) {
+      return false;
+    }
+  }
+  if (accesses != 1 || !plan.loop) { return false; }
+  for (const auto &region : memory.regions()) {
+    if (region.known.empty() && region.bytes.size() > plan.indexed_region.bytes.size()) {
+      plan.indexed_region = region;
+    }
+  }
+  if (plan.indexed_region.bytes.empty()) { return false; }
+  plan.base = plan.indexed_region.bytes.data();
+  plan.used_words |= 1U << 1U;
+  plan.dirty_words |= 1U << 1U;
+  return true;
+}
+
 bool supported(const Instruction &instruction) {
-  if (instruction.kind == Kind::nop) { return true; }
+  if (instruction.kind == Kind::nop || indexed_load(instruction)) { return true; }
   if (instruction.kind == Kind::branch) {
     constexpr unsigned not_equal = 6;
     constexpr unsigned equal = 7;
@@ -69,6 +99,16 @@ bool displacement(ResidentOperation &operation, const Byte *base) {
   } else {
     if (origin - value > limit) { return false; }
     operation.displacement = -static_cast<std::int32_t>(origin - value);
+  }
+  return true;
+}
+
+bool prepare_memory(ResidentPlan &plan, const Memory &memory) {
+  bool indexed = false;
+  for (const auto &operation : plan.operations) { indexed |= indexed_load(operation.instruction); }
+  if (indexed && !indexed_memory(plan, memory)) { return false; }
+  for (auto &operation : plan.operations) {
+    if (!displacement(operation, plan.base)) { return false; }
   }
   return true;
 }
@@ -182,7 +222,9 @@ void analyze(ResidentPlan &plan) {
         stable_flags && position->flags != 0 && (value_lanes(instruction) & overwritten) == 0;
     position->branch_zero = last_zero && (changed & flag_z) != 0;
     if ((changed & flag_z) != 0) { last_zero = false; }
-    if (writes != 0) { overwritten |= value_lanes(instruction); }
+    if (writes != 0) {
+      overwritten |= value_lanes(instruction) | (indexed_load(instruction) ? (1U << 1U) : 0U);
+    }
     if (instruction.kind != Kind::nop && instruction.kind != Kind::branch) {
       plan.used_words |= 1U << native_word(instruction);
       plan.dirty_words |= writes;
@@ -225,7 +267,7 @@ unsigned written_words(const Instruction &instruction) {
       instruction.kind == Kind::subtract || instruction.kind == Kind::bit_and ||
       instruction.kind == Kind::bit_or || instruction.kind == Kind::bit_xor ||
       instruction.kind == Kind::register_operation || instruction.kind == Kind::loop) {
-    return 1U << native_word(instruction);
+    return (1U << native_word(instruction)) | (indexed_load(instruction) ? (1U << 1U) : 0U);
   }
   return 0;
 }
@@ -250,15 +292,13 @@ std::optional<ResidentPlan> resident_plan(const std::span<const BlockInstruction
   }
   // Byte-only regions put A in BL and B in BH; a word D region keeps native D order.
   plan.swapped_d = !plan.swapped_d;
-  for (auto &operation : plan.operations) {
-    if (!displacement(operation, plan.base)) { return std::nullopt; }
-  }
   const auto &last = plan.operations.back();
   if (last.instruction.kind == Kind::branch || last.instruction.kind == Kind::loop) {
     const auto target = static_cast<Address>(static_cast<int>(last.pc) + last.instruction.length +
                                              std::bit_cast<std::int16_t>(last.instruction.operand));
     if (!induction(plan, target)) { return std::nullopt; }
   }
+  if (!prepare_memory(plan, memory)) { return std::nullopt; }
   fold(plan);
   analyze(plan);
   forward_load(plan);

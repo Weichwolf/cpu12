@@ -152,6 +152,21 @@ void test_value(Code &code, const Instruction &instruction, const ResidentPlan &
   code.byte(static_cast<std::uint8_t>(register_operand | (reg << 3U) | reg));
 }
 
+void indexed_operation(Code &code,
+                       const ResidentOperation &operation,
+                       const ResidentPlan &plan,
+                       const bool needed_flags) {
+  constexpr std::array<std::uint8_t, 3> index{0x0f, 0xb7, 0xc1};            // MOVZX EAX,CX.
+  constexpr std::array<std::uint8_t, 5> load{0x66, 0x41, 0x8b, 0x9c, 0x07}; // BX,[R15+RAX+disp].
+  code.raw(index);
+  code.raw(load);
+  code.u32(std::bit_cast<std::uint32_t>(-static_cast<std::int32_t>(plan.indexed_region.first)));
+  swap_word(code, 3);
+  constexpr std::array<std::uint8_t, 4> advance{0x66, 0x8d, 0x49, 0x02}; // LEA CX,[RCX+2].
+  code.raw(advance);
+  if (needed_flags) { test_value(code, operation.instruction, plan); }
+}
+
 void memory_arithmetic(Code &code, const ResidentOperation &operation, const ResidentPlan &plan) {
   const auto &instruction = operation.instruction;
   const auto reg = instruction.word ? native_word(instruction) : byte_register(instruction, plan);
@@ -268,6 +283,8 @@ void body(Code &code, const ResidentPlan &plan, EmissionState &state) {
       const unsigned group = incrementing ? 0U : 1U;
       code.byte(
           static_cast<std::uint8_t>(register_operand | (group << 3U) | native_word(instruction)));
+    } else if (instruction.addressing == Addressing::indexed) {
+      indexed_operation(code, operation, plan, needed_flags);
     } else if (operation.pointer != nullptr) {
       memory_operation(code, operation, plan, needed_flags);
     } else {
@@ -410,6 +427,32 @@ void finish_branch(Code &code, const ResidentPlan &plan, const std::size_t loop)
   }
 }
 
+std::vector<std::size_t> indexed_admission(Code &code, const ResidentPlan &plan) {
+  if (plan.indexed_region.bytes.empty()) { return {}; }
+  std::vector<std::size_t> exits;
+  constexpr std::array<std::uint8_t, 4> load{0x0f, 0xb7, 0x47, 0x04}; // Initial X.
+  constexpr std::array<std::uint8_t, 2> below{0x0f, 0x82};
+  code.raw(load);
+  constexpr std::uint8_t subtract_eax = 0x2d;
+  code.byte(subtract_eax);
+  code.u32(plan.indexed_region.first);
+  code.raw(below);
+  exits.push_back(code.relative32());
+  constexpr std::array<std::uint8_t, 2> capacity{0x41, 0xb8};
+  code.raw(capacity);
+  code.u32(static_cast<std::uint32_t>(plan.indexed_region.bytes.size()));
+  constexpr std::array<std::uint8_t, 3> remaining{0x41, 0x29, 0xc0};
+  code.raw(remaining);
+  code.raw(below);
+  exits.push_back(code.relative32());
+  // R10 is the proven loop trip count, independent of retirement weighting.
+  constexpr std::array<std::uint8_t, 7> extent{0x47, 0x8d, 0x0c, 0x12, 0x45, 0x39, 0xc8};
+  code.raw(extent);
+  code.raw(below);
+  exits.push_back(code.relative32());
+  return exits;
+}
+
 std::size_t admission(Code &code, const ResidentPlan &plan) {
   if (plan.loop) {
     constexpr std::array<std::uint8_t, 4> load{0x44, 0x0f, 0xb7, 0x57};
@@ -457,6 +500,7 @@ std::vector<std::uint8_t> emit_resident(const ResidentPlan &plan,
   constexpr std::array<std::uint8_t, 4> endbr{0xf3, 0x0f, 0x1e, 0xfa};
   code.raw(endbr);
   const auto insufficient = admission(code, plan);
+  const auto outside_memory = indexed_admission(code, plan);
   preserve(code, plan, false);
   constexpr std::array<std::uint8_t, 2> retired{0x41,
                                                 0x53}; // PUSH R11: one total, outside the loop.
@@ -488,6 +532,7 @@ std::vector<std::uint8_t> emit_resident(const ResidentPlan &plan,
   constexpr std::uint8_t ret = 0xc3;
   code.byte(ret);
   code.bind(insufficient);
+  for (const auto exit : outside_memory) { code.bind(exit); }
   code.raw(general);
   return std::move(code).take();
 }

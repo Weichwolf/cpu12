@@ -26,6 +26,7 @@ struct ResidentOperation {
 struct ResidentPlan {
   std::vector<ResidentOperation> operations;
   const Byte *base = nullptr;
+  Ram indexed_region;
   unsigned changed = 0, used_words = 0, dirty_words = 0;
   unsigned counter_offset = 0;
   // A separate guest backedge retires on every iteration except the final exit.
