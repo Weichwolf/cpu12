@@ -1,81 +1,160 @@
-# Target architecture
+# Target JIT architecture
 
-The library executes the CPU12/HC12 ISA through native JIT code. This design is the
-implementation target, not a claim that the current migration is complete.
+This is the design target, not a statement of implementation completeness.
+The same execution architecture applies to cpu12 and dsp56300; their ISA lowering,
+register allocation and memory semantics differ. Optimize CPU12 first, then DSP.
 
 ```text
-consumer: memory + peripheral state + virtual time + event arbitration
-                            |
-                  Core(Memory, Io*)
-                            |
-               ISA frontend -> host-JIT concept -> native code
-                                   |                    |
-                        x86/SSE/AVX today        direct RAM access
-                        future ARM/NEON          explicit I/O effects
+consumer: borrowed memory, peripherals, events and virtual time
+                       |
+                 Core(Memory, Io*)
+                       |
+       cold: decode -> control-flow graph -> semantic IR
+                       -> liveness -> allocation -> native emission
+                       -> immutable executable arena
+                       |
+       warm: native entry -> linked native regions -> native loop
+                       |                           |
+                  direct memory              precise cold exit
+                                                   |
+                                      I/O / event / sleep / fault
 ```
 
-The public headers are core.hpp, isa.hpp and memory.hpp. Both libraries expose
-the same minimal Core API. ISA-specific register layouts, address units and
-peripheral contracts account for their differences; internal JIT mechanics do not.
-Core owns its complete state. Normal consumers need no state management; optional
-read-only state access occurs at safe owner boundaries and adds no work otherwise.
-Checkpoint import/export and restore interfaces do not belong in the library.
-State inspection cannot replace or rewind Core state. Staged effect tickets are
-outside the normal API.
+## Public contract and ownership
 
-Only JIT execution belongs in production. Host emitters satisfy one host concept;
-there is no interpreter/reference/cached backend selector. Native specialization
-must preserve all ISA effects and precise exits. Unknown operations and accesses
-fail with operation, address and PC. The general ISA extends beyond Blofeld needs.
+The target public surface consists of core.hpp, isa.hpp and memory.hpp. Core owns
+all architectural state and translations. Optional read-only state inspection is
+available at execution-owner boundaries; it does not copy state on every step.
+There are no checkpoint, restore, pipeline-ticket or backend-selection APIs.
+Production execution is JIT-only. Unsupported operations fail visibly with PC,
+operation, address and context; an interpreter or instruction helper is not a
+silent fallback. Real peripheral callbacks are distinct from ISA helpers.
 
-Memory uses 16-bit byte addresses and big-endian words. Typed borrowed views
-preserve bounds, permissions, knownness, aliases and owner lifetimes. Executable
-translations remain immutable for the Core lifetime. Loading a different program
-normally creates a new Core. In-system programming is an explicit memory-region
-identity transition owned by the consumer: a RAM-resident updater continues with
-its existing registers, while changed flash receives a new region identity.
-Old translations remain retained; they are not selected for the new identity.
-No firmware update protocol, state import or continuous byte hashing is required.
-Disjoint RAM grants carry live byte knowledge: unknown loads take an explicit
-fault path and native stores mark their bytes known. Read-only program/flash
-grants remain distinct from writable RAM and peripheral holes.
-Mapping changes occur at retirement boundaries. Validated mapping variants
-select retained translations by physical backing identity; they neither rewrite
-host code nor require per-instruction program hashes.
-One execution owner controls each core; external events use bounded communication.
+One thread owns execution of a Core. The consumer owns memory lifetimes,
+peripheral state, shared-buffer synchronization, virtual clocks and pacing.
+Neither core contains Blofeld protocols, an audio scheduler or physical wiring.
+The host emitter is a private implementation boundary: x86 today, other hosts
+later. Do not add abstractions to an executed instruction merely for symmetry.
 
-The consumer owns peripheral clocks and arbitration. Native runs stop at valid
-event, interrupt, fault or sleep boundaries; internal grants preserve deadlines
-and bounded response. ISA cycle progress and the relative time of real I/O are
-execution state, separate from optional benchmark statistics. The consumer adds
-derivative memory waits and retains ownership of frequency and virtual time.
-A synchronous I/O call may suspend its worker at the actual effect; rejecting
-the access remains a fault, never a retry/yield signal.
-A due event is handled before executing an instruction
-beyond its boundary. Caller-visible instruction counts are optional test control,
-not a substitute for event handling. Physical buses and pipeline phases are not
-implementation goals. ISA-visible instruction and interrupt semantics remain.
+## Cold path: compile control flow once
 
-Strict compilation, static analysis and independently expected ISA/state tests
-qualify changes. Core tests remain active before instrument real-time operation;
-Primary references are in reference-manifest.json.
+Decode from the actual entry PC into a compact semantic representation. Basic
+blocks end at architectural control-flow boundaries. Combine connected blocks
+into regions with native backedges; a function may span many basic blocks.
+An indirect branch, unavailable code, I/O or an event boundary may require an exit.
+No fixed 64/256-instruction cap, execution-budget-sized compilation or arbitrary
+function-size promise determines translation boundaries. Discover reachable code
+lazily rather than translating every byte of an image as if it were instructions.
 
-Generated code uses compact shared executable arenas, not one page per operation.
-Place frequently connected native blocks together, align entries deliberately,
-and keep fault/diagnostic slow paths out of hot instruction streams. Keep active
-Core data compact and retain live guest values in host registers across chained
-blocks. Qualify locality with code/data working-set and cache measurements; layout
-alone does not establish that a whole hot path fits a particular host cache.
+The IR represents register reads/writes, exact arithmetic, flag effects, memory
+effects and control flow. Analyze liveness across loop backedges to a fixed point.
+Fold constants and remove dead work only when all observable ISA effects survive.
+This is general compilation, not recognition or replacement of benchmark programs.
 
-I/O rejection contract: a callback returning false is a host diagnostic failure,
-not an emulated HC12 bus exception. Interrupt admission publishes registers only
-after the vector and complete frame succeed. On rejection, registers retain the
-pre-entry values; real external writes already performed remain visible. The
-fault latches and later calls cannot replay those writes or vector reads. Tests
-exercise refusal at every vector/frame access, including wrapped stack addresses.
-This software contract does not assert hardware SP visibility during a bus cycle.
+Finish code and relocations before publishing an entry. Retain executable code
+for the entire Core lifetime in compact shared arenas, not a page per instruction.
+Known successors use native branches. Unresolved or indirect successors use a
+cold resolver and retained target slots; never return through a C++ dispatcher
+for every instruction or loop iteration. Mutable link data is separate from
+immutable machine code. Preserve the register convention across linked regions.
+Place connected hot regions together and move fault/diagnostic paths out of line.
+Align deliberately; measure code expansion and instruction-cache behavior.
 
-Core stores registers, latched failure, execution state and interrupt-boundary
-state together. `state()` returns a stable const reference to that storage for
-inspection on the execution owner; native code updates the same fields directly.
-The view does not transfer state ownership or provide state import.
+## Warm path: keep values in host registers
+
+Load live architectural values at native entry and keep them in allocated host
+registers across instructions and backedges. Spill only under actual register
+pressure or at an observable boundary. Do not reload/store the entire register
+file, advance a memory-resident PC, or invoke a generic helper after every opcode.
+The current guest PC is normally compile-time metadata, materialized when needed.
+
+Compute only flags with a future use before their next overwrite. Preserve sticky
+flags and flags visible through explicit status reads, interrupts, I/O callbacks
+or exits. Host flags are usable only where their semantics match. Keep a compact
+pending expression when that is cheaper; materialize the exact guest status at
+observation points. Flag elimination must include exceptional and cold exits.
+
+ISA-specific native lowering handles widths, carries, saturation, wrapping and
+address updates. Memory and parallel operations retain their required ordering.
+No counters, tracing, instruction hashes or heap allocation belong in the default
+hot path. Architectural time progress is required state, not telemetry. Optional
+telemetry selects a separate instrumented path at a safe runtime boundary.
+
+## Memory and code identity
+
+Validate borrowed mappings on binding: backing, bounds, permissions, aliases and
+lifetimes. Lower proven RAM accesses to native loads/stores. Eliminate a guard
+only if its premise remains true throughout the execution region. Dynamic
+knownness, permissions or ambiguous addresses retain necessary checks. Peripheral
+holes and unknown accesses take explicit cold paths, never fabricated RAM values.
+Cross-region accesses preserve word ordering and actual callback semantics.
+
+Normal execution assumes a stable program identity and avoids continuous code
+hashing. A changed bank or explicitly programmed region receives a new identity
+at a safe boundary; old native code stays retained but is no longer selected for
+that identity. A genuine RAM-resident updater keeps its architectural state.
+Loading an unrelated program creates a new Core. A writable-code contract must
+explicitly handle modification or refuse it; silently executing stale code is
+incorrect. Core code contains no firmware-update protocol.
+
+## Precise exits without a per-instruction dispatcher
+
+Annotate potential exits with guest PC, live-value locations and completed effects.
+Publish canonical architectural state when returning to the owner or invoking a
+callback that observes it. Keep fault exits cold. Preserve completed external
+writes; a failed callback cannot be replayed as an execution-yield mechanism.
+Do not use one universal rollback rule for ISA operations with different effects.
+
+Execution is bounded by the next relevant event, not by a compilation cap.
+Use static cycle progress and region/loop guards where valid. A deadline inside a
+region takes an exact instruction-boundary path within the retained translation;
+it does not create a new budget-specific translation. Data-dependent timing and
+I/O require the additional boundaries their semantics demand. An interrupt poll
+at a loop backedge is sufficient only if its latency contract permits it.
+Exact observation can cost work; choose the least expensive correct placement
+rather than promising zero checks for arbitrary asynchronous behavior.
+
+The consumer defines offline lookahead and live buffering. Host speed never
+changes guest clock rates. Sleep/STOP returns or parks execution until a real
+wake condition; it does not busy-loop or invent an interrupt.
+
+## Implementation and acceptance order
+
+1. Join native instructions into retained control-flow regions and native loops.
+2. Keep registers resident; eliminate dead flags, PC stores and redundant loads.
+3. Specialize proven memory paths; link regions and minimize boundary work.
+4. Measure each bottleneck before adding SIMD or further compiler machinery.
+
+Use short optimized experiments and focused independent semantic checks while
+speed is low; broaden validation as performance improves. Keep strict compilation
+and check definitions intact. Benchmarks live outside the core and use named ISA
+encodings. Compare identical inputs, relevant guest semantics and independently
+verified results against optimized handwritten host ASM. Report cold compilation,
+warm native-entry throughput and full Core.run throughput separately. Include
+code size and boundary costs; do not disguise slow fixtures with an average.
+
+The gate is at least 80% of matched host-ASM throughput for every representative
+warm fixture in each core. This is an ambitious measured acceptance requirement,
+not a theorem that arbitrary guest code can match an unconstrained native
+algorithm. Start with ALU, flags, memory and branches; include substantial loops,
+Mandelbrot/FFT and architecture-appropriate instrument workloads before declaring
+the set representative. Both cores must pass before further emulator integration.
+Then establish the complete instrument and at least 4x sustained offline realtime
+under representative high load. No current performance or completion is implied.
+
+## CPU12 lowering
+
+Use scalar host registers for the small CPU12 register set; SIMD needs measured
+benefit. Preserve overlapping A/B/D views without repeated memory round trips.
+Arithmetic uses the actual 8/16-bit semantics, including H/N/Z/V/C dependencies.
+Native stack, calls, returns and conditional branches preserve wrap and ordering.
+Memory is byte addressed with big-endian words and a 16-bit address space.
+
+Interrupt masks, delayed admission, SWI, RTI, WAI and STOP are architectural state,
+not dispatcher conveniences. Resolve their precise boundaries before chaining.
+For the current diagnostic I/O-rejection contract, interrupt entry publishes
+registers only after vector/frame success; accepted external writes remain real
+on failure. Latch that failure so subsequent calls cannot replay the accesses.
+This software contract does not claim hardware SP visibility during a bus cycle.
+
+Primary references are listed in reference-manifest.json.
