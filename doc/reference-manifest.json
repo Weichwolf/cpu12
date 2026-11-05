@@ -5,30 +5,6 @@
     "bytes": 8246322,
     "sha256": "4ff8ce8ad0d5fb1eea307f813a79b0f11e0d1c196db38b005c1b7ed24d42b70e",
     "module": "S12CPUV2 Reference Manual Rev.4.0, March 2006",
-    "used_sections": [
-      "3.9 and Table3-2: indexed postbyte and offset semantics",
-      "3.10.1: normal PC reference immediately following the current instruction",
-      "LDAA/B, STAA/B, word load/ALU/store instruction encoding entries",
-      "3.8 and 4.4.3.2: short/long relative branches and prefix",
-      "JMP, LBRA/LBRN and conditional LBxx instruction entries",
-      "4.4.2 and BSR/JSR/RTS entries: subroutines and return stack",
-      "PSHA/B/C/D/X/Y and PULA/B/C/D/X/Y entries, including PULC X-mask restriction",
-      "ADCA/B and SBCA/B entries: carry/borrow, signed overflow and half-carry",
-      "Inherent NEG/COM/INC/DEC/LSR/ROL/ROR/ASR/ASL/CLR/TST and LSRD/ASLD flag rules",
-      "INX/DEX/INY/DEY and ANDCC/ORCC entries; following-instruction eligibility after ANDCC/TAP clears I",
-      "TFR/EXG, SEX, TAB/TBA entries and TableA-5: normal selector encodings, ignored bit3, mixed widths, fixed prefixes and overlapping registers",
-      "Indexed/extended NEG/COM/INC/DEC/LSR/ROL/ROR/ASR/ASL/CLR/TST encodings and flags; CLR write-only and TST read-only access semantics",
-      "DBEQ/DBNE, IBEQ/IBNE, TBEQ/TBNE and TableA-6: counter width, unchanged CCR, bit3 aliases and signed9 displacement from bit4; IBEQ/IBNE prose bit0 typo distinguished from literal tables",
-      "BSET/BCLR and BRSET/BRCLR: direct/extended/indexed encodings, masks, flags, signed8 branch tails, excluded indirect forms and general next-instruction PC reference",
-      "MOVB/MOVW encodings and unchanged CCR, single-postbyte addressing restrictions; section3.10.1 and Table3-3 distinguish HCS12 next-PC semantics from unsupported original M68HC12 queue offsets",
-      "MUL/EMUL/EMULS, IDIV/IDIVS, EDIV/EDIVS and FDIV: product/quotient widths, rounding carry, flags, zero/overflow and explicitly indeterminate fields",
-      "ABA/SBA/CBA, ABX/ABY assembler aliases and DAA: accumulator arithmetic/flags, nine qualified A/C/H input rows, preserved H and undefined V",
-      "Instruction object-code length entries and Table3-2 indexed extensions for logical byte fetching; physical prefetch/bus-cycle timing is not claimed",
-      "Sections2.2.5 and7.8 and RTI: reset S/X/I masks, IRQ/XIRQ nine-byte frames, B:A byte order, X restoration limit and conflicting mask/vector ordering",
-      "BRSET/BRCLR: selected operand bits and unchanged CCR; selected external transport preserves the complete real read effects",
-      "WAI3E and STOP183E: next-instruction returnPC, actual frame stores, S-disabled no-op, clock ownership and masked-XIRQ unvectored continuation; IRQ/RTI frame reuse distinctions",
-      "Section7.5.5 post-RTI pending entry: restore first, read actual next vector, back SP by9 and retain saved bytes; distinguish returned/waiting frame reuse from ordinary stacking"
-    ],
     "redistributed": false
   }
 ]
