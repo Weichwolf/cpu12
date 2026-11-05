@@ -83,4 +83,9 @@ integer-arithmetic oracle checks registers, flags, full RAM and the STOP frame.
 It reports each point's cold run, warm Core.run and direct native-entry throughput
 against handwritten host ASM, plus retained code size; warm runs must reuse code.
 
+`cpu12-fft-bench` measures a sixteen-point complex Q8.8 FFT against scalar host
+ASM. Independent fixed-point expectations check complete state and RAM; small
+inputs also pass a direct DFT comparison. Each warm case is reported separately
+from compilation, with checked translation reuse.
+
 [License](LICENSE)
