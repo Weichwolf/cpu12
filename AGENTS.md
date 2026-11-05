@@ -1,7 +1,7 @@
 # cpu12
 
 - Build an independent, general CPU12/HC12 native JIT library; keep Weichwolf/cpu12
-  private. Complete ISA, flags, addressing, reset, interrupts, waits and checkpoints
+  private. Complete ISA, flags, addressing, reset, interrupts, waits and readable state
   remain the objective. Initial subsets are incomplete. See OBJECTIVE.md.
 - Keep board clocks, peripherals and application firmware in consumers. No foreign
   CPU core, Ghidra or Blofeld dependency; use independently authored test programs.
@@ -11,6 +11,13 @@
   operation, address and PC; never fabricate retirement or conceal fallback gaps.
 - Publish reviewed increments only to configured origin/main; coordinate revision
   changes with the Blofeld consumer. Preserve dsp56300 source attribution.
+
+- Keep the same minimal public Core/Memory/Io/Options API shape in both cores.
+  Core owns its state; optional read-only state inspection is outside normal use.
+  Expose no pipeline tickets or opaque checkpoint machinery in the normal API.
+- Production execution is JIT-only. Future x86/SSE/AVX and ARM/NEON host emitters
+  implement the same host concept. Remove interpreter/reference/cached backend
+  selection; preserve independent ISA tests and all implemented instructions.
 
 ## Working rules
 

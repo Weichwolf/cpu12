@@ -3,7 +3,8 @@
 Build a complete, independent, high-performance CPU12/HC12 emulator core with a
 native JIT, analogous to the independent dsp56300 library. Execute documented
 instructions, flags, addressing, memory transfers, reset, stack/interrupt/wait
-behavior and complete checkpoints. Keep CPU semantics separate from board clocks,
+behavior and complete readable Core-owned state. Keep CPU semantics separate from
+board clocks,
 peripheral wiring and application firmware. Make memory/event budgets and code
 invalidation explicit, and preserve precise side effects and visible faults.
 
@@ -27,3 +28,8 @@ a Core(Memory, Io*, Options) setup and named captured-instruction execution.
 Support common storage ownership with architecture-native units and explicit
 aliases, without a virtual memory manager in direct-RAM execution. Emulation is
 single-owner; separate host MIDI/audio queues do not change virtual clocks.
+
+Keep the outward public API aligned with dsp56300 and as small as necessary.
+Core owns state, exposed read-only when requested; normal consumers do not manage
+it. Production execution is JIT-only. Future x86/SSE/AVX and ARM/NEON emitters
+implement the same host concept. Preserve the general ISA beyond Blofeld needs.
