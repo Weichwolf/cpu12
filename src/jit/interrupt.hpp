@@ -15,6 +15,6 @@ void defer_interrupt(Code &code, bool accumulator);
 void stack_context(Code &code, Ram ram, std::uint8_t next_pc = 0);
 void wait_instruction(Code &code, const Instruction &instruction, Ram ram);
 [[nodiscard]] std::vector<std::uint8_t>
-emit_interrupt(InterruptRequest request, Ram ram, InterruptFrame frame);
+emit_interrupt(InterruptRequest request, Ram ram, InterruptFrame frame, std::uint8_t next_pc = 0);
 [[nodiscard]] std::vector<std::uint8_t> emit_stop_wake();
 }

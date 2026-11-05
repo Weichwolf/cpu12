@@ -89,6 +89,9 @@ std::optional<Instruction> decode_register(const std::span<const std::uint8_t> b
   if (opcode == rti && bytes.size() == 1) {
     return Instruction{.kind = Kind::return_interrupt, .opcode = opcode, .length = 1};
   }
+  if (opcode == isa::swi[0] && bytes.size() == 1) {
+    return Instruction{.kind = Kind::software_interrupt, .opcode = opcode, .length = 1};
+  }
   constexpr unsigned wait = isa::wai[0];
   if (opcode == wait && bytes.size() == 1) {
     return Instruction{.kind = Kind::wait, .opcode = opcode, .length = 1};

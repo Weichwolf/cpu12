@@ -9,3 +9,4 @@ NATIVE	Native execution for every legal supported form	partial	Complete native l
 PERFORMANCE	Maximum throughput with bounded event latency	unqualified	Whole-instrument real-time performance remains open
 QUALITY	Strict compiler/static checks and sanitizer qualification	partial	Affected core tests active; complete qualification remains open
 JIT_STORAGE	Compact immutable code retained for Core lifetime	partial	Linux x64 packing, growth and mapping permissions qualified by executable-arena; full logical-block execution remains open
+SWI	Software interrupt entry, return PC, frame and RTI	partial	software-interrupt qualifies all CCR values, PC/SP wrap and each I/O refusal; complete ISA timing remains open

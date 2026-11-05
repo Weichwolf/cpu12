@@ -34,6 +34,7 @@ enum class Kind : std::uint8_t {
   move,
   multiply_divide,
   return_interrupt,
+  software_interrupt,
   wait,
   stop
 };

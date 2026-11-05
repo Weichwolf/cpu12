@@ -237,6 +237,7 @@ void arithmetic(Code &code, const Instruction &instruction, const Ram ram) {
     case Kind::pull:
     case Kind::return_subroutine:
     case Kind::return_interrupt:
+    case Kind::software_interrupt:
     case Kind::wait:
     case Kind::stop:
     case Kind::register_operation:
@@ -395,6 +396,7 @@ WordEncoding word_operation(const Instruction &instruction) {
     case Kind::pull:
     case Kind::return_subroutine:
     case Kind::return_interrupt:
+    case Kind::software_interrupt:
     case Kind::wait:
     case Kind::stop:
     case Kind::register_operation:
@@ -498,6 +500,11 @@ void branch(Code &code, const Instruction &instruction) {
 }
 
 std::vector<std::uint8_t> emit(const Instruction &instruction, const Ram ram) {
+  if (instruction.kind == Kind::software_interrupt) {
+    constexpr Address software_vector = 0xfff6;
+    return emit_interrupt(
+        {.vector = software_vector}, ram, InterruptFrame::push, instruction.length);
+  }
   Code code;
   code.raw(entry);
   if (instruction.kind == Kind::wait || instruction.kind == Kind::stop) {

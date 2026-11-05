@@ -99,8 +99,10 @@ void defer_interrupt(Code &code, const bool accumulator) {
   if (accumulator) { code.bind(still_set); }
 }
 
-std::vector<std::uint8_t>
-emit_interrupt(const InterruptRequest request, const Ram ram, const InterruptFrame frame) {
+std::vector<std::uint8_t> emit_interrupt(const InterruptRequest request,
+                                         const Ram ram,
+                                         const InterruptFrame frame,
+                                         const std::uint8_t next_pc) {
   Code code;
   constexpr std::array<std::uint8_t, 4> entry{0xf3, 0x0f, 0x1e, 0xfa};
   code.raw(entry);
@@ -113,7 +115,7 @@ emit_interrupt(const InterruptRequest request, const Ram ram, const InterruptFra
   data_access(code, ram, {.word = true});
   constexpr std::array<std::uint8_t, 4> save_target{0x66, 0x89, 0x0c, 0x24};
   if (external) { code.raw(save_target); }
-  if (frame == InterruptFrame::push) { stack_context(code, ram); }
+  if (frame == InterruptFrame::push) { stack_context(code, ram, next_pc); }
   if (external) {
     constexpr std::array<std::uint8_t, 4> target{0x0f, 0xb7, 0x0c, 0x24};
     code.raw(target);
