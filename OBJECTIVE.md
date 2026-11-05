@@ -20,8 +20,8 @@ appropriate sanitizer coverage, before publishing source changes. Core tests
 remain active before the integrating instrument reaches real time. Keep strict
 compilation, formatting and static analysis; never weaken checks.
 Keep manufacturer assets and application firmware out of source and tests.
-Commit/push verified increments to configured origin/main and keep this repository
-private. Passing an initial captured-instruction subset is not completion.
+Commit/push verified increments to configured origin/main in this public
+repository. Passing an initial captured-instruction subset is not completion.
 
 Keep public integration consistent with dsp56300: explicit typed Memory views,
 a Core(Memory, Io*) setup and named captured-instruction execution.

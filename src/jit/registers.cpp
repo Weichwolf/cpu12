@@ -124,6 +124,7 @@ void index(Code &code, const Instruction &instruction) {
   code.byte(offset);
   constexpr std::uint8_t minus_one = 0xff;
   code.byte(instruction.operation == RegisterOp::index_increment ? 1 : minus_one);
+  if (!code.flags_live()) { return; }
   code.raw(set_zero);
   code.raw(place_zero);
   code.raw(remove_zero);
@@ -165,6 +166,7 @@ void unary_operation(Code &code, const Instruction &instruction) {
 }
 
 void unary_flags(Code &code, const Instruction &instruction, const bool publish) {
+  if (!code.flags_live()) { return; }
   const auto operation = instruction.operation;
   if (shift(operation)) {
     shift_flags(code, instruction.word, publish);

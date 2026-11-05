@@ -18,6 +18,7 @@ class Code {
   std::vector<std::uint8_t> bytes_;
   bool framed_ = false;
   bool joined_ = false;
+  bool flags_live_ = true;
   std::vector<ExitFixup> exits_;
   static constexpr unsigned byte_bits = 8;
   static constexpr unsigned byte_mask = 0xff;
@@ -25,7 +26,10 @@ class Code {
   static constexpr std::array<std::uint8_t, 4> pc_add{0x66, 0x81, 0x47, pc_offset};
 
 public:
-  explicit Code(const bool joined = false) noexcept : joined_(joined) {}
+  explicit Code(const bool joined = false, const bool flags_live = true) noexcept
+      : joined_(joined), flags_live_(flags_live) {}
+
+  [[nodiscard]] bool flags_live() const noexcept { return flags_live_; }
 
   [[nodiscard]] std::size_t size() const noexcept { return bytes_.size(); }
 

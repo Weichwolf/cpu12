@@ -9,10 +9,12 @@
 #include "jit/resident.hpp"
 #include "runtime.hpp"
 
+#include <algorithm>
 #include <array>
 #include <bit>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <utility>
 #include <vector>
@@ -44,13 +46,85 @@ bool loops(const std::span<const BlockInstruction> instructions) {
   return target == instructions.front().pc;
 }
 
+// These operations cannot observe CCR, call an owner, or fail after prior
+// flags were elided. Unknown paths are observation barriers, including live
+// knownness, indexed addresses and reads routed through a read-only grant.
+bool ordinary_access(const Instruction &instruction, const Memory &memory) {
+  if (instruction.addressing == Addressing::immediate) { return true; }
+  if (instruction.addressing != Addressing::direct &&
+      instruction.addressing != Addressing::extended) {
+    return false;
+  }
+  const auto width = instruction.word ? 2U : 1U;
+  return std::ranges::any_of(memory.regions(), [&instruction, width](const auto &region) {
+    if (!region.writable || !region.known.empty() || instruction.address < region.first) {
+      return false;
+    }
+    const auto offset = static_cast<std::size_t>(instruction.address - region.first);
+    return offset <= region.bytes.size() && width <= region.bytes.size() - offset;
+  });
+}
+
+std::optional<unsigned> flag_writes(const Instruction &instruction, const Memory &memory) {
+  const auto kind = instruction.kind;
+  if (kind == Kind::nop) { return 0; }
+  if (kind == Kind::multiply_divide) {
+    if (instruction.math == MathOp::multiply_byte) { return flag_c; }
+    if (instruction.math == MathOp::multiply_signed ||
+        instruction.math == MathOp::multiply_unsigned) {
+      return flag_n | flag_z | flag_c;
+    }
+    return std::nullopt;
+  }
+  if (kind == Kind::register_operation) {
+    const auto operation = instruction.operation;
+    if (operation == RegisterOp::index_increment || operation == RegisterOp::index_decrement) {
+      return flag_z;
+    }
+    if (operation == RegisterOp::increment || operation == RegisterOp::decrement) {
+      return flags_nzv;
+    }
+    if (operation == RegisterOp::negate || operation == RegisterOp::complement ||
+        operation == RegisterOp::clear || operation == RegisterOp::test ||
+        operation == RegisterOp::arithmetic_left || operation == RegisterOp::arithmetic_right ||
+        operation == RegisterOp::logical_right) {
+      return flags_nzvc;
+    }
+    return std::nullopt;
+  }
+  const bool arithmetic = kind == Kind::load || kind == Kind::store || kind == Kind::add ||
+                          kind == Kind::subtract || kind == Kind::compare;
+  const bool logical = kind == Kind::bit_and || kind == Kind::bit_or || kind == Kind::bit_xor ||
+                       kind == Kind::bit_test;
+  if ((!arithmetic && !logical) || !ordinary_access(instruction, memory)) { return std::nullopt; }
+  return written_flags(instruction);
+}
+
+std::vector<bool> live_flags(const std::span<const BlockInstruction> instructions,
+                             const Memory &memory) {
+  std::vector<bool> result(instructions.size(), true);
+  constexpr unsigned all_flags = 0xff;
+  unsigned live = all_flags;
+  for (auto index = instructions.size(); index != 0; --index) {
+    const auto changed = flag_writes(instructions[index - 1].instruction, memory);
+    if (!changed) {
+      live = all_flags;
+      continue;
+    }
+    result[index - 1] = (live & *changed) != 0;
+    live &= ~*changed;
+  }
+  return result;
+}
+
 void append_instruction(Code &code,
                         const BlockInstruction &operation,
                         const Memory &memory,
                         const std::uint32_t completed,
+                        const bool flags_live,
                         std::vector<FailedExit> &faults) {
   code.raw(restore_arguments);
-  const auto emitted = emit_joined(operation.instruction, memory);
+  const auto emitted = emit_joined(operation.instruction, memory, flags_live);
   const auto begin = code.size();
   code.raw(emitted.bytes);
   for (const auto exit : emitted.exits) {
@@ -87,8 +161,9 @@ std::vector<std::uint8_t> emit_block(const std::span<const BlockInstruction> ins
   const auto insufficient = code.relative32();
   std::vector<FailedExit> faults;
   std::uint32_t completed = 0;
+  const auto flags = live_flags(instructions, memory);
   for (const auto &operation : instructions) {
-    append_instruction(code, operation, memory, completed, faults);
+    append_instruction(code, operation, memory, completed, flags[completed], faults);
     ++completed;
   }
   code.raw(add_count);

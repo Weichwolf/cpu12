@@ -154,6 +154,7 @@ void byte_multiply(Code &code) {
   code.raw(multiply);
   code.raw(store_d);
   code.byte(d);
+  if (!code.flags_live()) { return; }
   code.raw(bit_seven);
   code.raw(mask_carry);
   code.raw(retain_other);
@@ -182,6 +183,7 @@ void extended_multiply(Code &code, const MathOp operation) {
   constexpr std::array<std::uint8_t, 7> carry{0xc1, 0xe8, 0x0f, 0x24, 0x01, 0x08, 0xc1};
   constexpr std::array<std::uint8_t, 4> retain_other{0x80, 0x67, ccr, 0xf2};
   constexpr std::array<std::uint8_t, 3> merge{0x08, 0x4f, ccr};
+  if (!code.flags_live()) { return; }
   code.raw(nz);
   code.raw(place_nz);
   code.raw(carry);

@@ -127,6 +127,7 @@ void memory_write(Code &code, const Instruction &instruction, const Memory &ram)
 }
 
 void flags(Code &code, const FlagPolicy policy, const bool publish) {
+  if (!code.flags_live()) { return; }
   code.raw(snapshot_flags); // seto r8b; lahf
   code.raw(old_ccr);        // movzx edx, old CCR
   code.raw(copy_ah);        // movzx esi, ah
@@ -462,8 +463,11 @@ void branch(Code &code, const Instruction &instruction) {
 }
 
 namespace {
-Emission generate(const Instruction &instruction, const Memory &ram, const bool joined) {
-  Code code(joined);
+Emission generate(const Instruction &instruction,
+                  const Memory &ram,
+                  const bool joined,
+                  const bool flags_live = true) {
+  Code code(joined, flags_live);
   if (!joined) { code.raw(entry); }
   if (instruction.kind == Kind::wait || instruction.kind == Kind::stop) {
     wait_instruction(code, instruction, ram);
@@ -516,10 +520,10 @@ std::vector<std::uint8_t> emit(const Instruction &instruction, const Memory &ram
   return generate(instruction, ram, false).bytes;
 }
 
-Emission emit_joined(const Instruction &instruction, const Memory &ram) {
+Emission emit_joined(const Instruction &instruction, const Memory &ram, const bool flags_live) {
   if (instruction.kind == Kind::software_interrupt) {
     throw std::logic_error("Software interrupt requires its owned exception entry");
   }
-  return generate(instruction, ram, true);
+  return generate(instruction, ram, true, flags_live);
 }
 }
