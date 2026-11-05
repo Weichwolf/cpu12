@@ -11,6 +11,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <span>
+#include <stdexcept>
 #include <utility>
 #include <vector>
 
@@ -26,6 +27,9 @@ enum NativeByte : std::uint8_t {
   register_operand = 0xc0,
   r15_displacement = 0x87,
   rdi_displacement = 0x47,
+  sub8 = 0x28,
+  cmp8 = 0x38,
+  xor8 = 0x30,
   mov8_to = 0x88,
   mov8_from = 0x8a,
   mov_to = 0x89,
@@ -148,11 +152,48 @@ void test_value(Code &code, const Instruction &instruction, const ResidentPlan &
   code.byte(static_cast<std::uint8_t>(register_operand | (reg << 3U) | reg));
 }
 
+void memory_arithmetic(Code &code, const ResidentOperation &operation, const ResidentPlan &plan) {
+  const auto &instruction = operation.instruction;
+  const auto reg = instruction.word ? native_word(instruction) : byte_register(instruction, plan);
+  if (instruction.word) { code.byte(word_prefix); }
+  code.byte(rex_b);
+  code.byte(instruction.word ? mov_from : mov8_from);
+  code.byte(r15_displacement); // Read the actual current operand into AX/AL.
+  code.u32(std::bit_cast<std::uint32_t>(operation.displacement));
+  if (instruction.word) { swap_word(code, 0); }
+  std::uint8_t opcode = 0;
+  if (instruction.kind == Kind::subtract) {
+    opcode = sub8;
+  } else if (instruction.kind == Kind::compare) {
+    opcode = cmp8;
+  } else if (instruction.kind == Kind::bit_or) {
+    opcode = 0x08;
+  } else if (instruction.kind == Kind::bit_and) {
+    opcode = 0x20;
+  } else if (instruction.kind == Kind::bit_xor) {
+    opcode = xor8;
+  } else if (instruction.kind == Kind::bit_test) {
+    opcode = test8;
+  } else if (instruction.kind != Kind::add) {
+    throw std::logic_error("Unsupported resident memory arithmetic");
+  }
+  if (instruction.word) {
+    code.byte(word_prefix);
+    ++opcode;
+  }
+  code.byte(opcode);
+  code.byte(static_cast<std::uint8_t>(register_operand | reg));
+}
+
 void memory_operation(Code &code,
                       const ResidentOperation &operation,
                       const ResidentPlan &plan,
                       const bool needed_flags) {
   const auto &instruction = operation.instruction;
+  if (instruction.kind != Kind::load && instruction.kind != Kind::store) {
+    memory_arithmetic(code, operation, plan);
+    return;
+  }
   const bool store = instruction.kind == Kind::store;
   auto reg = instruction.word ? native_word(instruction) : byte_register(instruction, plan);
   const bool high = !instruction.word && reg >= native_high;

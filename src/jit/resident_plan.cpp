@@ -54,9 +54,8 @@ bool supported(const Instruction &instruction) {
   const bool logical = !instruction.word && (kind == Kind::bit_and || kind == Kind::bit_or ||
                                              kind == Kind::bit_xor || kind == Kind::bit_test);
   return (arithmetic || logical) && (instruction.addressing == Addressing::immediate ||
-                                     ((kind == Kind::load || kind == Kind::store) &&
-                                      (instruction.addressing == Addressing::direct ||
-                                       instruction.addressing == Addressing::extended)));
+                                     instruction.addressing == Addressing::direct ||
+                                     instruction.addressing == Addressing::extended);
 }
 
 bool displacement(ResidentOperation &operation, const Byte *base) {
@@ -177,7 +176,10 @@ void analyze(ResidentPlan &plan) {
     const auto changed = written_flags(instruction);
     const auto writes = written_words(instruction);
     position->flags = live & changed;
-    position->deferred = position->flags != 0 && (value_lanes(instruction) & overwritten) == 0;
+    const bool stable_flags = position->pointer == nullptr || instruction.kind == Kind::load ||
+                              instruction.kind == Kind::store;
+    position->deferred =
+        stable_flags && position->flags != 0 && (value_lanes(instruction) & overwritten) == 0;
     position->branch_zero = last_zero && (changed & flag_z) != 0;
     if ((changed & flag_z) != 0) { last_zero = false; }
     if (writes != 0) { overwritten |= value_lanes(instruction); }
@@ -236,8 +238,8 @@ std::optional<ResidentPlan> resident_plan(const std::span<const BlockInstruction
     const auto &instruction = operation.instruction;
     if (!supported(instruction)) { return std::nullopt; }
     const Byte *data = nullptr;
-    const bool access = (instruction.kind == Kind::load || instruction.kind == Kind::store) &&
-                        instruction.addressing != Addressing::immediate;
+    const bool access = instruction.addressing == Addressing::direct ||
+                        instruction.addressing == Addressing::extended;
     if (access) {
       data = pointer(memory, instruction);
       if (data == nullptr) { return std::nullopt; }
