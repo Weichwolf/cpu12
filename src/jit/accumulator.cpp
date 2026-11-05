@@ -4,6 +4,7 @@
 #include "cpu12/core.hpp"
 #include "instruction.hpp"
 #include "jit/code.hpp"
+#include "jit/emission.hpp"
 #include "jit/flags.hpp"
 #include "runtime.hpp"
 
@@ -65,7 +66,7 @@ void invalid_decimal(Code &code) {
   code.raw(no_address);
   code.raw(no_width);
   code.raw(unqualified);
-  code.return_();
+  code.return_(NativeExit::fault);
 }
 
 void decimal_adjust(Code &code, const Instruction &instruction) {

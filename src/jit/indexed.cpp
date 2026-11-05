@@ -5,6 +5,7 @@
 #include "cpu12/memory.hpp"
 #include "instruction.hpp"
 #include "jit/code.hpp"
+#include "jit/emission.hpp"
 #include "memory.hpp"
 #include "runtime.hpp"
 
@@ -78,7 +79,6 @@ enum Encoding : std::uint8_t {
   compare_low = 0xf8,
   compare_high = 0xfa,
   jump_relative = 0xe9,
-  ret = 0xc3,
   full_index = 0x0b,
   partial_index = 0x13
 };
@@ -163,7 +163,7 @@ void bus_call(Code &code, const Access access) {
   constexpr std::uint8_t accepted = 0x75;
   code.byte(accepted);
   code.byte(code.return_size());
-  code.return_();
+  code.return_(NativeExit::fault);
   if (!access.write) { code.raw(read_value); }
 }
 
@@ -330,7 +330,7 @@ void jump(Code &code, const Instruction &instruction, const Memory &ram) {
     code.raw(store_address);
     code.byte(pc_offset);
   }
-  code.byte(ret);
+  code.return_();
 }
 
 void indexed_effective_address(Code &code, const Instruction &instruction) {
@@ -339,6 +339,6 @@ void indexed_effective_address(Code &code, const Instruction &instruction) {
   code.raw(store_address);
   code.byte(word_offsets[static_cast<unsigned>(instruction.target)]);
   code.advance(instruction.length);
-  code.byte(ret);
+  code.return_();
 }
 }

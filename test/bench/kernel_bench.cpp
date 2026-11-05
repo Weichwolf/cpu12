@@ -135,7 +135,13 @@ void measure(const Fixture &fixture) {
   std::array<Byte, address_bytes> ram{};
   std::ranges::copy(fixture.program, ram.begin() + entry);
   auto host_ram = ram;
-  Core core(Memory::unified(ram));
+  const auto code_end = static_cast<Address>(entry + fixture.program.size());
+  const std::array regions{Ram{.first = 0, .bytes = std::span(ram).first(entry)},
+                           Ram{.first = entry,
+                               .bytes = std::span(ram).subspan(entry, fixture.program.size()),
+                               .writable = false},
+                           Ram{.first = code_end, .bytes = std::span(ram).subspan(code_end)}};
+  Core core(Memory::mapped(regions));
   const auto cold_start = Clock::now();
   execute(core, ram, fixture);
   const auto cold = Clock::now() - cold_start;

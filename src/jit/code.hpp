@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #pragma once
 #include "cpu12/core.hpp"
+#include "jit/emission.hpp"
 
 #include <array>
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -15,12 +17,22 @@ namespace cpu12::detail {
 class Code {
   std::vector<std::uint8_t> bytes_;
   bool framed_ = false;
+  bool joined_ = false;
+  std::vector<ExitFixup> exits_;
   static constexpr unsigned byte_bits = 8;
   static constexpr unsigned byte_mask = 0xff;
   static constexpr auto pc_offset = static_cast<std::uint8_t>(offsetof(Registers, pc));
   static constexpr std::array<std::uint8_t, 4> pc_add{0x66, 0x81, 0x47, pc_offset};
 
 public:
+  explicit Code(const bool joined = false) noexcept : joined_(joined) {}
+
+  [[nodiscard]] std::size_t size() const noexcept { return bytes_.size(); }
+
+  [[nodiscard]] Emission emission() && {
+    return {.bytes = std::move(bytes_), .exits = std::move(exits_)};
+  }
+
   [[nodiscard]] std::vector<std::uint8_t> take() && { return std::move(bytes_); }
 
   void raw(const std::span<const std::uint8_t> values) {
@@ -60,15 +72,23 @@ public:
     framed_ = true;
   }
 
-  [[nodiscard]] std::uint8_t return_size() const { return framed_ ? 5 : 1; }
+  [[nodiscard]] std::uint8_t return_size() const {
+    return static_cast<std::uint8_t>((framed_ ? 4 : 0) + (joined_ ? 5 : 1));
+  }
 
-  void return_() {
+  void return_(const NativeExit kind = NativeExit::complete) {
     if (framed_) {
       constexpr std::array<std::uint8_t, 4> release{0x48, 0x83, 0xc4, 0x10};
       raw(release);
     }
-    constexpr std::uint8_t ret = 0xc3;
-    byte(ret);
+    if (joined_) {
+      constexpr std::uint8_t jump = 0xe9;
+      byte(jump);
+      exits_.push_back({.displacement = relative32(), .kind = kind});
+    } else {
+      constexpr std::uint8_t ret = 0xc3;
+      byte(ret);
+    }
   }
 
   // Compile-time fixups only; no branch table or dispatcher in generated code.
@@ -78,16 +98,21 @@ public:
     return position;
   }
 
-  void bind(const std::size_t position) {
+  void bind(const std::size_t position) { bind(position, bytes_.size()); }
+
+  void bind(const std::size_t position, const std::size_t target) {
     constexpr std::size_t displacement_bytes = sizeof(std::uint32_t);
-    if (position > bytes_.size() || bytes_.size() - position < displacement_bytes) {
+    if (position > bytes_.size() || bytes_.size() - position < displacement_bytes ||
+        target > bytes_.size()) {
       throw std::logic_error("Invalid native branch fixup");
     }
-    const auto distance = bytes_.size() - position - displacement_bytes;
-    if (distance > static_cast<std::size_t>(std::numeric_limits<std::int32_t>::max())) {
+    const auto origin = position + displacement_bytes;
+    const auto distance = static_cast<std::int64_t>(target) - static_cast<std::int64_t>(origin);
+    if (distance < std::numeric_limits<std::int32_t>::min() ||
+        distance > std::numeric_limits<std::int32_t>::max()) {
       throw std::length_error("Native branch displacement exceeds rel32");
     }
-    const auto value = static_cast<std::uint32_t>(distance);
+    const auto value = std::bit_cast<std::uint32_t>(static_cast<std::int32_t>(distance));
     for (unsigned index = 0; index < displacement_bytes; ++index) {
       bytes_[position + index] = static_cast<std::uint8_t>(value >> (index * byte_bits));
     }

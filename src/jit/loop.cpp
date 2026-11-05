@@ -39,7 +39,7 @@ void loop_instruction(Code &code, const Instruction &instruction) {
   constexpr std::uint8_t jz = 0x74;
   constexpr std::uint8_t jnz = 0x75;
   code.byte(instruction.condition != 0 ? jz : jnz);
-  code.byte(7); // Six-byte PC update plus RET.
+  code.byte(static_cast<std::uint8_t>(6U + code.return_size()));
   code.advance(instruction.length +
                static_cast<int>(std::bit_cast<std::int16_t>(instruction.operand)));
   code.return_();

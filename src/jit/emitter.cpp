@@ -5,6 +5,7 @@
 #include "cpu12/memory.hpp"
 #include "instruction.hpp"
 #include "jit/code.hpp"
+#include "jit/emission.hpp"
 #include "jit/flags.hpp"
 #include "jit/indexed.hpp"
 #include "jit/interrupt.hpp"
@@ -52,7 +53,6 @@ constexpr std::array<std::uint8_t, 10> signed_condition{
     0x83, 0xe0, 0x0e, 0x89, 0xc1, 0xc1, 0xe9, 0x02, 0x31, 0xc8};
 
 enum Encoding : std::uint8_t {
-  ret = 0xc3,
   load_si = 0xbe,
   register_operands = 0xc8,
   move_al_cl = 0x88,
@@ -244,7 +244,7 @@ void arithmetic(Code &code, const Instruction &instruction, const Memory &ram) {
   }
   flags(code, policy);
   code.advance(instruction.length);
-  code.byte(ret);
+  code.return_();
 }
 
 void store(Code &code, const Instruction &instruction, const Memory &ram) {
@@ -260,7 +260,7 @@ void store(Code &code, const Instruction &instruction, const Memory &ram) {
   code.raw(test_accumulator);
   flags(code, {});
   code.advance(instruction.length);
-  code.byte(ret);
+  code.return_();
 }
 
 constexpr std::array<std::uint8_t, 4> native_word_read{0x41, 0x0f, 0xb7, 0x0b};
@@ -433,7 +433,7 @@ void word_instruction(Code &code, const Instruction &instruction, const Memory &
     flags(code, {.carry = arithmetic, .overflow = arithmetic});
   }
   code.advance(instruction.length);
-  code.byte(ret);
+  code.return_();
 }
 
 void branch(Code &code, const Instruction &instruction) {
@@ -442,7 +442,7 @@ void branch(Code &code, const Instruction &instruction) {
       instruction.length + static_cast<int>(std::bit_cast<std::int16_t>(instruction.operand));
   if (condition < 2) {
     code.advance(condition == 0 ? delta : instruction.length);
-    code.byte(ret);
+    code.return_();
     return;
   }
   code.raw(load_ccr);
@@ -453,22 +453,18 @@ void branch(Code &code, const Instruction &instruction) {
   code.byte(test_al);
   code.byte(masks[condition]);
   code.byte(take_nonzero ? jz : jnz);
-  code.byte(7); // Skip exactly the six-byte taken PC update and RET.
+  code.byte(static_cast<std::uint8_t>(6U + code.return_size()));
   code.advance(delta);
-  code.byte(ret);
+  code.return_();
   code.advance(instruction.length);
-  code.byte(ret);
+  code.return_();
 }
 }
 
-std::vector<std::uint8_t> emit(const Instruction &instruction, const Memory &ram) {
-  if (instruction.kind == Kind::software_interrupt) {
-    constexpr Address software_vector = 0xfff6;
-    return emit_interrupt(
-        {.vector = software_vector}, ram, InterruptFrame::push, instruction.length);
-  }
-  Code code;
-  code.raw(entry);
+namespace {
+Emission generate(const Instruction &instruction, const Memory &ram, const bool joined) {
+  Code code(joined);
+  if (!joined) { code.raw(entry); }
   if (instruction.kind == Kind::wait || instruction.kind == Kind::stop) {
     wait_instruction(code, instruction, ram);
   } else if (instruction.kind == Kind::return_interrupt) {
@@ -501,12 +497,29 @@ std::vector<std::uint8_t> emit(const Instruction &instruction, const Memory &ram
     branch(code, instruction);
   } else if (instruction.kind == Kind::nop) {
     code.advance(1);
-    code.byte(ret);
+    code.return_();
   } else if (instruction.kind == Kind::store) {
     store(code, instruction, ram);
   } else {
     arithmetic(code, instruction, ram);
   }
-  return std::move(code).take();
+  return std::move(code).emission();
+}
+}
+
+std::vector<std::uint8_t> emit(const Instruction &instruction, const Memory &ram) {
+  if (instruction.kind == Kind::software_interrupt) {
+    constexpr Address software_vector = 0xfff6;
+    return emit_interrupt(
+        {.vector = software_vector}, ram, InterruptFrame::push, instruction.length);
+  }
+  return generate(instruction, ram, false).bytes;
+}
+
+Emission emit_joined(const Instruction &instruction, const Memory &ram) {
+  if (instruction.kind == Kind::software_interrupt) {
+    throw std::logic_error("Software interrupt requires its owned exception entry");
+  }
+  return generate(instruction, ram, true);
 }
 }

@@ -7,6 +7,7 @@
 #include "cpu12/memory.hpp"
 #include "instruction.hpp"
 #include "jit/arena.hpp"
+#include "jit/block.hpp"
 #include "jit/emitter.hpp"
 #include "jit/interrupt.hpp"
 #include "runtime.hpp"
@@ -14,6 +15,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <span>
 #include <unordered_map>
 #include <utility>
@@ -69,6 +71,7 @@ struct Mapping {
   std::vector<Ram> grants;
   Memory memory;
   std::unordered_map<std::uint64_t, const void *> blocks;
+  std::unordered_map<Address, NativeBlock> native_regions;
 
   [[nodiscard]] bool matches(const Memory &requested) const noexcept {
     const auto regions = requested.regions();
@@ -148,6 +151,30 @@ bool Jit::execute(const std::span<const std::uint8_t> bytes,
     }
   }
   return true;
+}
+
+std::optional<RunResult>
+Jit::run_block(const std::uint32_t budget, Registers &registers, NativeContext &context) {
+  if (context.cpu.irq_delay != 0 || context.cpu.returned_frame) { return std::nullopt; }
+  auto &mapping = *impl_->current;
+  auto found = mapping.native_regions.find(registers.pc);
+  if (found == mapping.native_regions.end()) {
+    NativeBlock block{.instructions = parse_block(mapping.memory, registers.pc)};
+    if (block.instructions.empty()) { return std::nullopt; }
+    block.entry = impl_->arena.append(emit_block(block.instructions, mapping.memory));
+    found = mapping.native_regions.emplace(registers.pc, std::move(block)).first;
+    ++impl_->statistics.compiled_entries;
+  }
+  const auto &block = found->second;
+  const auto retired = enter_block(block.entry, registers, context, budget);
+  impl_->statistics.native_instructions += retired;
+  const auto index = context.fault != Fault::none ? retired % block.instructions.size()
+                                                  : block.instructions.size() - 1;
+  const auto &last = block.instructions[index];
+  return RunResult{.retired = retired,
+                   .state = context.cpu.execution,
+                   .pc = last.pc,
+                   .opcode = last.instruction.opcode};
 }
 
 void Jit::interrupt(const InterruptRequest request, Registers &registers, NativeContext &context) {

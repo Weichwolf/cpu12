@@ -30,12 +30,17 @@ target_link_libraries(your_app PRIVATE cpu12::core)
 
 #include <algorithm>
 #include <array>
+#include <span>
 
 int main() {
   std::array<cpu12::Byte, cpu12::address_bytes> ram{};
   constexpr auto program = cpu12::isa::program(cpu12::isa::nop, cpu12::isa::stop);
   std::ranges::copy(program, ram.begin());
-  cpu12::Core core(cpu12::Memory::unified(ram));
+  const std::array regions{
+      cpu12::Ram{.bytes = std::span(ram).first(program.size()), .writable = false},
+      cpu12::Ram{.first = static_cast<cpu12::Address>(program.size()),
+                 .bytes = std::span(ram).subspan(program.size())}};
+  cpu12::Core core(cpu12::Memory::mapped(regions));
   const auto result = core.run();
   return result.fault == cpu12::Fault::none ? 0 : 1;
 }
@@ -48,7 +53,11 @@ state on that execution thread. Unsupported instructions or modes report explici
 
 `Memory::mapped` accepts disjoint `Ram` grants with optional live byte knownness
 and write permission. Core copies the descriptors; their backing storage must
-remain alive for its lifetime. `set_memory` selects bindings between runs while
+remain alive for its lifetime. Initialized read-only program grants enable
+retained native blocks and backedges without repeated instruction fetches.
+Writable or dynamically known program bytes retain exact captured-instruction
+execution. Read-only program contents stay immutable for their binding identity.
+`set_memory` selects bindings between runs while
 preserving CPU state and retaining previous native translations. Changed executable
 contents require a new grant `identity` at that transition. Boundary words
 may require an owner word callback. Cycle/event accounting remains incomplete.

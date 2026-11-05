@@ -12,6 +12,8 @@ inline constexpr std::size_t address_bytes = 65536;
 
 // Ordinary borrowed storage. Empty known means initialized; otherwise zero is unknown.
 // Read-only writes and unknown reads use the real I/O owner.
+// Initialized read-only program bytes stay immutable for their binding identity;
+// explicit changes require a new identity through Core::set_memory.
 struct Ram {
   Address first = 0;
   std::span<Byte> bytes;
