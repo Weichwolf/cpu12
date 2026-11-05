@@ -86,6 +86,26 @@ No counters, tracing, instruction hashes or heap allocation belong in the defaul
 hot path. Architectural time progress is required state, not telemetry. Optional
 telemetry selects a separate instrumented path at a safe runtime boundary.
 
+Before implementing a lowering, trace a small complete loop as a register table:
+list values live at entry, at every instruction and across the backedge. Separate
+architectural register names from value lifetimes; a dead value releases its host
+register even if the guest register remains named. At joins, reconcile locations
+on incoming edges rather than spilling the entire state. Trace cold exits too.
+
+For a signed fixed-point multiplication loop, keep operands, full product,
+accumulator and address induction values in host registers. Account explicitly
+for overlapping A/B/D views, product halves, big-endian stores and flags that
+survive the next arithmetic instruction. A scratch endian conversion must not
+rotate a still-live guest value. Reuse a RAM value only while intervening aliases
+cannot change it, and retain observable stores. Compare this hand-planned native
+sequence with emitted assembly before tuning instruction encodings.
+
+For DSP parallel arithmetic and moves, distinguish old inputs from committed
+outputs: a multiply must consume the pre-move operands. Snapshot only values that
+would otherwise be overwritten. Packed SIMD storage is useful only when its
+extract/insert/shuffle cost beats keeping active scalar values in general
+registers; register capacity alone does not establish a faster allocation.
+
 ## Memory and code identity
 
 Validate borrowed mappings on binding: backing, bounds, permissions, aliases and

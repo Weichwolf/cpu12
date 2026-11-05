@@ -77,4 +77,10 @@ The performance gate applies to full Core.run across representative workloads.
 writes and counted branches against scalar host ASM, with independent state and
 memory checks. It reports cold execution separately and checks translation reuse.
 
+`cpu12-mandelbrot-bench` checks signed Q8.8 multiplication, big-endian product
+stores and a loop with both escape and iteration-limit exits. An independent
+integer-arithmetic oracle checks registers, flags, full RAM and the STOP frame.
+It reports each point's cold run, warm Core.run and direct native-entry throughput
+against handwritten host ASM, plus retained code size; warm runs must reuse code.
+
 [License](LICENSE)
