@@ -100,6 +100,15 @@ inline Result control(Byte & /*memory*/) {
   return control_result(state);
 }
 
+inline Result counted(Byte & /*memory*/) {
+  KernelRegisters state;
+  arithmetic_kernel(state);
+  auto result = control_result(state);
+  constexpr Byte zero = 4;
+  result.ccr = static_cast<Byte>((result.ccr & ~zero) | (state.value == 0 ? zero : 0));
+  return result;
+}
+
 inline Result memory(Byte &payload) {
   KernelRegisters state;
   memory_kernel(state, payload);

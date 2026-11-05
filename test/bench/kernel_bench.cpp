@@ -64,6 +64,13 @@ constexpr auto branches = isa::program(isa::opcode<isa::Opcode::dex>(),
                                        branch_backedge,
                                        isa::stop);
 
+constexpr std::array<Byte, 2> counted_backedge{0x35, 0xfa};
+constexpr auto counted = isa::program(isa::opcode<isa::Opcode::addd_immediate>(),
+                                      add_operand,
+                                      isa::opcode<isa::Opcode::dbne_relative>(),
+                                      counted_backedge,
+                                      isa::stop);
+
 struct Fixture {
   std::string_view name;
   std::span<const Byte> program;
@@ -103,7 +110,14 @@ constexpr std::array fixtures{Fixture{.name = "alu-flags",
                                       .extra_entry = entry + 6,
                                       .expected_memory = 0,
                                       .expected_ccr = 4,
-                                      .host = test::host::control}};
+                                      .host = test::host::control},
+                              Fixture{.name = "add-dbne",
+                                      .program = counted,
+                                      .instructions = (iterations * 2) + 1,
+                                      .expected_d = iterations * 3,
+                                      .expected_memory = 0,
+                                      .expected_ccr = 0,
+                                      .host = test::host::counted}};
 
 void verify(const State &state,
             const RunResult result,

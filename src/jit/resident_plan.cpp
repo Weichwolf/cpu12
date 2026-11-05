@@ -38,6 +38,12 @@ bool supported(const Instruction &instruction) {
     return instruction.condition < 2 || instruction.condition == not_equal ||
            instruction.condition == equal;
   }
+  if (instruction.kind == Kind::loop) {
+    return instruction.word && instruction.condition == 1 &&
+           (instruction.target == WordTarget::x || instruction.target == WordTarget::y) &&
+           (instruction.operation == RegisterOp::increment ||
+            instruction.operation == RegisterOp::decrement);
+  }
   if (instruction.kind == Kind::register_operation) {
     return instruction.operation == RegisterOp::index_increment ||
            instruction.operation == RegisterOp::index_decrement;
@@ -70,13 +76,19 @@ bool displacement(ResidentOperation &operation, const Byte *base) {
 
 bool induction(ResidentPlan &plan, const Address target) {
   constexpr unsigned not_equal = 6;
-  if (target != plan.operations.front().pc) { return true; }
-  if (plan.operations.back().instruction.condition != not_equal) { return false; }
-  const ResidentOperation *counter = nullptr;
-  for (const auto &operation : plan.operations) {
-    if ((written_flags(operation.instruction) & flag_z) != 0) { counter = &operation; }
+  if (target != plan.operations.front().pc) {
+    return plan.operations.back().instruction.kind != Kind::loop;
   }
-  if (counter == nullptr || counter->instruction.kind != Kind::register_operation) { return false; }
+  const auto &last = plan.operations.back();
+  const bool counted = last.instruction.kind == Kind::loop;
+  if (last.instruction.condition != (counted ? 1U : not_equal)) { return false; }
+  const ResidentOperation *counter = counted ? &last : nullptr;
+  for (const auto &operation : plan.operations) {
+    if (!counted && (written_flags(operation.instruction) & flag_z) != 0) { counter = &operation; }
+  }
+  if (counter == nullptr || (!counted && counter->instruction.kind != Kind::register_operation)) {
+    return false;
+  }
   const auto word = native_word(counter->instruction);
   for (const auto &operation : plan.operations) {
     if (&operation != counter && (written_words(operation.instruction) & (1U << word)) != 0) {
@@ -84,7 +96,8 @@ bool induction(ResidentPlan &plan, const Address target) {
     }
   }
   plan.loop = true;
-  plan.increment = counter->instruction.operation == RegisterOp::index_increment;
+  plan.increment = counter->instruction.operation == RegisterOp::index_increment ||
+                   counter->instruction.operation == RegisterOp::increment;
   plan.counter_offset = counter->instruction.target == WordTarget::x ? offsetof(Registers, x)
                                                                      : offsetof(Registers, y);
   return true;
@@ -209,7 +222,7 @@ unsigned written_words(const Instruction &instruction) {
   if (instruction.kind == Kind::load || instruction.kind == Kind::add ||
       instruction.kind == Kind::subtract || instruction.kind == Kind::bit_and ||
       instruction.kind == Kind::bit_or || instruction.kind == Kind::bit_xor ||
-      instruction.kind == Kind::register_operation) {
+      instruction.kind == Kind::register_operation || instruction.kind == Kind::loop) {
     return 1U << native_word(instruction);
   }
   return 0;
@@ -239,7 +252,7 @@ std::optional<ResidentPlan> resident_plan(const std::span<const BlockInstruction
     if (!displacement(operation, plan.base)) { return std::nullopt; }
   }
   const auto &last = plan.operations.back();
-  if (last.instruction.kind == Kind::branch) {
+  if (last.instruction.kind == Kind::branch || last.instruction.kind == Kind::loop) {
     const auto target = static_cast<Address>(static_cast<int>(last.pc) + last.instruction.length +
                                              std::bit_cast<std::int16_t>(last.instruction.operand));
     if (!induction(plan, target)) { return std::nullopt; }

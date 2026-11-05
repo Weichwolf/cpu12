@@ -203,6 +203,71 @@ void mutable_backedge() {
           "A changed writable backedge must execute its current target without stale fusion");
 }
 
+void check_counted(Device &device, const Form &form, const Registers initial) {
+  const auto ram = device.ram;
+  const auto iterations = trips(form, initial);
+  const auto previous = (unsigned{initial.d} + (iterations - 1) * 3) & word_mask;
+  const auto sum = previous + 3;
+  auto answer = initial;
+  answer.d = static_cast<Address>(sum);
+  (form.y ? answer.y : answer.x) = 0;
+  answer.pc = entry + 6;
+  answer.ccr = static_cast<Byte>(
+      (initial.ccr & retained_flags) | ((sum & word_mask) == 0 ? 4U : 0U) |
+      ((sum & word_mask) >= sign ? 8U : 0U) | (previous < sign && sum >= sign ? 2U : 0U) |
+      (sum >= word_values ? 1U : 0U));
+  for (const unsigned prefix : {0U, 1U}) {
+    device.core.set_registers(initial);
+    if (prefix != 0) {
+      const auto first = device.core.run(prefix);
+      require(first.retired == prefix && first.fault == Fault::none,
+              "A partial counted loop must retire its actual first instruction");
+    }
+    const auto budget = (iterations * 2) - prefix;
+    const auto result = device.core.run(budget);
+    require(result.retired == budget && result.fault == Fault::none &&
+                result.state == ExecutionState::running && result.pc == entry + 3 &&
+                result.opcode == isa::opcode<isa::Opcode::dbne_relative>()[0] &&
+                device.core.registers() == answer && device.ram == ram,
+            "DBNE/IBNE must preserve ADD flags, counter wrap and resumed branch semantics");
+  }
+}
+
+void counted_cases() {
+  constexpr std::array<Byte, 2> decrement_x{0x35, 0xfa};
+  constexpr std::array<Byte, 2> increment_y{0xb6, 0xfa};
+  constexpr auto down = isa::program(isa::opcode<isa::Opcode::addd_immediate>(),
+                                     addend,
+                                     isa::opcode<isa::Opcode::dbne_relative>(),
+                                     decrement_x,
+                                     isa::stop);
+  constexpr auto up = isa::program(isa::opcode<isa::Opcode::addd_immediate>(),
+                                   addend,
+                                   isa::opcode<isa::Opcode::ibne_relative>(),
+                                   increment_y,
+                                   isa::stop);
+  const std::array<std::span<const Byte>, 2> programs{down, up};
+  constexpr std::array<Address, 5> counts{1, 2, 128, 0, 0xffff};
+  constexpr std::array<Address, 4> values{0, 0x7ffd, 0x8000, 0xffff};
+  for (unsigned direction = 0; direction < programs.size(); ++direction) {
+    const Form form{.program = programs[direction],
+                    .branch_bytes = 0,
+                    .counter_opcode = 0,
+                    .exit_opcode = 0,
+                    .backedge_opcode = 0,
+                    .y = direction != 0,
+                    .increment = direction != 0};
+    Device device(form);
+    for (const auto count : counts) {
+      for (const auto value : values) {
+        auto initial = seed(form, count);
+        initial.d = value;
+        check_counted(device, form, initial);
+      }
+    }
+  }
+}
+
 void bounded_cases(const Form &form) {
   Device device(form);
   auto initial = seed(form, form.increment ? word_values - 32 : 32);
@@ -245,6 +310,7 @@ int main() {
   try {
     for (const auto &form : forms) { bounded_cases(form); }
     mutable_backedge();
+    counted_cases();
     std::cout << "Connected counted loops preserve branch weights, flags, wrap and exact budgets\n";
     return 0;
   } catch (const std::exception &error) {

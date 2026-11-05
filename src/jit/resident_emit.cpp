@@ -219,10 +219,12 @@ void body(Code &code, const ResidentPlan &plan, EmissionState &state) {
         !needed_flags) {
       continue;
     }
-    if (instruction.kind == Kind::register_operation) {
+    if (instruction.kind == Kind::register_operation || instruction.kind == Kind::loop) {
       constexpr std::array<std::uint8_t, 2> increment{0x66, 0xff};
       code.raw(increment);
-      const unsigned group = instruction.operation == RegisterOp::index_increment ? 0U : 1U;
+      const bool incrementing = instruction.operation == RegisterOp::index_increment ||
+                                instruction.operation == RegisterOp::increment;
+      const unsigned group = incrementing ? 0U : 1U;
       code.byte(
           static_cast<std::uint8_t>(register_operand | (group << 3U) | native_word(instruction)));
     } else if (operation.pointer != nullptr) {
@@ -333,7 +335,7 @@ void pc(Code &code, const Address value) {
 void finish_branch(Code &code, const ResidentPlan &plan, const std::size_t loop) {
   const auto &last = plan.operations.back();
   const auto next = static_cast<Address>(last.pc + last.instruction.length);
-  if (last.instruction.kind != Kind::branch) {
+  if (last.instruction.kind != Kind::branch && last.instruction.kind != Kind::loop) {
     pc(code, next);
     return;
   }
