@@ -170,12 +170,14 @@ void indexed_operation(Code &code,
 void memory_arithmetic(Code &code, const ResidentOperation &operation, const ResidentPlan &plan) {
   const auto &instruction = operation.instruction;
   const auto reg = instruction.word ? native_word(instruction) : byte_register(instruction, plan);
-  if (instruction.word) { code.byte(word_prefix); }
-  code.byte(rex_b);
-  code.byte(instruction.word ? mov_from : mov8_from);
-  code.byte(r15_displacement); // Read the actual current operand into AX/AL.
-  code.u32(std::bit_cast<std::uint32_t>(operation.displacement));
-  if (instruction.word) { swap_word(code, 0); }
+  if (!operation.cached_operand) {
+    if (instruction.word) { code.byte(word_prefix); }
+    code.byte(rex_b);
+    code.byte(instruction.word ? mov_from : mov8_from);
+    code.byte(r15_displacement); // Read the actual current operand into AX/AL.
+    code.u32(std::bit_cast<std::uint32_t>(operation.displacement));
+    if (instruction.word) { swap_word(code, 0); }
+  }
   std::uint8_t opcode = 0;
   if (instruction.kind == Kind::subtract) {
     opcode = sub8;
@@ -196,8 +198,10 @@ void memory_arithmetic(Code &code, const ResidentOperation &operation, const Res
     code.byte(word_prefix);
     ++opcode;
   }
+  if (operation.cached_operand) { code.byte(rex_r); }
   code.byte(opcode);
-  code.byte(static_cast<std::uint8_t>(register_operand | reg));
+  const auto source = operation.cached_operand ? 4U : 0U; // R12 or AX.
+  code.byte(static_cast<std::uint8_t>(register_operand | (source << 3U) | reg));
 }
 
 void memory_operation(Code &code,
@@ -230,6 +234,20 @@ void memory_operation(Code &code,
   }
   if (instruction.word) { swap_word(code, reg); }
   if (needed_flags) { test_value(code, instruction, plan); }
+  if (operation.cache_store) {
+    constexpr std::array<std::uint8_t, 3> cache{word_prefix, rex_b, mov_to};
+    code.raw(cache);
+    code.byte(static_cast<std::uint8_t>(register_operand | (reg << 3U) | 4U));
+  }
+}
+
+void initial_operand(Code &code, const ResidentOperation &operation) {
+  constexpr std::array<std::uint8_t, 4> load{word_prefix, rex_b, mov_from, r15_displacement};
+  code.raw(load);
+  code.u32(std::bit_cast<std::uint32_t>(operation.displacement));
+  swap_word(code, 0);
+  constexpr std::array<std::uint8_t, 4> cache{word_prefix, rex_b, mov_to, 0xc4}; // R12W,AX.
+  code.raw(cache);
 }
 
 void immediate_operation(Code &code,
@@ -513,6 +531,7 @@ std::vector<std::uint8_t> emit_resident(const ResidentPlan &plan,
   }
   for (const auto &operation : plan.operations) {
     if (operation.initial_load) { memory_operation(code, operation, plan, false); }
+    if (operation.cached_operand) { initial_operand(code, operation); }
   }
   const auto loop = code.size();
   EmissionState state;

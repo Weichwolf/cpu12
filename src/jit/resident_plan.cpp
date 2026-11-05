@@ -5,6 +5,7 @@
 #include "jit/block.hpp"
 #include "jit/resident.hpp"
 
+#include <algorithm>
 #include <bit>
 #include <cstddef>
 #include <cstdint>
@@ -207,6 +208,36 @@ void forward_load(ResidentPlan &plan) {
   load->initial_load = true;
 }
 
+bool cacheable_operand(const ResidentPlan &plan, const ResidentOperation &operand) {
+  const auto origin = reinterpret_cast<std::uintptr_t>(operand.pointer);
+  return std::ranges::all_of(plan.operations, [origin, &operand](const auto &operation) {
+    if (operation.instruction.kind != Kind::store) { return true; }
+    const auto address = reinterpret_cast<std::uintptr_t>(operation.pointer);
+    const auto width = operation.instruction.word ? 2U : 1U;
+    const bool overlap = address >= origin ? address - origin < 2 : origin - address < width;
+    return !overlap || (operation.pointer == operand.pointer && operation.instruction.word);
+  });
+}
+
+void forward_operand(ResidentPlan &plan) {
+  if (!plan.loop) { return; }
+  for (auto &operation : plan.operations) {
+    const auto kind = operation.instruction.kind;
+    if (!operation.instruction.word || operation.pointer == nullptr ||
+        (kind != Kind::add && kind != Kind::subtract && kind != Kind::compare) ||
+        !cacheable_operand(plan, operation)) {
+      continue;
+    }
+    operation.cached_operand = true;
+    for (auto &store : plan.operations) {
+      if (store.instruction.kind == Kind::store && store.pointer == operation.pointer) {
+        store.cache_store = true;
+      }
+    }
+    return;
+  }
+}
+
 void analyze(ResidentPlan &plan) {
   unsigned live = flags_nzvc | flag_h;
   unsigned overwritten = 0;
@@ -302,6 +333,7 @@ std::optional<ResidentPlan> resident_plan(const std::span<const BlockInstruction
   fold(plan);
   analyze(plan);
   forward_load(plan);
+  forward_operand(plan);
   return plan;
 }
 
