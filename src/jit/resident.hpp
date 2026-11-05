@@ -32,6 +32,7 @@ struct ResidentPlan {
   unsigned counter_offset = 0;
   // A separate guest backedge retires on every iteration except the final exit.
   unsigned backedge_instructions = 0;
+  ExitLocation backedge_exit{};
   bool swapped_d = false, loop = false, increment = false, host_zero = false;
 };
 

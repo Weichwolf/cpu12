@@ -373,6 +373,7 @@ std::optional<ResidentPlan> resident_loop_plan(const std::span<const BlockInstru
   auto plan = resident_plan(combined, memory);
   if (!plan || !plan->loop) { return std::nullopt; }
   plan->backedge_instructions = 1;
+  plan->backedge_exit = {.pc = next, .opcode = jump.opcode};
   return plan;
 }
 

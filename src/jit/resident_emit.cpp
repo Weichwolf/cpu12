@@ -63,6 +63,8 @@ struct FlagValue {
   bool packed = false, boolean = false;
 };
 
+enum class LoopMode : std::uint8_t { full, bounded };
+
 struct EmissionState {
   std::vector<FlagValue> flags;
 };
@@ -72,11 +74,12 @@ void rex(Code &code, const std::uint8_t reg) {
   if (reg >= legacy_count) { code.byte(rex_b); }
 }
 
-void preserve(Code &code, const ResidentPlan &plan, const bool restore) {
-  constexpr std::array<std::uint8_t, 4> registers{3, 5, 12, 15};
+void preserve(Code &code, const ResidentPlan &plan, const bool restore, const LoopMode mode) {
+  constexpr std::array<std::uint8_t, 5> registers{3, 5, 12, 13, 15};
   const std::array needed{(plan.used_words & (1U << registers[0])) != 0,
                           (plan.used_words & (1U << registers[1])) != 0,
                           plan.changed != 0,
+                          mode == LoopMode::bounded,
                           plan.base != nullptr};
   constexpr std::uint8_t push = 0x50;
   constexpr std::uint8_t pop = 0x58;
@@ -431,7 +434,10 @@ void pc(Code &code, const Address value) {
   code.u16(value);
 }
 
-void finish_branch(Code &code, const ResidentPlan &plan, const std::size_t loop) {
+void finish_branch(Code &code,
+                   const ResidentPlan &plan,
+                   const std::size_t loop,
+                   const LoopMode mode) {
   const auto &last = plan.operations.back();
   const auto next = static_cast<Address>(last.pc + last.instruction.length);
   if (last.instruction.kind != Kind::branch && last.instruction.kind != Kind::loop) {
@@ -443,11 +449,15 @@ void finish_branch(Code &code, const ResidentPlan &plan, const std::size_t loop)
   const auto condition = last.instruction.condition;
   constexpr unsigned not_equal = 6;
   if (plan.loop) {
+    if (mode == LoopMode::bounded) {
+      constexpr std::array<std::uint8_t, 3> decrement{0x41, 0xff, 0xcd}; // DEC R13D.
+      code.raw(decrement);
+    }
     constexpr std::array<std::uint8_t, 2> repeat{0x0f, 0x85};
     code.raw(repeat);
     const auto displacement = code.relative32();
     code.bind(displacement, loop);
-    pc(code, next);
+    pc(code, mode == LoopMode::bounded ? target : next);
   } else if (condition < 2) {
     pc(code, condition == 0 ? target : next);
   } else {
@@ -486,7 +496,7 @@ std::vector<std::size_t> indexed_admission(Code &code, const ResidentPlan &plan)
   code.raw(remaining);
   code.raw(below);
   exits.push_back(code.relative32());
-  // R10 is the proven loop trip count, independent of retirement weighting.
+  // R10 is the admitted trip count, independent of retirement weighting.
   constexpr std::array<std::uint8_t, 7> extent{0x47, 0x8d, 0x0c, 0x12, 0x45, 0x39, 0xc8};
   code.raw(extent);
   code.raw(below);
@@ -494,26 +504,30 @@ std::vector<std::size_t> indexed_admission(Code &code, const ResidentPlan &plan)
   return exits;
 }
 
+void trip_count(Code &code, const ResidentPlan &plan) {
+  constexpr std::array<std::uint8_t, 4> load{0x44, 0x0f, 0xb7, 0x57};
+  code.raw(load);
+  code.byte(static_cast<std::uint8_t>(plan.counter_offset));
+  if (plan.increment) {
+    constexpr std::array<std::uint8_t, 4> negate{0x66, 0x41, 0xf7, 0xda};
+    code.raw(negate);
+  }
+  // Zero means a complete 16-bit wrap, not zero executions.
+  constexpr std::array<std::uint8_t, 3> test{0x45, 0x85, 0xd2};
+  code.raw(test);
+  constexpr std::array<std::uint8_t, 2> nonzero{0x0f, 0x85};
+  code.raw(nonzero);
+  const auto finite = code.relative32();
+  constexpr std::array<std::uint8_t, 2> full_wrap{0x41, 0xba};
+  code.raw(full_wrap);
+  constexpr unsigned word_values = 65536;
+  code.u32(word_values);
+  code.bind(finite);
+}
+
 std::size_t admission(Code &code, const ResidentPlan &plan) {
   if (plan.loop) {
-    constexpr std::array<std::uint8_t, 4> load{0x44, 0x0f, 0xb7, 0x57};
-    code.raw(load);
-    code.byte(static_cast<std::uint8_t>(plan.counter_offset));
-    if (plan.increment) {
-      constexpr std::array<std::uint8_t, 4> negate{0x66, 0x41, 0xf7, 0xda};
-      code.raw(negate);
-    }
-    // Zero means a complete 16-bit wrap, not zero executions.
-    constexpr std::array<std::uint8_t, 3> test{0x45, 0x85, 0xd2};
-    code.raw(test);
-    constexpr std::array<std::uint8_t, 2> nonzero{0x0f, 0x85};
-    code.raw(nonzero);
-    const auto finite = code.relative32();
-    constexpr std::array<std::uint8_t, 2> full_wrap{0x41, 0xba};
-    code.raw(full_wrap);
-    constexpr unsigned word_values = 65536;
-    code.u32(word_values);
-    code.bind(finite);
+    trip_count(code, plan);
     constexpr std::array<std::uint8_t, 3> multiply{0x4d, 0x69, 0xda};
     code.raw(multiply);
     code.u32(static_cast<std::uint32_t>(plan.operations.size() + plan.backedge_instructions));
@@ -533,19 +547,53 @@ std::size_t admission(Code &code, const ResidentPlan &plan) {
   code.raw(below);
   return code.relative32();
 }
+
+std::vector<std::size_t> bounded_admission(Code &code, const ResidentPlan &plan) {
+  // R10 retains the trip count from the preceding full-loop admission.
+  const auto weight =
+      static_cast<std::uint32_t>(plan.operations.size() + plan.backedge_instructions);
+  if (std::has_single_bit(weight)) {
+    constexpr std::array<std::uint8_t, 4> shift{0x89, 0xd0, 0xc1, 0xe8}; // EAX=budget/weight.
+    code.raw(shift);
+    code.byte(static_cast<std::uint8_t>(std::countr_zero(weight)));
+  } else {
+    constexpr std::array<std::uint8_t, 8> divide{0x41, 0x89, 0xd0, 0x89, 0xd0, 0x31, 0xd2, 0xb9};
+    code.raw(divide); // Save budget in R8D; divide EDX:EAX by the taken body cost.
+    code.u32(weight);
+    constexpr std::array<std::uint8_t, 5> quotient{0xf7, 0xf1, 0x44, 0x89, 0xc2};
+    code.raw(quotient); // Restore EDX before any refusal reaches the general path.
+  }
+  constexpr std::array<std::uint8_t, 4> empty{0x85, 0xc0, 0x0f, 0x84};
+  code.raw(empty);
+  std::vector<std::size_t> refused{code.relative32()};
+  // This variant only takes a proper prefix. The full-loop path handles final
+  // exits, whose split backedge must not retire after the terminating branch.
+  constexpr std::array<std::uint8_t, 5> compare{0x44, 0x39, 0xd0, 0x0f, 0x83};
+  code.raw(compare);
+  refused.push_back(code.relative32());
+  constexpr std::array<std::uint8_t, 6> progress{0x41, 0x89, 0xc2, 0x4d, 0x69, 0xda};
+  code.raw(progress); // R10D=batch trips; R11=actual taken-instruction total.
+  code.u32(weight);
+  return refused;
 }
 
-std::vector<std::uint8_t> emit_resident(const ResidentPlan &plan,
-                                        const std::span<const std::uint8_t> general) {
+std::vector<std::uint8_t> emit_variant(const ResidentPlan &plan,
+                                       const std::span<const std::uint8_t> general,
+                                       const LoopMode mode) {
   Code code;
   constexpr std::array<std::uint8_t, 4> endbr{0xf3, 0x0f, 0x1e, 0xfa};
   code.raw(endbr);
-  const auto insufficient = admission(code, plan);
+  const auto refused = mode == LoopMode::bounded ? bounded_admission(code, plan)
+                                                 : std::vector<std::size_t>{admission(code, plan)};
   const auto outside_memory = indexed_admission(code, plan);
-  preserve(code, plan, false);
+  preserve(code, plan, false, mode);
   constexpr std::array<std::uint8_t, 2> retired{0x41,
                                                 0x53}; // PUSH R11: one total, outside the loop.
   code.raw(retired);
+  if (mode == LoopMode::bounded) {
+    constexpr std::array<std::uint8_t, 3> counter{0x45, 0x89, 0xd5}; // MOV R13D,R10D.
+    code.raw(counter);
+  }
   registers(code, plan, false);
   if (plan.base != nullptr) {
     constexpr std::array<std::uint8_t, 2> memory{0x49, 0xbf};
@@ -559,7 +607,7 @@ std::vector<std::uint8_t> emit_resident(const ResidentPlan &plan,
   const auto loop = code.size();
   EmissionState state;
   body(code, plan, state);
-  finish_branch(code, plan, loop);
+  finish_branch(code, plan, loop, mode);
   deferred_flags(code, plan, state);
   if (plan.swapped_d && (plan.dirty_words & (1U << word_registers[0])) != 0) {
     swap_word(code, word_registers[0]);
@@ -568,14 +616,25 @@ std::vector<std::uint8_t> emit_resident(const ResidentPlan &plan,
   if (plan.changed != 0) { publish_flags(code, plan, state); }
   constexpr std::uint8_t pop_rax = 0x58;
   code.byte(pop_rax);
-  preserve(code, plan, true);
+  preserve(code, plan, true, mode);
   const auto &last = plan.operations.back();
-  describe_exit(code, {.pc = last.pc, .opcode = last.instruction.opcode});
+  const auto location = mode == LoopMode::bounded && plan.backedge_instructions != 0
+                            ? plan.backedge_exit
+                            : ExitLocation{.pc = last.pc, .opcode = last.instruction.opcode};
+  describe_exit(code, location);
   constexpr std::uint8_t ret = 0xc3;
   code.byte(ret);
-  code.bind(insufficient);
+  for (const auto exit : refused) { code.bind(exit); }
   for (const auto exit : outside_memory) { code.bind(exit); }
   code.raw(general);
   return std::move(code).take();
+}
+}
+
+std::vector<std::uint8_t> emit_resident(const ResidentPlan &plan,
+                                        const std::span<const std::uint8_t> general) {
+  if (!plan.loop) { return emit_variant(plan, general, LoopMode::full); }
+  const auto bounded = emit_variant(plan, general, LoopMode::bounded);
+  return emit_variant(plan, bounded, LoopMode::full);
 }
 }

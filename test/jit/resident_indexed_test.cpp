@@ -181,6 +181,46 @@ void unknown_operand() {
               result.pc == entry && device.core.registers() == initial,
           "Unknown indexed bytes must use the original visible read fault without CPU publication");
 }
+
+void bounded_prefix_fault() {
+  Device device(program);
+  constexpr Address source = 0xfffb;
+  constexpr Address split_word = 0xffff;
+  constexpr std::array<Byte, 4> values{0x12, 0x34, 0x80, 0x01};
+  std::ranges::copy(values, device.ram.begin() + source);
+  const auto original = device.ram;
+  auto initial = seed;
+  initial.x = source;
+  initial.y = 4;
+  initial.ccr = flags;
+  auto wanted = initial;
+  wanted.x = split_word;
+  wanted.y = 2;
+  wanted.d = word(original, source + 2);
+  wanted.ccr = static_cast<Byte>((flags & ~nzv) | 8U);
+  constexpr std::array budgets{4U, 5U, 6U, 7U, 8U};
+  for (const auto budget : budgets) {
+    device.core.set_registers(initial);
+    const auto result = device.core.run(budget);
+    require(result.retired == 4 && result.state == ExecutionState::running &&
+                device.core.registers() == wanted && device.ram == original,
+            "A safe indexed prefix must publish its actual progress before a split-word fault");
+    if (budget == 4) {
+      require(result.fault == Fault::none && result.pc == entry + 2 &&
+                  result.opcode == isa::opcode<isa::Opcode::dbne_relative>()[0],
+              "A bounded prefix must end at the original taken DBNE");
+      continue;
+    }
+    require(result.fault == Fault::memory_read && result.address == wanted.x &&
+                result.access_size == 2 && result.pc == entry && result.opcode == program[0],
+            "An unsafe next indexed word must report its original load and two-byte access");
+    auto failure = result;
+    failure.retired = 0;
+    require(device.core.state().failure == failure && device.core.run() == failure &&
+                device.core.registers() == wanted && device.ram == original,
+            "The fault latch must retain the actual fault without replaying the safe prefix");
+  }
+}
 }
 
 int main() {
@@ -190,6 +230,7 @@ int main() {
     previous_index_flags();
     unknown_operand();
     split_word_fault();
+    bounded_prefix_fault();
     std::cout
         << "Resident indexed loops preserve ranges, wrap, partial grants, old flags and faults\n";
     return 0;

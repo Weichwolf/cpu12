@@ -296,6 +296,9 @@ void bounded_cases(const Form &form) {
   for (const auto count : wraps) {
     initial = seed(form, count);
     const auto total = (trips(form, initial) * 4) - 1;
+    for (const unsigned budget : {4U, 5U, 7U, 16U, 127U}) {
+      if (budget <= total) { check(device, form, initial, budget); }
+    }
     check(device, form, initial, total - 1);
     check(device, form, initial, total);
     const auto compiled = device.core.statistics().compiled_entries;
