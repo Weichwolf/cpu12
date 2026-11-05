@@ -12,6 +12,8 @@ std::optional<Instruction> page_register(const std::span<const std::uint8_t> byt
   if (bytes.size() != 2) { return {}; }
   constexpr unsigned prefix = 0x18;
   if (bytes[0] != prefix) { return {}; }
+  constexpr unsigned stop = 0x3e;
+  if (bytes[1] == stop) { return Instruction{.kind = Kind::stop, .opcode = prefix, .length = 2}; }
   constexpr unsigned add = 6;
   constexpr unsigned decimal = 7;
   constexpr unsigned subtract = 0x16;
@@ -85,6 +87,10 @@ std::optional<Instruction> decode_register(const std::span<const std::uint8_t> b
   constexpr unsigned rti = 0x0b;
   if (opcode == rti && bytes.size() == 1) {
     return Instruction{.kind = Kind::return_interrupt, .opcode = opcode, .length = 1};
+  }
+  constexpr unsigned wait = 0x3e;
+  if (opcode == wait && bytes.size() == 1) {
+    return Instruction{.kind = Kind::wait, .opcode = opcode, .length = 1};
   }
   const auto kind = operation(opcode);
   if (!kind) { return {}; }

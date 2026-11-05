@@ -50,7 +50,8 @@ library; historical stack-reference.json pins that source and actual run hashes.
 alu-reference.json records the later carry/register integration. This
 is component execution, not original Blofeld boot, full ISA or instrument proof.
 Fetched execution, reset and native IRQ/RTI now have separate documented interfaces.
-Remaining ISA, banked CALL/RTC, waits, checkpoints, native regions,
+wait.txt and checkpoints.txt cover native idle frames and CPU snapshots.
+Remaining ISA, banked CALL/RTC, joint board checkpoints, native regions,
 timing and Blofeld integration are still required. No fuzzing is part
 of this work; broad sanitizer matrices remain deferred until real time.
 

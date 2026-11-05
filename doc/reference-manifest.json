@@ -25,7 +25,8 @@
       "ABA/SBA/CBA, ABX/ABY assembler aliases and DAA: accumulator arithmetic/flags, nine qualified A/C/H input rows, preserved H and undefined V",
       "Instruction object-code length entries and Table3-2 indexed extensions for logical byte fetching; physical prefetch/bus-cycle timing is not claimed",
       "Sections2.2.5 and7.8 and RTI: reset S/X/I masks, IRQ/XIRQ nine-byte frames, B:A byte order, X restoration limit and conflicting mask/vector ordering",
-      "BRSET/BRCLR: selected operand bits and unchanged CCR; selected external transport preserves the complete real read effects"
+      "BRSET/BRCLR: selected operand bits and unchanged CCR; selected external transport preserves the complete real read effects",
+      "WAI3E and STOP183E: next-instruction returnPC, actual frame stores, S-disabled no-op, clock ownership and masked-XIRQ unvectored continuation; IRQ/RTI frame reuse distinctions"
     ],
     "redistributed": false
   }

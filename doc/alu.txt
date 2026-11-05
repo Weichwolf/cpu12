@@ -17,8 +17,9 @@ INX/DEX/INY/DEY change only the selected 16-bit index and Z. ANDCC clears
 selected bits. ORCC sets selected bits except X, which it cannot raise.
 ANDCC and TAP transitions from masked to unmasked defer maskable IRQ eligibility
 until one following instruction retires; interrupt.txt specifies the entry/readiness
-contract. The board owns IRQ arbitration and time. Waits, complete checkpoints
-and cycle budgets remain open, alongside the remaining ISA.
+contract. The board owns IRQ arbitration and time. wait.txt and checkpoints.txt
+describe native idle states and CPU snapshots. Joint board checkpoints and
+cycle budgets remain open, alongside the remaining ISA.
 
 All instruction and template selection occurs during compilation. Warm register
 and known-RAM execution uses generated host operations; only genuine external

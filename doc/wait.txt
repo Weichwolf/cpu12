@@ -1,0 +1,47 @@
+Native wait and stop
+
+WAI (3e) and enabled STOP (18,3e) save nextPC,Y,X,B:A,CCR on the actual
+nine-byte stack. SP decreases by9; all other registers and CCR bits are
+unchanged. STOP with S set advances two bytes without stacking or stopping.
+Stack effects execute natively. Real external writes retain their effects
+on refusal, but CPU registers and execution state publish only after all
+writes are accepted. There is no instruction interpreter or fake completion.
+
+ExecutionState distinguishes running, waiting and stopped. The instruction
+that enters an idle state retires exactly once. step(), captured execution
+and run(budget) then return that nonfault state without further instruction
+fetches, data accesses or retirement. A larger budget stops at the genuine
+wait boundary. Zero budgets report the current state without accessing memory.
+RunResult retains its16-byte size; state uses prior padding.
+
+An eligible interrupt uses the real vector and existing wait frame. It does
+not push another frame or change SP. The native event cache distinguishes
+ordinary entry from frame reuse for the same vector. Successful vector service
+sets the interrupt masks and returns to running. Failure preserves idle state,
+CPU registers and actual effects, and latches against replay. RTI subsequently
+restores the saved context and resumes after the wait instruction.
+
+STOP has a separate masked-XIRQ continuation. After independently establishing
+that physical signal, the board calls resume_from_stop(). The CPU accepts it
+only while stopped with X set. Native code advances SP by9 and resumes at the
+already recorded next PC; it performs no vector/frame read, instruction
+retirement or CCR change. An unmasked XIRQ uses interrupt(request) instead.
+Other chip-specific wake sources and clock stabilization remain board research;
+this API does not infer them from arbitrary interrupt requests.
+
+The board owns all clock delivery. Waiting allows other devices to continue;
+stopped requires the board's qualified clock-stop/restart policy. These CPU
+states neither sleep a host thread nor advance emulated time. Cache invalidation
+retains idle state. Explicit register replacement cancels it; accepted reset
+clears it while retaining the documented reset policy for other registers.
+
+CPU-only snapshots include idle state and IRQ delay; checkpoints.txt defines
+the caller's memory/peripheral responsibility. Pending-source arbitration,
+post-RTI tail chaining, physical prefetch/timing and full original-firmware
+integration remain outside this component. Fuzzing is not automatic.
+
+Focused reproduction:
+
+  cmake --preset release
+  cmake --build --preset release --target cpu12-wait-test
+  ctest --test-dir build/release --output-on-failure -R '^wait$'

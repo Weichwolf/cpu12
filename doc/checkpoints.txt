@@ -1,0 +1,25 @@
+CPU checkpoint boundaries
+
+checkpoint() captures registers, running/waiting/stopped state, outstanding
+ANDCC/TAP IRQ deferral and the complete latched execution fault. restore()
+replaces those CPU fields at an inactive instruction/event boundary. Both
+operations refuse reentrancy during real bus accesses. Invalid delay values,
+impossible idle delay/disabled-STOP combinations and mismatched latched-fault
+PC/state are rejected before mutation.
+
+This value contains no memory, bus callbacks, peripheral state, board clocks,
+code pages or host pointers. The caller must pair it with the corresponding
+memory/peripheral/time snapshot. CPU restore neither undoes nor replays bus
+effects. Restoring a latched fault keeps execution blocked; recovery requires
+the caller's independently recovered bus and a qualified fresh boundary.
+
+Statistics remain monotonic host diagnostics. Native cache contents are not
+architectural state and are not rewound; actual fetched bytes still select
+their complete raw-byte/length entries. Cache clearing does not cancel waits,
+consume IRQ delay or clear a fault. The checkpoint is a typed in-process value,
+not a persistent or untrusted byte-stream format.
+
+Authored tests pair actual memory with native wait/wake/RTI snapshots, retain
+the following-instruction IRQ delay, restore precise partial-write faults
+without replay, reject active/invalid replacement and check reset/debug
+boundaries. They do not establish whole-device snapshots or update safety.

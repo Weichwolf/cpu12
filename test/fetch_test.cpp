@@ -125,8 +125,8 @@ void memory_shapes() {
 }
 
 void simple_shapes() {
-  constexpr std::array<unsigned, 15> inherent{
-      2, 3, 8, 9, 0x0b, 0x11, 0x12, 0x13, 0x3d, 0x87, 0x97, 0xc7, 0xd7, 0xa7, 0x49};
+  constexpr std::array<unsigned, 16> inherent{
+      2, 3, 8, 9, 0x0b, 0x11, 0x12, 0x13, 0x3d, 0x87, 0x97, 0xc7, 0xd7, 0xa7, 0x49, 0x3e};
   for (const auto opcode : inherent) { fixed({.opcode = opcode, .length = 1}); }
   constexpr std::array<std::array<unsigned, 2>, 3> ranges{
       {{0x30, 0x3b}, {0x40, 0x48}, {0x50, 0x59}}};
@@ -148,7 +148,7 @@ void simple_shapes() {
     fixed({.opcode = opcode, .length = 2});
     fixed({.opcode = opcode, .length = 4, .page = true});
   }
-  constexpr std::array<unsigned, 11> page{6, 7, 14, 15, 16, 17, 19, 20, 21, 22, 23};
+  constexpr std::array<unsigned, 12> page{6, 7, 14, 15, 16, 17, 19, 20, 21, 22, 23, 0x3e};
   for (const auto opcode : page) { fixed({.opcode = opcode, .length = 2, .page = true}); }
   constexpr std::array<unsigned, 6> word_lengths{5, 5, 4, 6, 6, 5};
   constexpr std::array<unsigned, 6> byte_lengths{4, 5, 4, 5, 6, 5};
@@ -164,9 +164,9 @@ int main() {
     arithmetic_shapes();
     memory_shapes();
     simple_shapes();
-    constexpr unsigned supported_forms = 286;
+    constexpr unsigned supported_forms = 288;
     require(std::ranges::count(forms, true) == supported_forms,
-            "Independent fetch catalogue covers all286 currently supported opcode forms");
+            "Independent fetch catalogue covers all288 currently supported opcode forms");
     bus_cases();
     program_cases();
     std::cout << "Verified " << captures << " independent fetch shapes/boundaries and " << native

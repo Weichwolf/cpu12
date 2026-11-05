@@ -33,7 +33,7 @@ actual executable/log hashes. No manufacturer program or other emulator
 implementation is used.
 
 stack.txt documents JSR/BSR, stack save/restore and RTS. Other remaining ISA,
-banked CALL/RTC, waits, native regions, timing and board
+banked CALL/RTC, native regions, timing and board
 integration remain open. These component tests do not establish original boot, instrument behavior or real
 time. No fuzzing is part of this work; broad sanitizer validation remains
 deferred under the user's real-time-first policy.

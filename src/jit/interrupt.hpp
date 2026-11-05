@@ -2,6 +2,7 @@
 #pragma once
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
+#include "instruction.hpp"
 #include "jit/code.hpp"
 
 #include <cstdint>
@@ -10,5 +11,9 @@
 namespace cpu12::detail {
 void return_interrupt(Code &code, Ram ram);
 void defer_interrupt(Code &code, bool accumulator);
-[[nodiscard]] std::vector<std::uint8_t> emit_interrupt(InterruptRequest request, Ram ram);
+void stack_context(Code &code, Ram ram, std::uint8_t next_pc = 0);
+void wait_instruction(Code &code, const Instruction &instruction, Ram ram);
+[[nodiscard]] std::vector<std::uint8_t>
+emit_interrupt(InterruptRequest request, Ram ram, bool reuse);
+[[nodiscard]] std::vector<std::uint8_t> emit_stop_wake();
 }

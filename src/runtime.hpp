@@ -19,6 +19,7 @@ struct NativeContext {
   std::uint64_t read_callbacks = 0, write_callbacks = 0;
   std::uint64_t fetch_callbacks = 0;
   std::uint8_t irq_delay = 0;
+  ExecutionState state = ExecutionState::running;
 };
 
 [[nodiscard]] std::uint32_t read_byte(NativeContext *context, std::uint16_t address) noexcept;

@@ -10,7 +10,7 @@ and wrapping 16-bit constants, unsigned A/B/D offsets, constant/D indirect
 pointers, and X/Y/SP pre/post changes from -8..-1 or 1..8. PC denotes the
 address after the complete instruction. LEAX/LEAY/LEAS support all 248 legal
 nonindirect postbytes without data accesses or CCR changes. Indirect LEA
-refuses explicitly. Remaining ISA, waits, cycle timing and board integration
+refuses explicitly. Remaining ISA, cycle timing and board integration
 are open.
 
 Pre-update selects the adjusted base address; post-update selects the old one.

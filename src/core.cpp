@@ -48,6 +48,7 @@ public:
   bool active = false;
 
   RunResult failed(RunResult result) noexcept {
+    result.state = context.state;
     result.fault = context.fault;
     result.address = context.address;
     result.value = context.value;
@@ -68,6 +69,7 @@ public:
       return failed(result);
     } else {
       result.retired = 1;
+      result.state = context.state;
     }
     return result;
   }
@@ -100,16 +102,56 @@ Registers Core::registers() const noexcept {
   return impl_->registers;
 }
 
+ExecutionState Core::state() const noexcept {
+  return impl_->context.state;
+}
+
+Checkpoint Core::checkpoint() const {
+  if (impl_->active) { throw std::logic_error("Cannot checkpoint active CPU12 execution"); }
+  return {.registers = impl_->registers,
+          .failure = impl_->failure,
+          .state = impl_->context.state,
+          .irq_delay = impl_->context.irq_delay};
+}
+
+void Core::restore(const Checkpoint &checkpoint) {
+  if (impl_->active) { throw std::logic_error("Cannot restore active CPU12 execution"); }
+  const bool idle = checkpoint.state != ExecutionState::running;
+  constexpr unsigned stop_disable = 0x80;
+  if (checkpoint.state > ExecutionState::stopped || checkpoint.irq_delay > 1 ||
+      (idle && checkpoint.irq_delay != 0) ||
+      (checkpoint.state == ExecutionState::stopped &&
+       (checkpoint.registers.ccr & stop_disable) != 0) ||
+      checkpoint.failure.fault > Fault::instruction_fetch ||
+      (checkpoint.failure.fault != Fault::none &&
+       (checkpoint.failure.retired != 0 || checkpoint.failure.pc != checkpoint.registers.pc ||
+        checkpoint.failure.state != checkpoint.state))) {
+    throw std::invalid_argument("Inconsistent CPU12 checkpoint boundary");
+  }
+  impl_->registers = checkpoint.registers;
+  impl_->failure = checkpoint.failure;
+  impl_->context.fault = checkpoint.failure.fault;
+  impl_->context.address = checkpoint.failure.address;
+  impl_->context.value = checkpoint.failure.value;
+  impl_->context.access_size = checkpoint.failure.access_size;
+  impl_->context.read_mask = checkpoint.failure.read_mask;
+  impl_->context.irq_delay = checkpoint.irq_delay;
+  impl_->context.state = checkpoint.state;
+}
+
 void Core::set_registers(const Registers registers) {
   if (impl_->active) { throw std::logic_error("Cannot replace registers during CPU12 execution"); }
   impl_->registers = registers;
   impl_->failure = {};
   impl_->context.fault = Fault::none;
   impl_->context.irq_delay = 0;
+  impl_->context.state = ExecutionState::running;
 }
 
 RunResult Core::run_instruction(const std::span<const std::uint8_t> bytes) {
-  RunResult result{.pc = impl_->registers.pc, .opcode = bytes.empty() ? std::uint8_t{0} : bytes[0]};
+  RunResult result{.state = state(),
+                   .pc = impl_->registers.pc,
+                   .opcode = bytes.empty() ? std::uint8_t{0} : bytes[0]};
   if (impl_->active) {
     result.fault = Fault::reentrant;
     return result;
@@ -119,6 +161,7 @@ RunResult Core::run_instruction(const std::span<const std::uint8_t> bytes) {
     result.fault = Fault::unsupported_host;
     return result;
   }
+  if (state() != ExecutionState::running) { return result; }
   if (bytes.empty() || bytes.size() > maximum_capture_bytes) {
     result.fault = Fault::invalid_input;
     return result;
@@ -135,7 +178,7 @@ RunResult Core::run_instruction(const std::span<const std::uint8_t> bytes) {
 }
 
 RunResult Core::step() {
-  RunResult result{.pc = impl_->registers.pc};
+  RunResult result{.state = state(), .pc = impl_->registers.pc};
   if (impl_->active) {
     result.fault = Fault::reentrant;
     return result;
@@ -145,6 +188,7 @@ RunResult Core::step() {
     result.fault = Fault::unsupported_host;
     return result;
   }
+  if (state() != ExecutionState::running) { return result; }
   impl_->active = true;
   try {
     const auto capture = detail::fetch(impl_->ram, impl_->context, result.pc);
@@ -166,7 +210,7 @@ RunResult Core::step() {
 }
 
 RunResult Core::run(const std::uint32_t instruction_budget) {
-  RunResult result{.pc = impl_->registers.pc};
+  RunResult result{.state = state(), .pc = impl_->registers.pc};
   if (impl_->active) {
     result.fault = Fault::reentrant;
     return result;
@@ -176,7 +220,7 @@ RunResult Core::run(const std::uint32_t instruction_budget) {
     result = step();
     retired += result.retired;
     result.retired = retired;
-    if (result.fault != Fault::none) { break; }
+    if (result.fault != Fault::none || result.state != ExecutionState::running) { break; }
   }
   return result;
 }
@@ -206,6 +250,7 @@ EventResult Core::reset(const std::uint16_t vector) noexcept {
     constexpr unsigned masks = 0xd0;
     impl_->registers.pc = static_cast<Address>(target);
     impl_->registers.ccr = static_cast<Byte>(impl_->registers.ccr | masks);
+    impl_->context.state = ExecutionState::running;
     result.accepted = true;
   }
   impl_->active = false;
@@ -263,6 +308,37 @@ EventResult Core::interrupt(const InterruptRequest request) {
     throw;
   }
   impl_->active = false;
+  return result;
+}
+
+EventResult Core::resume_from_stop() {
+  EventResult result{.pc = impl_->registers.pc};
+  if (impl_->active) {
+    result.fault = Fault::reentrant;
+    return result;
+  }
+  if (impl_->failure.fault != Fault::none) {
+    result.fault = impl_->failure.fault;
+    result.address = impl_->failure.address;
+    result.value = impl_->failure.value;
+    result.access_size = impl_->failure.access_size;
+    return result;
+  }
+  if (!impl_->supported) {
+    result.fault = Fault::unsupported_host;
+    return result;
+  }
+  constexpr unsigned x_mask = 0x40;
+  if (state() != ExecutionState::stopped || (impl_->registers.ccr & x_mask) == 0) { return result; }
+  impl_->active = true;
+  try {
+    impl_->jit.resume_stop(impl_->registers, impl_->context);
+  } catch (...) {
+    impl_->active = false;
+    throw;
+  }
+  impl_->active = false;
+  result.accepted = true;
   return result;
 }
 

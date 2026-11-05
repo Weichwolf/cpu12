@@ -54,15 +54,19 @@ enum class Fault : std::uint8_t {
   instruction_fetch
 };
 
+enum class ExecutionState : std::uint8_t { running, waiting, stopped };
+
 struct RunResult {
   std::uint32_t retired = 0;
   Fault fault = Fault::none;
+  ExecutionState state = ExecutionState::running;
   std::uint16_t pc = 0;
   std::uint8_t opcode = 0;
   std::uint16_t address = 0;
   std::uint16_t value = 0;
   std::uint8_t access_size = 0;
   std::uint8_t read_mask = 0;
+  bool operator==(const RunResult &) const = default;
 };
 
 enum class InterruptKind : std::uint8_t { maskable, xirq };
@@ -77,6 +81,15 @@ struct EventResult {
   Fault fault = Fault::none;
   std::uint16_t pc = 0, address = 0, value = 0;
   std::uint8_t access_size = 0;
+};
+
+// CPU state only; the caller pairs this with the corresponding bus/memory state.
+struct Checkpoint {
+  Registers registers;
+  RunResult failure;
+  ExecutionState state = ExecutionState::running;
+  std::uint8_t irq_delay = 0;
+  bool operator==(const Checkpoint &) const = default;
 };
 
 struct Options {
@@ -102,6 +115,9 @@ public:
   Core &operator=(const Core &) = delete;
   [[nodiscard]] static bool native_supported() noexcept;
   [[nodiscard]] Registers registers() const noexcept;
+  [[nodiscard]] ExecutionState state() const noexcept;
+  [[nodiscard]] Checkpoint checkpoint() const;
+  void restore(const Checkpoint &checkpoint);
   // An explicit fresh boundary clears a latched fault; coordinate bus state externally.
   void set_registers(Registers registers);
   [[nodiscard]] RunResult run_instruction(std::span<const std::uint8_t> bytes);
@@ -109,6 +125,8 @@ public:
   [[nodiscard]] EventResult reset(std::uint16_t vector) noexcept;
   [[nodiscard]] bool interrupt_ready(InterruptKind kind) const noexcept;
   [[nodiscard]] EventResult interrupt(InterruptRequest request);
+  // Report an asserted masked XIRQ while stopped; no vector is serviced.
+  [[nodiscard]] EventResult resume_from_stop();
   // Instruction budget, not a cycle budget. The result counts completed instructions.
   [[nodiscard]] RunResult run(std::uint32_t instruction_budget);
   [[nodiscard]] Statistics statistics() const noexcept;

@@ -2,7 +2,8 @@ CPU12 coverage — incomplete
 
 Current public API: Core(Memory, Io*, Options), run_instruction(captured_bytes),
 step(), run(instruction_budget), reset(vector), interrupt_ready(kind) and
-interrupt(request). Borrowed byte views provide
+interrupt(request), state(), resume_from_stop(), checkpoint() and restore().
+Borrowed byte views provide
 unified/window/external layouts; native cache bounds are checked at construction.
 Fetched execution uses explicit code transport. The board owns clocks, source
 arbitration and acknowledgement; native interrupt events retire no instruction.
@@ -16,6 +17,14 @@ Initial native implementation on x86-64/Linux:
 - Native IRQ/XIRQ vector and nine-byte stack entry, mask eligibility, and the
   following-instruction recognition delay for ANDCC/TAP transitions.
 - Native RTI restores CCR/B:A/X/PC/Y, wraps SP, and cannot raise a clear X mask.
+- Native WAI/STOP save the actual following PC and enter explicit idle states;
+  disabled STOP advances without stopping. Idle execution performs no fetch.
+- Instruction budgets exit at a real wait boundary without a fault or fabricated
+  retirement. Eligible wake reuses the genuine saved frame without duplicate writes.
+- Explicit masked-XIRQ STOP continuation adjusts SP/state natively without vector
+  service, stack reads, flag changes or instruction retirement.
+- CPU checkpoints retain registers, idle state, IRQ delay and all fault metadata;
+  active or invalid replacement refuses before mutation. Bus/board state is external.
 - External entry/return stages CPU publication and retains actual partial effects
   on faults without automatic replay. Full known RAM uses no host frame/callback.
 - Optional selected-bit byte reads for BRSET/BRCLR preserve real read effects,
@@ -84,8 +93,9 @@ Open requirements:
 - Original M68HC12 move-queue PC corrections; current moves use HCS12 semantics.
 - Additional memory-window types and multi-byte/per-instruction access boundaries.
 - Native regions, executable mapping/invalidation contracts and event/timing budgets.
-- Pending-source priorities/arbitration during run(), wait/stop, frame reuse,
-  tail chaining, SWI/trap/banked ISA, board timing and complete checkpoints.
+- Pending-source priorities/arbitration during run(), post-RTI tail chaining,
+  SWI/trap/banked ISA and board timing, including chip-specific STOP wake sources.
+- Persistent checkpoint encoding and joint CPU/memory/board/peripheral snapshots.
 - Recognition timing for CCR-destination transfers beyond ANDCC/TAP transitions.
 - Integration and state ownership with blofeld-emu; no emulator dependency pin yet.
 - Real firmware startup, actual instrument behavior and whole-emulator throughput.
@@ -97,17 +107,24 @@ remains physically unmeasured. stack.txt records the distinction.
 
 No native throughput or real-time claim is made from correctness test duration.
 Broad QA is deferred until original Blofeld firmware runs in real time, as the
-user requested. No fuzzing was run. Historical fetch-reference.json pins
+user requested. No fuzzing was run. Current wait-reference.json pins 262684
+native wait entries, every stack/return-PC value, all CCR values, disabled STOP,
+IRQ/XIRQ frame reuse, masked-XIRQ continuation, real fault phases and CPU snapshots.
+Two authored fetched reset-to-handler/RTI programs check actual continuation;
+22 consumers use one strict optimized library with current source/ELF identities.
+The independent fetch catalogue now covers288 forms and14579 shapes/boundaries,
+with333 supporting native program retirements. These are CPU component results.
+Historical fetch-reference.json pins
 14576 independent fetch shapes/boundaries, 333 native program retirements and
 all sixteen earlier consumers against its coherent optimized library.
 Authored loops, real call/return stacks, guest self-modification, external bank
 changes, byte-exact faults, reentrancy and no-replay boundaries are included.
-Current interrupt-reference.json pins 131334 reset events, 65803 interrupt
+Historical interrupt-reference.json pins 131334 reset events, 65803 interrupt
 entries, 393226 instruction cases in the RTI test and 393223 selected-bit cases,
 including real bus refusals, retained diagnostic bytes and no replay.
 Its 21 consumers use one coherent optimized library with exact executable
 identities; 20 results are reused after a formatter-only change to the one
-test consumer that was rebuilt and rerun. The fetch catalogue now covers
+test consumer that was rebuilt and rerun. That qualification covers
 286 opcode forms and14577 shapes/boundaries, with333 program retirements.
 Historical accumulator-reference.json pins 50432704 accumulator/BCD cases and
 40961 unqualified-state boundaries, with DAA domain/result proofs and an

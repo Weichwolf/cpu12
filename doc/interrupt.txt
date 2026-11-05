@@ -43,9 +43,10 @@ counter; XIRQ ignores that delay. Cache clearing retains it, while an explicit
 fresh register/reset boundary clears it. No new delay is inferred for other
 CCR-destination transfers; their timing remains a separate research corner.
 
-This is an explicit entry/readiness interface. It does not arbitrate pending
-sources during run(), implement WAI/frame reuse or RTI tail chaining, or supply
-board-cycle timing/checkpoints. The board must call entry at qualified instruction
+This is an explicit entry/readiness interface. wait.txt specifies native wait
+frames and wake reuse; checkpoints.txt specifies CPU-only snapshots. It does not
+arbitrate pending sources during run(), implement RTI tail chaining or supply
+board-cycle timing. The board must call entry at qualified instruction
 boundaries and coordinate vector acknowledgement with actual bus effects.
 
 Focused reproduction:

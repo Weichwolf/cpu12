@@ -34,7 +34,8 @@ no fetch or execution. This is an instruction budget, not a cycle/time budget.
 
 This is a logical byte-fetch model, not the physical CPU12 prefetch queue or
 bus-cycle timing. Reset and native interrupt events have separate interfaces;
-run() does not arbitrate sources or advance board time. Waits, native regions,
+run() does not arbitrate sources or advance board time; it exits at real idle
+boundaries without further fetching. Native regions,
 event/cycle budgets and Blofeld integration remain required work. Tests use an independent literal
 opcode/length catalogue, explicit indexed postbyte sets and authored programs;
 they establish neither original firmware execution nor real-time throughput.

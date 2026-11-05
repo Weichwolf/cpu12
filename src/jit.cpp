@@ -136,14 +136,28 @@ bool Jit::execute(const std::span<const std::uint8_t> bytes,
 void Jit::interrupt(const InterruptRequest request, Registers &registers, NativeContext &context) {
   constexpr unsigned kind_shift = 16;
   constexpr auto event_tag = std::uint64_t{1} << 63U;
-  const auto key =
-      event_tag | (static_cast<std::uint64_t>(request.kind) << kind_shift) | request.vector;
+  constexpr unsigned reuse_shift = 17;
+  const bool reuse = context.state != ExecutionState::running;
+  const auto key = event_tag | (static_cast<std::uint64_t>(reuse) << reuse_shift) |
+                   (static_cast<std::uint64_t>(request.kind) << kind_shift) | request.vector;
   auto found = impl_->blocks.find(key);
   if (found == impl_->blocks.end()) {
     if (impl_->blocks.size() == impl_->cache_entries) { clear(); }
-    found = impl_->blocks
-                .emplace(key, std::make_unique<Executable>(emit_interrupt(request, impl_->ram)))
-                .first;
+    found =
+        impl_->blocks
+            .emplace(key, std::make_unique<Executable>(emit_interrupt(request, impl_->ram, reuse)))
+            .first;
+    ++impl_->statistics.compiled_entries;
+  }
+  found->second->enter(registers, context);
+}
+
+void Jit::resume_stop(Registers &registers, NativeContext &context) {
+  constexpr auto key = std::uint64_t{3} << 62U;
+  auto found = impl_->blocks.find(key);
+  if (found == impl_->blocks.end()) {
+    if (impl_->blocks.size() == impl_->cache_entries) { clear(); }
+    found = impl_->blocks.emplace(key, std::make_unique<Executable>(emit_stop_wake())).first;
     ++impl_->statistics.compiled_entries;
   }
   found->second->enter(registers, context);

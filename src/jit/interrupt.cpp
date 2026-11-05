@@ -99,11 +99,12 @@ void defer_interrupt(Code &code, const bool accumulator) {
   if (accumulator) { code.bind(still_set); }
 }
 
-std::vector<std::uint8_t> emit_interrupt(const InterruptRequest request, const Ram ram) {
+std::vector<std::uint8_t>
+emit_interrupt(const InterruptRequest request, const Ram ram, const bool reuse) {
   Code code;
   constexpr std::array<std::uint8_t, 4> entry{0xf3, 0x0f, 0x1e, 0xfa};
   code.raw(entry);
-  const bool external = ram.first != 0 || ram.bytes.size() != address_bytes;
+  const bool external = !reuse && (ram.first != 0 || ram.bytes.size() != address_bytes);
   if (external) { code.frame(); }
   constexpr std::array<std::uint8_t, 2> vector_address{0x41, 0xb9};
   code.raw(vector_address);
@@ -111,35 +112,17 @@ std::vector<std::uint8_t> emit_interrupt(const InterruptRequest request, const R
   data_access(code, ram, {.word = true});
   constexpr std::array<std::uint8_t, 4> save_target{0x66, 0x89, 0x0c, 0x24};
   if (external) { code.raw(save_target); }
-  constexpr std::array<Part, 5> pushes{
-      {{.position = 2, .destination = static_cast<std::uint8_t>(offsetof(Registers, pc))},
-       {.position = 4, .destination = static_cast<std::uint8_t>(offsetof(Registers, y))},
-       {.position = 6, .destination = static_cast<std::uint8_t>(offsetof(Registers, x))},
-       {.position = 8, .destination = static_cast<std::uint8_t>(offsetof(Registers, d))},
-       {.position = 9, .destination = ccr, .word = false}}};
-  for (const auto part : pushes) {
-    const auto displacement = static_cast<std::uint16_t>(-static_cast<int>(part.position));
-    const Instruction address{.addressing = Addressing::indexed,
-                              .indexed = {.base = IndexBase::sp, .displacement = displacement}};
-    indexed_address(code, address, ram);
-    constexpr std::array<std::uint8_t, 3> load_word{0x0f, 0xb7, 0x47};
-    constexpr std::array<std::uint8_t, 3> load_byte{0x0f, 0xb6, 0x47};
-    code.raw(part.word ? load_word : load_byte);
-    code.byte(part.destination);
-    if (part.position == 8) {
-      constexpr std::array<std::uint8_t, 4> ba{0x66, 0xc1, 0xc0, 8};
-      code.raw(ba);
-    }
-    data_access(code, ram, {.word = part.word, .write = true});
-  }
+  if (!reuse) { stack_context(code, ram); }
   if (external) {
     constexpr std::array<std::uint8_t, 4> target{0x0f, 0xb7, 0x0c, 0x24};
     code.raw(target);
   }
-  constexpr std::array<std::uint8_t, 4> stack{0x66, 0x81, 0x47, sp};
-  code.raw(stack);
-  constexpr std::uint16_t frame_change = 0xfff7;
-  code.u16(frame_change);
+  if (!reuse) {
+    constexpr std::array<std::uint8_t, 4> stack{0x66, 0x81, 0x47, sp};
+    code.raw(stack);
+    constexpr std::uint16_t frame_change = 0xfff7;
+    code.u16(frame_change);
+  }
   constexpr std::array<std::uint8_t, 3> masks{0x80, 0x4f, ccr};
   code.raw(masks);
   constexpr std::uint8_t irq = 0x10;
@@ -149,8 +132,10 @@ std::vector<std::uint8_t> emit_interrupt(const InterruptRequest request, const R
   constexpr std::array<std::uint8_t, 4> target_pc{0x66, 0x89, 0x4f, pc};
   code.raw(target_pc);
   constexpr auto delay = static_cast<std::uint8_t>(offsetof(NativeContext, irq_delay));
-  constexpr std::array<std::uint8_t, 4> cancel_delay{0xc6, 0x46, delay, 0};
-  code.raw(cancel_delay);
+  static_assert(offsetof(NativeContext, state) == offsetof(NativeContext, irq_delay) + 1);
+  static_assert(static_cast<std::uint8_t>(ExecutionState::running) == 0);
+  constexpr std::array<std::uint8_t, 6> resume{0x66, 0xc7, 0x46, delay, 0, 0};
+  code.raw(resume);
   code.return_();
   return std::move(code).take();
 }
