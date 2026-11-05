@@ -46,8 +46,8 @@ bool loops(const std::span<const BlockInstruction> instructions) {
   return target == instructions.front().pc;
 }
 
-// These operations cannot observe CCR, call an owner, or fail after prior
-// flags were elided. Unknown paths are observation barriers, including live
+// These operations cannot observe CCR/PC, call an owner, or fail after prior
+// state publication was elided. Unknown paths are observation barriers, including live
 // knownness, indexed addresses and reads routed through a read-only grant.
 bool ordinary_access(const Instruction &instruction, const Memory &memory) {
   if (instruction.addressing == Addressing::immediate) { return true; }
@@ -100,9 +100,9 @@ std::optional<unsigned> flag_writes(const Instruction &instruction, const Memory
   return written_flags(instruction);
 }
 
-std::vector<bool> live_flags(const std::span<const BlockInstruction> instructions,
-                             const Memory &memory) {
-  std::vector<bool> result(instructions.size(), true);
+std::vector<EmissionOptions> emission_options(const std::span<const BlockInstruction> instructions,
+                                              const Memory &memory) {
+  std::vector<EmissionOptions> result(instructions.size());
   constexpr unsigned all_flags = 0xff;
   unsigned live = all_flags;
   for (auto index = instructions.size(); index != 0; --index) {
@@ -111,20 +111,27 @@ std::vector<bool> live_flags(const std::span<const BlockInstruction> instruction
       live = all_flags;
       continue;
     }
-    result[index - 1] = (live & *changed) != 0;
+    result[index - 1] = {.flags_live = (live & *changed) != 0, .advance_pc = false};
     live &= ~*changed;
   }
   return result;
+}
+
+void publish_pc(Code &code, const Address address) {
+  constexpr auto pc = static_cast<std::uint8_t>(offsetof(Registers, pc));
+  // MOV word [R12+pc],imm16: publish without a load/add/store dependency chain.
+  constexpr std::array<std::uint8_t, 6> store{0x66, 0x41, 0xc7, 0x44, 0x24, pc};
+  code.raw(store);
+  code.u16(address);
 }
 
 void append_instruction(Code &code,
                         const BlockInstruction &operation,
                         const Memory &memory,
                         const std::uint32_t completed,
-                        const bool flags_live,
+                        const EmissionOptions options,
                         std::vector<FailedExit> &faults) {
-  code.raw(restore_arguments);
-  const auto emitted = emit_joined(operation.instruction, memory, flags_live);
+  const auto emitted = emit_joined(operation.instruction, memory, options);
   const auto begin = code.size();
   code.raw(emitted.bytes);
   for (const auto exit : emitted.exits) {
@@ -161,10 +168,20 @@ std::vector<std::uint8_t> emit_block(const std::span<const BlockInstruction> ins
   const auto insufficient = code.relative32();
   std::vector<FailedExit> faults;
   std::uint32_t completed = 0;
-  const auto flags = live_flags(instructions, memory);
+  const auto options = emission_options(instructions, memory);
+  bool pending_pc = false;
   for (const auto &operation : instructions) {
-    append_instruction(code, operation, memory, completed, flags[completed], faults);
+    const auto policy = options[completed];
+    if (pending_pc && policy.advance_pc) { publish_pc(code, operation.pc); }
+    // Proven pure operations preserve RDI and do not need the context in RSI.
+    if (policy.advance_pc || !pending_pc) { code.raw(restore_arguments); }
+    append_instruction(code, operation, memory, completed, policy, faults);
+    pending_pc = !policy.advance_pc;
     ++completed;
+  }
+  if (pending_pc) {
+    const auto &last = instructions.back();
+    publish_pc(code, static_cast<Address>(last.pc + last.instruction.length));
   }
   code.raw(add_count);
   code.u32(completed);

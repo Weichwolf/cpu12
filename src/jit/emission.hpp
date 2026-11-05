@@ -12,6 +12,10 @@ struct ExitFixup {
   NativeExit kind = NativeExit::complete;
 };
 
+struct EmissionOptions {
+  bool flags_live = true, advance_pc = true;
+};
+
 struct Emission {
   std::vector<std::uint8_t> bytes;
   std::vector<ExitFixup> exits;

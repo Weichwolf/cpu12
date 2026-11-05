@@ -466,8 +466,8 @@ namespace {
 Emission generate(const Instruction &instruction,
                   const Memory &ram,
                   const bool joined,
-                  const bool flags_live = true) {
-  Code code(joined, flags_live);
+                  const EmissionOptions options = {}) {
+  Code code(joined, options);
   if (!joined) { code.raw(entry); }
   if (instruction.kind == Kind::wait || instruction.kind == Kind::stop) {
     wait_instruction(code, instruction, ram);
@@ -520,10 +520,11 @@ std::vector<std::uint8_t> emit(const Instruction &instruction, const Memory &ram
   return generate(instruction, ram, false).bytes;
 }
 
-Emission emit_joined(const Instruction &instruction, const Memory &ram, const bool flags_live) {
+Emission
+emit_joined(const Instruction &instruction, const Memory &ram, const EmissionOptions options) {
   if (instruction.kind == Kind::software_interrupt) {
     throw std::logic_error("Software interrupt requires its owned exception entry");
   }
-  return generate(instruction, ram, true, flags_live);
+  return generate(instruction, ram, true, options);
 }
 }

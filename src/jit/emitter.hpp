@@ -10,6 +10,6 @@
 
 namespace cpu12::detail {
 [[nodiscard]] Emission
-emit_joined(const Instruction &instruction, const Memory &ram, bool flags_live = true);
+emit_joined(const Instruction &instruction, const Memory &ram, EmissionOptions options = {});
 [[nodiscard]] std::vector<std::uint8_t> emit(const Instruction &instruction, const Memory &ram);
 }
