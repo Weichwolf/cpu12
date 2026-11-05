@@ -78,6 +78,15 @@ ctest --preset release
 cmake --build build/release --target format-check
 ```
 
+Embed with `add_subdirectory(path/to/cpu12)` and link `cpu12::core`. The public
+target requires C++23 even when its caller selects an older language standard.
+`CPU12_BUILD_TESTING` defaults to ON for standalone builds and OFF when embedded;
+both it and `BUILD_TESTING` must be ON to register library tests. The embedded
+format target is `cpu12-format-check`, leaving the caller's `format-check` intact.
+Diagnostics, clang-tidy, hardening and `CPU12_SANITIZER` remain enabled according
+to the selected configuration. Set compatible sanitizer options before adding
+the dependency; embedding does not choose the caller's sanitizer policy.
+
 LLVM19 and Ninja are required. Release uses O3, native host tuning and ThinLTO.
 The strict preset retains ASan/UBSan; broad sanitizer work is deferred until
 the integrating Blofeld firmware reaches real time. Fuzzing is never automatic.
