@@ -4,6 +4,7 @@
 #include "cpu12/memory.hpp"
 #include "fetch.hpp"
 #include "jit.hpp"
+#include "jit/block.hpp"
 #include "memory_access.hpp"
 #include "runtime.hpp"
 
@@ -65,13 +66,15 @@ public:
     return result;
   }
 
-  std::optional<RunResult> block(const std::uint32_t budget) {
-    auto result = jit.run_block(budget, context.cpu.registers, context);
-    if (result && context.fault != Fault::none) {
-      const auto retired = result->retired;
-      result->retired = 0;
-      *result = failed(*result);
-      result->retired = retired;
+  RunResult block_result(const detail::NativeResult native) {
+    RunResult result{.retired = native.retired,
+                     .state = context.cpu.execution,
+                     .pc = native.location.pc,
+                     .opcode = native.location.opcode};
+    if (context.fault != Fault::none) {
+      result.retired = 0;
+      result = failed(result);
+      result.retired = native.retired;
     }
     return result;
   }
@@ -204,9 +207,12 @@ RunResult Core::run(const std::uint32_t instruction_budget) {
   try {
     bool suffix = false;
     for (std::uint32_t retired = 0; retired < instruction_budget;) {
-      const auto block = suffix ? std::nullopt : impl_->block(instruction_budget - retired);
+      const auto block = suffix ? std::nullopt
+                                : impl_->jit.run_block(instruction_budget - retired,
+                                                       impl_->context.cpu.registers,
+                                                       impl_->context);
       if (block && block->retired == 0 && impl_->context.fault == Fault::none) { suffix = true; }
-      result = block && !suffix ? *block : impl_->step();
+      result = block && !suffix ? impl_->block_result(*block) : impl_->step();
       retired += result.retired;
       result.retired = retired;
       if (result.fault != Fault::none || result.state != ExecutionState::running) { break; }

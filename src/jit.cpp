@@ -157,7 +157,7 @@ bool Jit::execute(const std::span<const std::uint8_t> bytes,
   return true;
 }
 
-std::optional<RunResult>
+std::optional<NativeResult>
 Jit::run_block(const std::uint32_t budget, Registers &registers, NativeContext &context) {
   if (context.cpu.irq_delay != 0 || context.cpu.returned_frame) { return std::nullopt; }
   auto &mapping = *impl_->current;
@@ -178,10 +178,7 @@ Jit::run_block(const std::uint32_t budget, Registers &registers, NativeContext &
   }
   const auto result = enter_blocks(entry, registers, context, budget, mapping.native_regions);
   impl_->statistics.native_instructions += result.retired;
-  return RunResult{.retired = result.retired,
-                   .state = context.cpu.execution,
-                   .pc = result.location.pc,
-                   .opcode = result.location.opcode};
+  return result;
 }
 
 void Jit::interrupt(const InterruptRequest request, Registers &registers, NativeContext &context) {

@@ -2,6 +2,7 @@
 #pragma once
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
+#include "jit/block.hpp"
 #include "runtime.hpp"
 
 #include <cstdint>
@@ -21,7 +22,7 @@ public:
   // False means unsupported captured bytes, with no native or I/O effect.
   [[nodiscard]] bool
   execute(std::span<const std::uint8_t> bytes, Registers &registers, NativeContext &context);
-  [[nodiscard]] std::optional<RunResult>
+  [[nodiscard]] std::optional<NativeResult>
   run_block(std::uint32_t budget, Registers &registers, NativeContext &context);
   void interrupt(InterruptRequest request, Registers &registers, NativeContext &context);
   void resume_stop(Registers &registers, NativeContext &context);
