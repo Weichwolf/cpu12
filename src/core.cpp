@@ -73,6 +73,21 @@ public:
     }
     return result;
   }
+
+  RunResult step() {
+    RunResult result{.state = context.state, .pc = registers.pc};
+    const auto capture = detail::fetch(ram, context, result.pc);
+    if (capture.size != 0) { result.opcode = capture.bytes[0]; }
+    if (context.fault != Fault::none) {
+      result = failed(result);
+    } else if (!capture.supported) {
+      result.fault = Fault::unsupported_instruction;
+    } else {
+      result = execute(std::span(capture.bytes).first(capture.size));
+    }
+    if (result.fault != Fault::none) { failure = result; }
+    return result;
+  }
 };
 
 Core::Core(const Memory memory, Io *const io, const Options options)
@@ -183,35 +198,7 @@ RunResult Core::run_instruction(const std::span<const std::uint8_t> bytes) {
 }
 
 RunResult Core::step() {
-  RunResult result{.state = state(), .pc = impl_->registers.pc};
-  if (impl_->active) {
-    result.fault = Fault::reentrant;
-    return result;
-  }
-  if (impl_->failure.fault != Fault::none) { return impl_->failure; }
-  if (!impl_->supported) {
-    result.fault = Fault::unsupported_host;
-    return result;
-  }
-  if (state() != ExecutionState::running) { return result; }
-  impl_->active = true;
-  try {
-    const auto capture = detail::fetch(impl_->ram, impl_->context, result.pc);
-    if (capture.size != 0) { result.opcode = capture.bytes[0]; }
-    if (impl_->context.fault != Fault::none) {
-      result = impl_->failed(result);
-    } else if (!capture.supported) {
-      result.fault = Fault::unsupported_instruction;
-    } else {
-      result = impl_->execute(std::span(capture.bytes).first(capture.size));
-    }
-    if (result.fault != Fault::none) { impl_->failure = result; }
-  } catch (...) {
-    impl_->active = false;
-    throw;
-  }
-  impl_->active = false;
-  return result;
+  return run(1);
 }
 
 RunResult Core::run(const std::uint32_t instruction_budget) {
@@ -221,12 +208,25 @@ RunResult Core::run(const std::uint32_t instruction_budget) {
     return result;
   }
   if (impl_->failure.fault != Fault::none) { return impl_->failure; }
-  for (std::uint32_t retired = 0; retired < instruction_budget;) {
-    result = step();
-    retired += result.retired;
-    result.retired = retired;
-    if (result.fault != Fault::none || result.state != ExecutionState::running) { break; }
+  if (instruction_budget == 0) { return result; }
+  if (!impl_->supported) {
+    result.fault = Fault::unsupported_host;
+    return result;
   }
+  if (result.state != ExecutionState::running) { return result; }
+  impl_->active = true;
+  try {
+    for (std::uint32_t retired = 0; retired < instruction_budget;) {
+      result = impl_->step();
+      retired += result.retired;
+      result.retired = retired;
+      if (result.fault != Fault::none || result.state != ExecutionState::running) { break; }
+    }
+  } catch (...) {
+    impl_->active = false;
+    throw;
+  }
+  impl_->active = false;
   return result;
 }
 
