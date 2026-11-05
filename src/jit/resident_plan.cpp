@@ -329,6 +329,99 @@ void forward_stores(ResidentPlan &plan) {
       if (instruction.kind == Kind::store) { values.store(operation, plan.swapped_d); }
     }
     values.advance(instruction);
+    if (instruction.kind == Kind::load && operation.pointer != nullptr) {
+      values.store(operation, plan.swapped_d);
+    }
+  }
+}
+
+bool reads_word(const ResidentOperation &operation) {
+  const auto &instruction = operation.instruction;
+  if (instruction.kind == Kind::compare && operation.flags == 0 && !operation.branch_zero) {
+    return false;
+  }
+  return operation.pointer != nullptr && instruction.word && instruction.kind != Kind::store;
+}
+
+std::vector<std::size_t> next_reads(const ResidentPlan &plan) {
+  const auto end = plan.operations.size();
+  std::vector<std::size_t> result(end, end);
+  std::unordered_map<std::uintptr_t, std::size_t> reads;
+  for (auto index = end; index != 0; --index) {
+    const auto &operation = plan.operations[index - 1];
+    if (operation.pointer == nullptr) { continue; }
+    const auto address = reinterpret_cast<std::uintptr_t>(operation.pointer);
+    const auto next = reads.find(address);
+    if (next != reads.end()) { result[index - 1] = next->second; }
+    if (operation.instruction.kind == Kind::store) {
+      reads.erase(address - 1);
+      reads.erase(address);
+      if (operation.instruction.word) { reads.erase(address + 1); }
+    } else if (reads_word(operation) && operation.forwarded_word == 0) {
+      reads[address] = index - 1;
+    }
+  }
+  return result;
+}
+
+struct ValueSlot {
+  std::uintptr_t address = 0;
+  std::size_t next = 0;
+};
+
+struct ValueCache {
+  static constexpr unsigned count = 16;
+  std::array<ValueSlot, count> slots{};
+  std::size_t end = 0;
+
+  void invalidate(const std::uintptr_t address, const unsigned width) {
+    for (auto &slot : slots) {
+      const bool overlap =
+          slot.address >= address ? slot.address - address < width : address - slot.address < 2;
+      if (overlap) { slot = {}; }
+    }
+  }
+
+  bool reuse(ResidentOperation &operation, const std::size_t next) {
+    const auto address = reinterpret_cast<std::uintptr_t>(operation.pointer);
+    auto *const slot = std::ranges::find(slots, address, &ValueSlot::address);
+    if (slot == slots.end()) { return false; }
+    if (operation.forwarded_word == 0) {
+      operation.value_slot = static_cast<std::uint8_t>(slot - slots.begin() + 1);
+    }
+    slot->next = next;
+    if (next == end) { *slot = {}; }
+    return true;
+  }
+
+  void remember(ResidentOperation &operation, const std::size_t next) {
+    auto *slot = std::ranges::find(slots, 0, &ValueSlot::address);
+    if (slot == slots.end()) {
+      slot = std::ranges::max_element(slots, {}, &ValueSlot::next);
+      if (next >= slot->next) { return; }
+    }
+    *slot = {.address = reinterpret_cast<std::uintptr_t>(operation.pointer), .next = next};
+    operation.value_slot = static_cast<std::uint8_t>(slot - slots.begin() + 1);
+    operation.fill_value = true;
+  }
+};
+
+void cache_values(ResidentPlan &plan) {
+  // XMM0..15 are caller-saved, unused by scalar resident lowering, and hold
+  // semantic words without memory round trips. All allocation happens here.
+  ValueCache cache{.end = plan.operations.size()};
+  const auto next = next_reads(plan);
+  for (std::size_t index = 0; index < plan.operations.size(); ++index) {
+    auto &operation = plan.operations[index];
+    if (operation.pointer == nullptr) { continue; }
+    const bool store = operation.instruction.kind == Kind::store;
+    if (store) {
+      cache.invalidate(reinterpret_cast<std::uintptr_t>(operation.pointer),
+                       operation.instruction.word ? 2U : 1U);
+    }
+    if (!operation.instruction.word || (!store && !reads_word(operation))) { continue; }
+    if (cache.reuse(operation, next[index])) { continue; }
+    if (next[index] != plan.operations.size()) { cache.remember(operation, next[index]); }
   }
 }
 
@@ -443,7 +536,10 @@ std::optional<ResidentPlan> resident_plan(const std::span<const BlockInstruction
   analyze(plan);
   forward_load(plan);
   forward_operand(plan);
-  if (!plan.loop) { forward_stores(plan); }
+  if (!plan.loop) {
+    forward_stores(plan);
+    cache_values(plan);
+  }
   return plan;
 }
 

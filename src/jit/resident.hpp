@@ -19,6 +19,8 @@ struct ResidentOperation {
   Address pc = 0;
   unsigned flags = 0;
   unsigned forwarded_word = 0, forwarded_shift = 0;
+  std::uint8_t value_slot = 0;
+  bool fill_value = false;
   bool deferred = false, branch_zero = false, initial_load = false;
   bool cached_operand = false, cache_store = false;
   const Byte *pointer = nullptr;

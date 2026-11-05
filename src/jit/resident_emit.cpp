@@ -40,6 +40,9 @@ enum NativeByte : std::uint8_t {
   byte_immediate = 0x80,
   mov8_immediate = 0xb0,
   mov_word_immediate = 0xb8,
+  movzx_word = 0xb7,
+  simd_to = 0x7e,
+  simd_from = 0x6e,
   test_immediate = 0xf6,
   and_eax = 0x25,
   shift_immediate = 0xc1,
@@ -171,16 +174,44 @@ void indexed_operation(Code &code,
   if (needed_flags) { test_value(code, operation.instruction, plan); }
 }
 
+void word_value(Code &code,
+                const ResidentOperation &operation,
+                const unsigned reg,
+                const bool read) {
+  const auto slot = static_cast<unsigned>(operation.value_slot - 1U);
+  constexpr unsigned low_slots = 8;
+  code.byte(word_prefix);
+  if (slot >= low_slots) { code.byte(rex_r); }
+  code.byte(escape);
+  code.byte(read ? simd_to : simd_from); // MOVD r32,XMM or MOVD XMM,r32; flags are unchanged.
+  code.byte(static_cast<std::uint8_t>(register_operand | ((slot & 7U) << 3U) | reg));
+}
+
+void fill_value(Code &code, const ResidentOperation &operation, const unsigned reg) {
+  if (operation.value_slot != 0 && operation.fill_value) {
+    word_value(code, operation, reg, false);
+  }
+}
+
 void memory_arithmetic(Code &code, const ResidentOperation &operation, const ResidentPlan &plan) {
   const auto &instruction = operation.instruction;
   const auto reg = instruction.word ? native_word(instruction) : byte_register(instruction, plan);
   if (!operation.cached_operand) {
-    if (instruction.word) { code.byte(word_prefix); }
-    code.byte(rex_b);
-    code.byte(instruction.word ? mov_from : mov8_from);
-    code.byte(r15_displacement); // Read the actual current operand into AX/AL.
-    code.u32(std::bit_cast<std::uint32_t>(operation.displacement));
-    if (instruction.word) { swap_word(code, 0); }
+    if (operation.value_slot != 0 && !operation.fill_value) {
+      word_value(code, operation, 0, true);
+    } else {
+      code.byte(rex_b);
+      if (instruction.word) {
+        code.byte(escape);
+        code.byte(movzx_word); // MOVZX EAX,word memory: no old-register dependency.
+      } else {
+        code.byte(mov8_from);
+      }
+      code.byte(r15_displacement); // Read the actual current operand into AX/AL.
+      code.u32(std::bit_cast<std::uint32_t>(operation.displacement));
+      if (instruction.word) { swap_word(code, 0); }
+      fill_value(code, operation, 0);
+    }
   }
   std::uint8_t opcode = 0;
   if (instruction.kind == Kind::subtract) {
@@ -208,6 +239,48 @@ void memory_arithmetic(Code &code, const ResidentOperation &operation, const Res
   code.byte(static_cast<std::uint8_t>(register_operand | (source << 3U) | reg));
 }
 
+bool register_load(Code &code, const ResidentOperation &operation, const unsigned reg) {
+  if (operation.value_slot != 0 && !operation.fill_value) {
+    word_value(code, operation, reg, true);
+    return true;
+  }
+  if (operation.forwarded_word != 0) {
+    if (reg != operation.forwarded_word) {
+      code.byte(mov_to);
+      code.byte(
+          static_cast<std::uint8_t>(register_operand | (operation.forwarded_word << 3U) | reg));
+    }
+    if (operation.forwarded_shift != 0) {
+      code.byte(shift_immediate);
+      code.byte(static_cast<std::uint8_t>(shift_right_eax | reg));
+      code.byte(static_cast<std::uint8_t>(operation.forwarded_shift));
+    }
+    fill_value(code, operation, reg);
+    return true;
+  }
+  return false;
+}
+
+void memory_opcode(Code &code, const bool word, const bool store) {
+  if (word && !store) {
+    code.byte(rex_b);
+    code.byte(escape);
+    code.byte(movzx_word); // MOVZX r32,word memory.
+    return;
+  }
+  if (word) { code.byte(word_prefix); }
+  code.byte(rex_b);
+#if defined(__MOVBE__)
+  if (word && store) {
+    constexpr std::array<std::uint8_t, 3> movbe_store{0x0f, 0x38, 0xf1};
+    code.raw(movbe_store);
+    return;
+  }
+#endif
+  constexpr std::array<std::array<std::uint8_t, 2>, 2> opcodes{{{0x8a, 0x88}, {0x8b, 0x89}}};
+  code.byte(opcodes[static_cast<std::size_t>(word)][static_cast<std::size_t>(store)]);
+}
+
 void memory_operation(Code &code,
                       const ResidentOperation &operation,
                       const ResidentPlan &plan,
@@ -219,17 +292,7 @@ void memory_operation(Code &code,
   }
   const bool store = instruction.kind == Kind::store;
   auto reg = instruction.word ? native_word(instruction) : byte_register(instruction, plan);
-  if (!store && operation.forwarded_word != 0) {
-    if (reg != operation.forwarded_word) {
-      code.byte(mov_to);
-      code.byte(
-          static_cast<std::uint8_t>(register_operand | (operation.forwarded_word << 3U) | reg));
-    }
-    if (operation.forwarded_shift != 0) {
-      code.byte(shift_immediate);
-      code.byte(static_cast<std::uint8_t>(shift_right_eax | reg));
-      code.byte(static_cast<std::uint8_t>(operation.forwarded_shift));
-    }
+  if (!store && register_load(code, operation, reg)) {
     if (needed_flags) { test_value(code, instruction, plan); }
     return;
   }
@@ -250,18 +313,7 @@ void memory_operation(Code &code,
     code.byte(static_cast<std::uint8_t>(register_operand | (reg << 3U)));
   }
   if (high) { reg = 0; }
-  if (instruction.word) { code.byte(word_prefix); }
-  code.byte(rex_b); // R15 is the fixed memory base; displacement remains compile-time data.
-  constexpr std::array<std::array<std::uint8_t, 2>, 2> opcodes{{{0x8a, 0x88}, {0x8b, 0x89}}};
-#if defined(__MOVBE__)
-  if (instruction.word && store) {
-    constexpr std::array<std::uint8_t, 3> movbe_store{0x0f, 0x38, 0xf1};
-    code.raw(movbe_store);
-  } else
-#endif
-  {
-    code.byte(opcodes[static_cast<std::size_t>(instruction.word)][static_cast<std::size_t>(store)]);
-  }
+  memory_opcode(code, instruction.word, store);
   code.byte(static_cast<std::uint8_t>(r15_displacement | (reg << 3U)));
   code.u32(std::bit_cast<std::uint32_t>(operation.displacement));
   if (high && !store) {
@@ -269,6 +321,7 @@ void memory_operation(Code &code,
     code.byte(static_cast<std::uint8_t>(register_operand | byte_register(instruction, plan)));
   }
   if (instruction.word && !store) { swap_word(code, reg); }
+  fill_value(code, operation, value_register);
   if (needed_flags) { test_value(code, instruction, plan); }
   if (operation.cache_store) {
     constexpr std::array<std::uint8_t, 3> cache{word_prefix, rex_b, mov_to};
@@ -471,10 +524,9 @@ void registers(Code &code, const ResidentPlan &plan, const bool store) {
   const auto active = store ? plan.dirty_words : plan.used_words;
   for (std::size_t index = 0; index < word_offsets.size(); ++index) {
     if ((active & (1U << word_registers[index])) == 0) { continue; }
-    if (!store && !plan.indexed_region.bytes.empty() &&
-        word_offsets[index] == offsetof(Registers, x)) {
-      constexpr std::array<std::uint8_t, 2> load_index{0x0f, 0xb7}; // MOVZX ECX,word state.
-      code.raw(load_index);
+    if (!store) {
+      constexpr std::array<std::uint8_t, 2> load_word{0x0f, 0xb7};
+      code.raw(load_word); // Clear host upper bits without reading the old register.
     } else {
       code.byte(word_prefix);
       code.byte(store ? mov_to : mov_from);
