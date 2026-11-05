@@ -10,10 +10,40 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <type_traits>
+#include <utility>
 
 namespace {
 void require(const bool condition, const std::string_view message) {
   if (!condition) { throw std::runtime_error(std::string(message)); }
+}
+
+static_assert(
+    std::is_same_v<decltype(std::declval<const cpu12::Core &>().state()), const cpu12::State &>);
+
+void live_state() {
+  std::array<cpu12::Byte, 64> bytes{};
+  cpu12::Core core(cpu12::Memory::unified(bytes));
+  const auto &view = core.state();
+  const auto *identity = &view;
+  const cpu12::Registers before{.pc = 0x1234, .d = 0x5678, .sp = 0x8000, .ccr = 0xa5};
+  core.set_registers(before);
+  require(&core.state() == identity && view.registers == before,
+          "State is a stable read-only view of the actual Core-owned register storage");
+  const auto nop = core.run_instruction(cpu12::isa::nop);
+  auto after = before;
+  ++after.pc;
+  require(nop.retired == 1 && view.registers == after &&
+              view.execution == cpu12::ExecutionState::running && &core.state() == identity,
+          "The same state reference observes native execution without a getter-side copy");
+  constexpr cpu12::Address missing = 0xff80;
+  constexpr auto load = cpu12::isa::program(cpu12::isa::opcode<cpu12::isa::Opcode::ldaa_extended>(),
+                                            std::array<cpu12::Byte, 2>{0xff, 0x80});
+  const auto failed = core.run_instruction(load);
+  require(
+      failed.fault == cpu12::Fault::memory_read && failed.address == missing &&
+          view.failure == failed && view.registers == after && &core.state() == identity,
+      "The live state also exposes the actual latched native failure without changing identity");
 }
 
 void unified() {
@@ -107,6 +137,7 @@ void validation() {
 
 int main() {
   try {
+    live_state();
     unified();
     retained_code();
     external();

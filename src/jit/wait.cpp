@@ -17,8 +17,9 @@ namespace cpu12::detail {
 namespace {
 constexpr auto sp = static_cast<std::uint8_t>(offsetof(Registers, sp));
 constexpr auto ccr = static_cast<std::uint8_t>(offsetof(Registers, ccr));
-constexpr auto state = static_cast<std::uint8_t>(offsetof(NativeContext, state));
-static_assert(offsetof(NativeContext, state) < 128);
+constexpr auto state =
+    static_cast<std::uint8_t>(offsetof(NativeContext, cpu) + offsetof(State, execution));
+static_assert(offsetof(NativeContext, cpu) + offsetof(State, execution) < 128);
 
 void enter_wait(Code &code, const Instruction &instruction, const Ram ram) {
   stack_context(code, ram, instruction.length);

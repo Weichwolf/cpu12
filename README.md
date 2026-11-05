@@ -43,7 +43,8 @@ int main() {
 
 Memory is borrowed and must outlive the core. One execution thread owns each
 core. The example executes NOP and STOP; a consumer supplies its own program and
-optional I/O. Unsupported instructions or modes report explicit faults.
+optional I/O. `state()` provides an optional live, read-only view of Core-owned
+state on that execution thread. Unsupported instructions or modes report explicit faults.
 
 The `cpu12-kernel-bench` target checks ALU/flags, RAM read-modify-write and
 counted-branch fixtures. Run `build/release/cpu12-kernel-bench` for cold-run and

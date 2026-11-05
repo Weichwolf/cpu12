@@ -88,15 +88,12 @@ bool Jit::execute(const std::span<const std::uint8_t> bytes,
   enter(found->second, registers, context);
   if (context.fault == Fault::none) {
     ++impl_->statistics.native_instructions;
-    if (context.boundary_control != 0) {
-      if (context.boundary_control == returned_frame_boundary) {
-        constexpr unsigned rti = 0x0b;
-        constexpr auto rti_key =
-            (std::uint64_t{1} << length_shift) | (std::uint64_t{rti} << opcode_shift);
-        if (key != rti_key) { context.boundary_control = 0; }
-      } else {
-        --context.boundary_control;
-      }
+    if (context.cpu.irq_delay != 0) { --context.cpu.irq_delay; }
+    if (context.cpu.returned_frame) {
+      constexpr unsigned rti = 0x0b;
+      constexpr auto rti_key =
+          (std::uint64_t{1} << length_shift) | (std::uint64_t{rti} << opcode_shift);
+      if (key != rti_key) { context.cpu.returned_frame = false; }
     }
   }
   return true;
@@ -107,9 +104,9 @@ void Jit::interrupt(const InterruptRequest request, Registers &registers, Native
   constexpr auto event_tag = std::uint64_t{1} << 63U;
   constexpr unsigned frame_shift = 17;
   auto frame = InterruptFrame::push;
-  if (context.state != ExecutionState::running) {
+  if (context.cpu.execution != ExecutionState::running) {
     frame = InterruptFrame::waiting;
-  } else if (context.boundary_control == returned_frame_boundary) {
+  } else if (context.cpu.returned_frame) {
     frame = InterruptFrame::returned;
   }
   const auto key = event_tag | (static_cast<std::uint64_t>(frame) << frame_shift) |

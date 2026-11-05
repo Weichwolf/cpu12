@@ -39,15 +39,13 @@ public:
   Impl(const Ram memory, const Io io) : ram(memory), context{.io = io}, jit(memory) {}
 
   const bool supported = Core::native_supported();
-  Registers registers;
   Ram ram;
   detail::NativeContext context;
   detail::Jit jit;
-  RunResult failure;
   bool active = false;
 
   RunResult failed(RunResult result) noexcept {
-    result.state = context.state;
+    result.state = context.cpu.execution;
     result.fault = context.fault;
     result.address = context.address;
     result.value = context.value;
@@ -56,25 +54,25 @@ public:
         (context.fault == Fault::memory_read || context.fault == Fault::instruction_fetch)) {
       result.read_mask = context.read_mask;
     }
-    failure = result;
+    context.cpu.failure = result;
     return result;
   }
 
   RunResult execute(const std::span<const std::uint8_t> bytes) {
-    RunResult result{.pc = registers.pc, .opcode = bytes[0]};
-    if (!jit.execute(bytes, registers, context)) {
+    RunResult result{.pc = context.cpu.registers.pc, .opcode = bytes[0]};
+    if (!jit.execute(bytes, context.cpu.registers, context)) {
       result.fault = Fault::unsupported_instruction;
     } else if (context.fault != Fault::none) {
       return failed(result);
     } else {
       result.retired = 1;
-      result.state = context.state;
+      result.state = context.cpu.execution;
     }
     return result;
   }
 
   RunResult step() {
-    RunResult result{.state = context.state, .pc = registers.pc};
+    RunResult result{.state = context.cpu.execution, .pc = context.cpu.registers.pc};
     const auto capture = detail::fetch(ram, context, result.pc);
     if (capture.size != 0) { result.opcode = capture.bytes[0]; }
     if (context.fault != Fault::none) {
@@ -84,7 +82,7 @@ public:
     } else {
       result = execute(std::span(capture.bytes).first(capture.size));
     }
-    if (result.fault != Fault::none) { failure = result; }
+    if (result.fault != Fault::none) { context.cpu.failure = result; }
     return result;
   }
 };
@@ -110,42 +108,37 @@ bool Core::native_supported() noexcept {
 }
 
 Registers Core::registers() const noexcept {
-  return impl_->registers;
+  return impl_->context.cpu.registers;
 }
 
-State Core::state() const noexcept {
-  return {.registers = impl_->registers,
-          .failure = impl_->failure,
-          .execution = impl_->context.state,
-          .irq_delay =
-              static_cast<std::uint8_t>(impl_->context.boundary_control & detail::irq_delay_mask),
-          .returned_frame =
-              (impl_->context.boundary_control & detail::returned_frame_boundary) != 0};
+const State &Core::state() const noexcept {
+  return impl_->context.cpu;
 }
 
 void Core::set_registers(const Registers registers) {
   if (impl_->active) { throw std::logic_error("Cannot replace registers during CPU12 execution"); }
-  impl_->registers = registers;
-  impl_->failure = {};
+  impl_->context.cpu.registers = registers;
+  impl_->context.cpu.failure = {};
   impl_->context.fault = Fault::none;
-  impl_->context.boundary_control = 0;
-  impl_->context.state = ExecutionState::running;
+  impl_->context.cpu.irq_delay = 0;
+  impl_->context.cpu.returned_frame = false;
+  impl_->context.cpu.execution = ExecutionState::running;
 }
 
 RunResult Core::run_instruction(const std::span<const std::uint8_t> bytes) {
-  RunResult result{.state = impl_->context.state,
-                   .pc = impl_->registers.pc,
+  RunResult result{.state = impl_->context.cpu.execution,
+                   .pc = impl_->context.cpu.registers.pc,
                    .opcode = bytes.empty() ? std::uint8_t{0} : bytes[0]};
   if (impl_->active) {
     result.fault = Fault::reentrant;
     return result;
   }
-  if (impl_->failure.fault != Fault::none) { return impl_->failure; }
+  if (impl_->context.cpu.failure.fault != Fault::none) { return impl_->context.cpu.failure; }
   if (!impl_->supported) {
     result.fault = Fault::unsupported_host;
     return result;
   }
-  if (impl_->context.state != ExecutionState::running) { return result; }
+  if (impl_->context.cpu.execution != ExecutionState::running) { return result; }
   if (bytes.empty() || bytes.size() > maximum_capture_bytes) {
     result.fault = Fault::invalid_input;
     return result;
@@ -162,12 +155,12 @@ RunResult Core::run_instruction(const std::span<const std::uint8_t> bytes) {
 }
 
 RunResult Core::step() {
-  RunResult result{.state = impl_->context.state, .pc = impl_->registers.pc};
+  RunResult result{.state = impl_->context.cpu.execution, .pc = impl_->context.cpu.registers.pc};
   if (impl_->active) {
     result.fault = Fault::reentrant;
     return result;
   }
-  if (impl_->failure.fault != Fault::none) { return impl_->failure; }
+  if (impl_->context.cpu.failure.fault != Fault::none) { return impl_->context.cpu.failure; }
   if (!impl_->supported) {
     result.fault = Fault::unsupported_host;
     return result;
@@ -185,12 +178,12 @@ RunResult Core::step() {
 }
 
 RunResult Core::run(const std::uint32_t instruction_budget) {
-  RunResult result{.state = impl_->context.state, .pc = impl_->registers.pc};
+  RunResult result{.state = impl_->context.cpu.execution, .pc = impl_->context.cpu.registers.pc};
   if (impl_->active) {
     result.fault = Fault::reentrant;
     return result;
   }
-  if (impl_->failure.fault != Fault::none) { return impl_->failure; }
+  if (impl_->context.cpu.failure.fault != Fault::none) { return impl_->context.cpu.failure; }
   if (instruction_budget == 0) { return result; }
   if (!impl_->supported) {
     result.fault = Fault::unsupported_host;
@@ -214,7 +207,7 @@ RunResult Core::run(const std::uint32_t instruction_budget) {
 }
 
 EventResult Core::reset(const std::uint16_t vector) noexcept {
-  EventResult result{.pc = impl_->registers.pc};
+  EventResult result{.pc = impl_->context.cpu.registers.pc};
   if (impl_->active) {
     result.fault = Fault::reentrant;
     return result;
@@ -223,9 +216,10 @@ EventResult Core::reset(const std::uint16_t vector) noexcept {
     result.fault = Fault::unsupported_host;
     return result;
   }
-  impl_->failure = {};
+  impl_->context.cpu.failure = {};
   impl_->context.fault = Fault::none;
-  impl_->context.boundary_control = 0;
+  impl_->context.cpu.irq_delay = 0;
+  impl_->context.cpu.returned_frame = false;
   impl_->active = true;
   const auto target = reset_vector(impl_->ram, impl_->context, vector);
   if (target == detail::failed_word_read) {
@@ -236,9 +230,9 @@ EventResult Core::reset(const std::uint16_t vector) noexcept {
     result.access_size = failed.access_size;
   } else {
     constexpr unsigned masks = 0xd0;
-    impl_->registers.pc = static_cast<Address>(target);
-    impl_->registers.ccr = static_cast<Byte>(impl_->registers.ccr | masks);
-    impl_->context.state = ExecutionState::running;
+    impl_->context.cpu.registers.pc = static_cast<Address>(target);
+    impl_->context.cpu.registers.ccr = static_cast<Byte>(impl_->context.cpu.registers.ccr | masks);
+    impl_->context.cpu.execution = ExecutionState::running;
     result.accepted = true;
   }
   impl_->active = false;
@@ -246,44 +240,43 @@ EventResult Core::reset(const std::uint16_t vector) noexcept {
 }
 
 bool Core::interrupt_ready(const InterruptKind kind) const noexcept {
-  if (impl_->active || !impl_->supported || impl_->failure.fault != Fault::none) { return false; }
+  if (impl_->active || !impl_->supported || impl_->context.cpu.failure.fault != Fault::none) {
+    return false;
+  }
   constexpr unsigned irq = 0x10;
   constexpr unsigned xirq = 0x40;
   switch (kind) {
     case InterruptKind::maskable:
-      return (impl_->registers.ccr & irq) == 0 &&
-             (impl_->context.boundary_control & detail::irq_delay_mask) == 0;
-    case InterruptKind::xirq: return (impl_->registers.ccr & xirq) == 0;
+      return (impl_->context.cpu.registers.ccr & irq) == 0 && impl_->context.cpu.irq_delay == 0;
+    case InterruptKind::xirq: return (impl_->context.cpu.registers.ccr & xirq) == 0;
     default: return false;
   }
 }
 
 bool Core::interrupt_frame_available() const noexcept {
-  if (impl_->active || impl_->failure.fault != Fault::none) { return false; }
-  return impl_->context.state != ExecutionState::running ||
-         (impl_->context.boundary_control & detail::returned_frame_boundary) != 0;
+  if (impl_->active || impl_->context.cpu.failure.fault != Fault::none) { return false; }
+  return impl_->context.cpu.execution != ExecutionState::running ||
+         impl_->context.cpu.returned_frame;
 }
 
 void Core::close_return_window() {
-  if (impl_->active || impl_->failure.fault != Fault::none) {
+  if (impl_->active || impl_->context.cpu.failure.fault != Fault::none) {
     throw std::logic_error("Cannot close an active or failed CPU12 return boundary");
   }
-  if (impl_->context.boundary_control == detail::returned_frame_boundary) {
-    impl_->context.boundary_control = 0;
-  }
+  impl_->context.cpu.returned_frame = false;
 }
 
 EventResult Core::interrupt(const InterruptRequest request) {
-  EventResult result{.pc = impl_->registers.pc};
+  EventResult result{.pc = impl_->context.cpu.registers.pc};
   if (impl_->active) {
     result.fault = Fault::reentrant;
     return result;
   }
-  if (impl_->failure.fault != Fault::none) {
-    result.fault = impl_->failure.fault;
-    result.address = impl_->failure.address;
-    result.value = impl_->failure.value;
-    result.access_size = impl_->failure.access_size;
+  if (impl_->context.cpu.failure.fault != Fault::none) {
+    result.fault = impl_->context.cpu.failure.fault;
+    result.address = impl_->context.cpu.failure.address;
+    result.value = impl_->context.cpu.failure.value;
+    result.access_size = impl_->context.cpu.failure.access_size;
     return result;
   }
   if (!impl_->supported) {
@@ -297,7 +290,7 @@ EventResult Core::interrupt(const InterruptRequest request) {
   if (!interrupt_ready(request.kind)) { return result; }
   impl_->active = true;
   try {
-    impl_->jit.interrupt(request, impl_->registers, impl_->context);
+    impl_->jit.interrupt(request, impl_->context.cpu.registers, impl_->context);
     if (impl_->context.fault != Fault::none) {
       const auto failed = impl_->failed({.pc = result.pc});
       result.fault = failed.fault;
@@ -316,16 +309,16 @@ EventResult Core::interrupt(const InterruptRequest request) {
 }
 
 EventResult Core::resume_from_stop() {
-  EventResult result{.pc = impl_->registers.pc};
+  EventResult result{.pc = impl_->context.cpu.registers.pc};
   if (impl_->active) {
     result.fault = Fault::reentrant;
     return result;
   }
-  if (impl_->failure.fault != Fault::none) {
-    result.fault = impl_->failure.fault;
-    result.address = impl_->failure.address;
-    result.value = impl_->failure.value;
-    result.access_size = impl_->failure.access_size;
+  if (impl_->context.cpu.failure.fault != Fault::none) {
+    result.fault = impl_->context.cpu.failure.fault;
+    result.address = impl_->context.cpu.failure.address;
+    result.value = impl_->context.cpu.failure.value;
+    result.access_size = impl_->context.cpu.failure.access_size;
     return result;
   }
   if (!impl_->supported) {
@@ -333,12 +326,13 @@ EventResult Core::resume_from_stop() {
     return result;
   }
   constexpr unsigned x_mask = 0x40;
-  if (impl_->context.state != ExecutionState::stopped || (impl_->registers.ccr & x_mask) == 0) {
+  if (impl_->context.cpu.execution != ExecutionState::stopped ||
+      (impl_->context.cpu.registers.ccr & x_mask) == 0) {
     return result;
   }
   impl_->active = true;
   try {
-    impl_->jit.resume_stop(impl_->registers, impl_->context);
+    impl_->jit.resume_stop(impl_->context.cpu.registers, impl_->context);
   } catch (...) {
     impl_->active = false;
     throw;

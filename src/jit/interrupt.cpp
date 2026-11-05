@@ -78,8 +78,9 @@ void publish(Code &code, const Part part) {
 }
 
 void defer_interrupt(Code &code, const bool accumulator) {
-  constexpr auto delay = static_cast<std::uint8_t>(offsetof(NativeContext, boundary_control));
-  static_assert(offsetof(NativeContext, boundary_control) < 128);
+  constexpr auto delay =
+      static_cast<std::uint8_t>(offsetof(NativeContext, cpu) + offsetof(State, irq_delay));
+  static_assert(offsetof(NativeContext, cpu) + offsetof(State, irq_delay) < 128);
   constexpr std::array<std::uint8_t, 4> old_i{0xf6, 0x47, ccr, 0x10};
   constexpr std::array<std::uint8_t, 2> zero{0x0f, 0x84};
   code.raw(old_i);
@@ -134,10 +135,14 @@ std::vector<std::uint8_t> emit_interrupt(const InterruptRequest request,
   constexpr auto pc = static_cast<std::uint8_t>(offsetof(Registers, pc));
   constexpr std::array<std::uint8_t, 4> target_pc{0x66, 0x89, 0x4f, pc};
   code.raw(target_pc);
-  constexpr auto delay = static_cast<std::uint8_t>(offsetof(NativeContext, boundary_control));
-  static_assert(offsetof(NativeContext, state) == offsetof(NativeContext, boundary_control) + 1);
+  constexpr auto execution =
+      static_cast<std::uint8_t>(offsetof(NativeContext, cpu) + offsetof(State, execution));
+  static_assert(offsetof(State, irq_delay) == offsetof(State, execution) + 1);
+  static_assert(offsetof(State, returned_frame) == offsetof(State, execution) + 2);
+  static_assert(offsetof(State, execution) + sizeof(std::uint32_t) <= sizeof(State));
   static_assert(static_cast<std::uint8_t>(ExecutionState::running) == 0);
-  constexpr std::array<std::uint8_t, 6> resume{0x66, 0xc7, 0x46, delay, 0, 0};
+  // Clear the adjacent execution/delay/frame fields and their trailing State padding.
+  constexpr std::array<std::uint8_t, 7> resume{0xc7, 0x46, execution, 0, 0, 0, 0};
   code.raw(resume);
   code.return_();
   return std::move(code).take();
@@ -163,8 +168,10 @@ void return_interrupt(Code &code, const Ram ram) {
   }
   constexpr std::array<std::uint8_t, 5> advance{0x66, 0x83, 0x47, sp, 9};
   code.raw(advance);
-  constexpr auto control = static_cast<std::uint8_t>(offsetof(NativeContext, boundary_control));
-  constexpr std::array<std::uint8_t, 4> returned{0xc6, 0x46, control, returned_frame_boundary};
+  constexpr auto control =
+      static_cast<std::uint8_t>(offsetof(NativeContext, cpu) + offsetof(State, irq_delay));
+  static_assert(offsetof(State, returned_frame) == offsetof(State, irq_delay) + 1);
+  constexpr std::array<std::uint8_t, 6> returned{0x66, 0xc7, 0x46, control, 0, 1};
   code.raw(returned);
   code.return_();
 }

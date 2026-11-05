@@ -109,7 +109,8 @@ public:
   Core &operator=(const Core &) = delete;
   [[nodiscard]] static bool native_supported() noexcept;
   [[nodiscard]] Registers registers() const noexcept;
-  [[nodiscard]] State state() const noexcept;
+  // A live read-only view, valid for this Core lifetime; inspect on the execution owner.
+  [[nodiscard]] const State &state() const noexcept;
   // An explicit fresh boundary clears a latched fault; coordinate bus state externally.
   void set_registers(Registers registers);
   [[nodiscard]] RunResult run_instruction(std::span<const std::uint8_t> bytes);

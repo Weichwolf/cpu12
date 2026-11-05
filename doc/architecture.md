@@ -29,13 +29,29 @@ must preserve all ISA effects and precise exits. Unknown operations and accesses
 fail with operation, address and PC. The general ISA extends beyond Blofeld needs.
 
 Memory uses 16-bit byte addresses and big-endian words. Typed borrowed views
-preserve bounds, permissions, knownness, aliases and owner lifetimes. Program
-mutation invalidates affected translations.
+preserve bounds, permissions, knownness, aliases and owner lifetimes. Executable
+translations remain immutable for the Core lifetime. Loading a different program
+normally creates a new Core. In-system programming is an explicit memory-region
+identity transition owned by the consumer: a RAM-resident updater continues with
+its existing registers, while changed flash receives a new region identity.
+Old translations remain retained; they are not selected for the new identity.
+No firmware update protocol, state import or continuous byte hashing is required.
+Disjoint RAM grants carry live byte knowledge: unknown loads take an explicit
+fault path and native stores mark their bytes known. Read-only program/flash
+grants remain distinct from writable RAM and peripheral holes.
+Mapping changes occur at retirement boundaries. Validated mapping variants
+select retained translations by physical backing identity; they neither rewrite
+host code nor require per-instruction program hashes.
 One execution owner controls each core; external events use bounded communication.
 
 The consumer owns peripheral clocks and arbitration. Native runs stop at valid
 event, interrupt, fault or sleep boundaries; internal grants preserve deadlines
-and bounded response. A due event is handled before executing an instruction
+and bounded response. ISA cycle progress and the relative time of real I/O are
+execution state, separate from optional benchmark statistics. The consumer adds
+derivative memory waits and retains ownership of frequency and virtual time.
+A synchronous I/O call may suspend its worker at the actual effect; rejecting
+the access remains a fault, never a retry/yield signal.
+A due event is handled before executing an instruction
 beyond its boundary. Caller-visible instruction counts are optional test control,
 not a substitute for event handling. Physical buses and pipeline phases are not
 implementation goals. ISA-visible instruction and interrupt semantics remain.
@@ -58,3 +74,8 @@ pre-entry values; real external writes already performed remain visible. The
 fault latches and later calls cannot replay those writes or vector reads. Tests
 exercise refusal at every vector/frame access, including wrapped stack addresses.
 This software contract does not assert hardware SP visibility during a bus cycle.
+
+Core stores registers, latched failure, execution state and interrupt-boundary
+state together. `state()` returns a stable const reference to that storage for
+inspection on the execution owner; native code updates the same fields directly.
+The view does not transfer state ownership or provide state import.
