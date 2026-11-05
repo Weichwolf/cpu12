@@ -50,6 +50,8 @@ state, IRQ deferral, returned-frame status and faults; callers pair them with bo
 [Post-RTI entry](doc/tail-chain.txt) reuses the just-restored frame for an eligible
 pending source before a following instruction retires. The board can query frame
 availability separately from source eligibility.
+When modeling later RTI refill clocks, `close_return_window()` finishes the board's
+pending-source decision without changing guest registers or executing a command.
 Remaining ISA, board timing and bounded native regions remain open. The current
 RAM/bus contract is described in [memory.txt](doc/memory.txt) and
 [indexed.txt](doc/indexed.txt), [control transfers](doc/control.txt) and

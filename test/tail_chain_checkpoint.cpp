@@ -160,6 +160,43 @@ void irq_deferral() {
   require(image[frame_sp] == unmasked,
           "Current post-CLI flags replace the earlier saved I bit on actual ordinary entry");
 }
+
+void clocked_boundary() {
+  Image image{};
+  image[vector] = 4;
+  put_frame(image, initial.sp);
+  Core core(Memory::unified(image));
+  restore_frame(core, initial);
+  auto expected = core.checkpoint();
+  expected.returned_frame = false;
+  const auto storage = image;
+  const auto retired = core.statistics().native_instructions;
+  core.close_return_window();
+  require(core.checkpoint() == expected && !core.interrupt_frame_available() && image == storage &&
+              core.statistics().native_instructions == retired,
+          "Completing the board's RTI poll closes only return eligibility without memory or "
+          "instruction effects");
+  constexpr Byte restored_ccr = 0x20;
+  require(core.interrupt({.vector = vector}).accepted && image[frame_sp] == restored_ccr,
+          "An interrupt arriving during later refill clocks creates a genuine new frame");
+  auto before = initial;
+  constexpr Byte masked = 0x10;
+  before.ccr = masked;
+  core.set_registers(before);
+  constexpr std::array<Byte, 2> cli{0x10, 0xef};
+  require(core.run_instruction(cli).retired == 1, "Fixture establishes real CLI deferral");
+  const auto deferred = core.checkpoint();
+  core.close_return_window();
+  require(core.checkpoint() == deferred && deferred.irq_delay == 1 &&
+              !core.interrupt_ready(InterruptKind::maskable),
+          "Closing a return window cannot consume an unrelated IRQ delay");
+  constexpr std::array<Byte, 1> wai{0x3e};
+  require(core.run_instruction(wai).retired == 1, "Fixture enters the actual native waiting state");
+  const auto waiting = core.checkpoint();
+  core.close_return_window();
+  require(core.checkpoint() == waiting && core.interrupt_frame_available(),
+          "The board's return poll cannot discard a genuine WAI frame");
+}
 }
 
 void checkpoint_cases() {
@@ -169,5 +206,6 @@ void checkpoint_cases() {
   restored_boundary();
   fresh_boundaries();
   irq_deferral();
+  clocked_boundary();
 }
 }

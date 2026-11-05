@@ -4,6 +4,7 @@
 #include "tail_chain_model.hpp"
 
 #include <array>
+#include <stdexcept>
 
 namespace cpu12::test::tail_chains {
 namespace {
@@ -31,6 +32,11 @@ struct Bus {
   bool observe(const Read read) noexcept {
     intact &=
         core->registers() == (reads < 5 ? initial : expected) && !core->interrupt_frame_available();
+    bool refused = false;
+    try {
+      core->close_return_window();
+    } catch (const std::logic_error &) { refused = true; }
+    intact &= refused;
     if (reads < trace.size()) { trace[reads] = read; }
     ++reads;
     return read.address != vector || vector_allowed;
@@ -98,6 +104,12 @@ void failed_vector() {
           "A refused actual vector retains restored CPU/frame state, diagnostic target and read "
           "effects");
   const auto fault = core.checkpoint();
+  bool refused = false;
+  try {
+    core.close_return_window();
+  } catch (const std::logic_error &) { refused = true; }
+  require(refused && core.checkpoint() == fault,
+          "A board poll cannot discard a failed boundary or its diagnostic metadata");
   core.clear_code_cache();
   require(core.interrupt({.vector = vector}).fault == Fault::memory_read &&
               core.step().fault == Fault::memory_read && bus.reads == 6,

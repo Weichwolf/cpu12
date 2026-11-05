@@ -2,7 +2,7 @@ CPU12 coverage — incomplete
 
 Current public API: Core(Memory, Io*, Options), run_instruction(captured_bytes),
 step(), run(instruction_budget), reset(vector), interrupt_ready(kind) and
-interrupt(request), interrupt_frame_available(), state(), resume_from_stop(),
+interrupt(request), interrupt_frame_available(), close_return_window(), state(), resume_from_stop(),
 checkpoint() and restore().
 Borrowed byte views provide
 unified/window/external layouts; native cache bounds are checked at construction.
@@ -22,6 +22,8 @@ Initial native implementation on x86-64/Linux:
   vector and backs SP by9 without rewriting saved bytes or retiring an instruction.
 - Frame availability is independent of source eligibility and is retained in CPU
   checkpoints. A following retired instruction consumes it; another RTI replaces it.
+- A board-owned return-window closure permits ordinary entry for a later-refill
+  interrupt without modifying registers, clocks, IRQ delay or a waiting frame.
 - Native WAI/STOP save the actual following PC and enter explicit idle states;
   disabled STOP advances without stopping. Idle execution performs no fetch.
 - Instruction budgets exit at a real wait boundary without a fault or fabricated
@@ -112,7 +114,11 @@ remains physically unmeasured. stack.txt records the distinction.
 
 No native throughput or real-time claim is made from correctness test duration.
 Broad QA is deferred until original Blofeld firmware runs in real time, as the
-user requested. No fuzzing was run. Current tail-chain-reference.json pins
+user requested. No fuzzing was run. Current board-poll-reference.json qualifies
+explicit post-RTI poll closure, including normal restacking without an intervening
+instruction, preserved CLI/WAI state and active/fault rejection. Only the focused
+tail-chain and wait consumers were rerun for this additive control API; no broad
+regression campaign was repeated. Historical tail-chain-reference.json pins
 278533 native post-RTI entries, all SP/target values and old/saved CCR pairs,
 unchanged saved-X bytes, real vector refusal/recovery and returned-frame snapshots.
 An authored fetched reset/WAI/two-handler sequence executes seven actual native

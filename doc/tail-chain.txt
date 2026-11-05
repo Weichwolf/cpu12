@@ -19,6 +19,13 @@ no available frame for service. A masked request leaves the boundary intact.
 The board chooses priorities and acknowledges the actual accepted vector read;
 this API does not fabricate acknowledgement or arbitrate sources in run().
 
+A board that models later refill clocks explicitly calls close_return_window()
+after RTI's pending-source poll. An interrupt arriving during those later clocks
+then uses ordinary entry. This changes only returned-frame eligibility: no
+register, saved byte, retirement count, IRQ delay or waiting frame is changed.
+Active or failed boundaries refuse the call before mutation. Without an explicit
+board closure, the instruction-budget API retains its next-retirement boundary.
+
 Native code marks a completed RTI only after every real restore read succeeds.
 The next retired instruction consumes that boundary; another RTI replaces it
 with its own returned frame. ANDCC/TAP transitions replace it with their real

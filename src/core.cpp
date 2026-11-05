@@ -281,6 +281,15 @@ bool Core::interrupt_frame_available() const noexcept {
          (impl_->context.boundary_control & detail::returned_frame_boundary) != 0;
 }
 
+void Core::close_return_window() {
+  if (impl_->active || impl_->failure.fault != Fault::none) {
+    throw std::logic_error("Cannot close an active or failed CPU12 return boundary");
+  }
+  if (impl_->context.boundary_control == detail::returned_frame_boundary) {
+    impl_->context.boundary_control = 0;
+  }
+}
+
 EventResult Core::interrupt(const InterruptRequest request) {
   EventResult result{.pc = impl_->registers.pc};
   if (impl_->active) {

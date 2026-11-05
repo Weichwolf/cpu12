@@ -126,6 +126,8 @@ public:
   [[nodiscard]] EventResult reset(std::uint16_t vector) noexcept;
   [[nodiscard]] bool interrupt_ready(InterruptKind kind) const noexcept;
   [[nodiscard]] bool interrupt_frame_available() const noexcept;
+  // The board has completed RTI's pending-source poll before later refill clocks.
+  void close_return_window();
   [[nodiscard]] EventResult interrupt(InterruptRequest request);
   // Report an asserted masked XIRQ while stopped; no vector is serviced.
   [[nodiscard]] EventResult resume_from_stop();
