@@ -157,7 +157,7 @@ void indexed_operation(Code &code,
                        const ResidentPlan &plan,
                        const bool needed_flags) {
   constexpr std::array<std::uint8_t, 3> index{0x0f, 0xb7, 0xc1};            // MOVZX EAX,CX.
-  constexpr std::array<std::uint8_t, 5> load{0x66, 0x41, 0x8b, 0x9c, 0x07}; // BX,[R15+RAX+disp].
+  constexpr std::array<std::uint8_t, 5> load{0x41, 0x0f, 0xb7, 0x9c, 0x07}; // MOVZX EBX,word RAM.
   code.raw(index);
   code.raw(load);
   code.u32(std::bit_cast<std::uint32_t>(-static_cast<std::int32_t>(plan.indexed_region.first)));
