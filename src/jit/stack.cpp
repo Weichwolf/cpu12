@@ -6,7 +6,7 @@
 #include "instruction.hpp"
 #include "jit/code.hpp"
 #include "jit/indexed.hpp"
-#include "memory.hpp"
+#include "memory_access.hpp"
 
 #include <array>
 #include <bit>

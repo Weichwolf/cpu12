@@ -10,9 +10,9 @@
 #include "jit/indexed.hpp"
 #include "jit/interrupt.hpp"
 #include "jit/loop.hpp"
+#include "jit/math.hpp"
 #include "jit/memory_modify.hpp"
 #include "jit/move.hpp"
-#include "jit/multiply_divide.hpp"
 #include "jit/registers.hpp"
 #include "jit/stack.hpp"
 #include "jit/transfer.hpp"
@@ -470,7 +470,7 @@ Emission generate(const Instruction &instruction, const Memory &ram, const bool 
   } else if (instruction.kind == Kind::return_interrupt) {
     return_interrupt(code, ram);
   } else if (instruction.kind == Kind::multiply_divide) {
-    multiply_divide_instruction(code, instruction);
+    math_instruction(code, instruction);
   } else if (instruction.kind == Kind::move) {
     move_instruction(code, instruction, ram);
   } else if (instruction.kind == Kind::loop) {

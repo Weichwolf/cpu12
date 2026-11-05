@@ -8,6 +8,86 @@
 
 namespace cpu12::detail {
 namespace {
+std::optional<MathOp> math_operation(const unsigned opcode, const bool page) {
+  constexpr unsigned ediv = 0x11;
+  constexpr unsigned mul = 0x12;
+  constexpr unsigned emul = 0x13;
+  constexpr unsigned idiv = 0x10;
+  constexpr unsigned edivs = 0x14;
+  constexpr unsigned idivs = 0x15;
+  if (!page) {
+    switch (opcode) {
+      case ediv: return MathOp::divide_extended;
+      case mul: return MathOp::multiply_byte;
+      case emul: return MathOp::multiply_unsigned;
+      default: return {};
+    }
+  }
+  switch (opcode) {
+    case idiv: return MathOp::divide_unsigned;
+    case ediv: return MathOp::divide_fractional;
+    case emul: return MathOp::multiply_signed;
+    case edivs: return MathOp::divide_extended_signed;
+    case idivs: return MathOp::divide_signed;
+    default: return {};
+  }
+}
+
+std::optional<Instruction> multiply_divide(const std::span<const std::uint8_t> bytes) {
+  if (bytes.empty()) { return {}; }
+  constexpr unsigned prefix = 0x18;
+  const bool page = bytes[0] == prefix;
+  if (bytes.size() != (page ? 2U : 1U)) { return {}; }
+  const auto math = math_operation(bytes[page ? 1U : 0U], page);
+  if (!math) { return {}; }
+  return Instruction{.kind = Kind::multiply_divide,
+                     .opcode = bytes[0],
+                     .length = static_cast<std::uint8_t>(bytes.size()),
+                     .math = *math};
+}
+
+std::optional<Instruction> decode_memory_unary(const std::span<const std::uint8_t> bytes) {
+  if (bytes.empty()) { return {}; }
+  constexpr unsigned first_indexed = 0x60;
+  constexpr unsigned last_indexed = 0x69;
+  constexpr unsigned first_extended = 0x70;
+  constexpr unsigned last_extended = 0x79;
+  constexpr unsigned indexed_test = 0xe7;
+  constexpr unsigned extended_test = 0xf7;
+  constexpr unsigned low_mask = 15;
+  const auto opcode = bytes[0];
+  const bool indexed =
+      (opcode >= first_indexed && opcode <= last_indexed) || opcode == indexed_test;
+  const bool extended =
+      (opcode >= first_extended && opcode <= last_extended) || opcode == extended_test;
+  if (!indexed && !extended) { return {}; }
+  constexpr std::array operations{RegisterOp::negate,
+                                  RegisterOp::complement,
+                                  RegisterOp::increment,
+                                  RegisterOp::decrement,
+                                  RegisterOp::logical_right,
+                                  RegisterOp::rotate_left,
+                                  RegisterOp::rotate_right,
+                                  RegisterOp::arithmetic_right,
+                                  RegisterOp::arithmetic_left,
+                                  RegisterOp::clear};
+  const auto operation = opcode == indexed_test || opcode == extended_test
+                             ? RegisterOp::test
+                             : operations[opcode & low_mask];
+  Instruction instruction{.kind = Kind::memory_unary, .opcode = opcode, .operation = operation};
+  if (indexed) {
+    if (!decode_indexed(instruction, bytes)) { return {}; }
+  } else {
+    if (bytes.size() != 3) { return {}; }
+    constexpr unsigned byte_bits = 8;
+    instruction.addressing = Addressing::extended;
+    instruction.length = 3;
+    instruction.address =
+        static_cast<std::uint16_t>((static_cast<unsigned>(bytes[1]) << byte_bits) | bytes[2]);
+  }
+  return instruction;
+}
+
 std::optional<Instruction> simple(const std::span<const std::uint8_t> bytes) {
   if (const auto instruction = decode_register(bytes)) { return instruction; }
   if (const auto instruction = decode_transfer(bytes)) { return instruction; }
@@ -15,7 +95,7 @@ std::optional<Instruction> simple(const std::span<const std::uint8_t> bytes) {
   if (const auto instruction = decode_loop(bytes)) { return instruction; }
   if (const auto instruction = decode_bits(bytes)) { return instruction; }
   if (const auto instruction = decode_move(bytes)) { return instruction; }
-  return decode_multiply_divide(bytes);
+  return multiply_divide(bytes);
 }
 
 bool memory_operand(Instruction &instruction, const std::span<const std::uint8_t> bytes) {

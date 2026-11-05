@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "cpu12/core.hpp"
-#include "cpu12/isa.hpp"
 #include "cpu12/memory.hpp"
+#include "isa.hpp"
 #include "jit/arena.hpp"
 #include "jit/block.hpp"
 #include "kernel_host.hpp"

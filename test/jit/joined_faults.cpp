@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "cpu12/core.hpp"
-#include "cpu12/isa.hpp"
 #include "cpu12/memory.hpp"
+#include "isa.hpp"
 #include "joined_fixture.hpp"
 #include "runtime.hpp"
 

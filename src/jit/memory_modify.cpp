@@ -8,7 +8,7 @@
 #include "jit/flags.hpp"
 #include "jit/indexed.hpp"
 #include "jit/registers.hpp"
-#include "memory.hpp"
+#include "memory_access.hpp"
 
 #include <array>
 #include <bit>

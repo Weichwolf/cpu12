@@ -4,7 +4,7 @@
 #include "cpu12/memory.hpp"
 #include "fetch.hpp"
 #include "jit.hpp"
-#include "memory.hpp"
+#include "memory_access.hpp"
 #include "runtime.hpp"
 
 #include <bit>

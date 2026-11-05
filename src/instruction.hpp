@@ -113,16 +113,11 @@ struct Instruction {
   MathOp math = MathOp::multiply_byte;
 };
 
-[[nodiscard]] std::optional<Instruction>
-decode_multiply_divide(std::span<const std::uint8_t> bytes);
-
 [[nodiscard]] std::optional<Instruction> decode_move(std::span<const std::uint8_t> bytes);
 
 [[nodiscard]] std::optional<Instruction> decode_bits(std::span<const std::uint8_t> bytes);
 
 [[nodiscard]] std::optional<Instruction> decode_loop(std::span<const std::uint8_t> bytes);
-
-[[nodiscard]] std::optional<Instruction> decode_memory_unary(std::span<const std::uint8_t> bytes);
 
 [[nodiscard]] std::optional<Instruction> decode_transfer(std::span<const std::uint8_t> bytes);
 

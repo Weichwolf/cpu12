@@ -25,7 +25,6 @@ target_link_libraries(your_app PRIVATE cpu12::core)
 
 ```cpp
 #include <cpu12/core.hpp>
-#include <cpu12/isa.hpp>
 #include <cpu12/memory.hpp>
 
 #include <algorithm>
@@ -34,7 +33,7 @@ target_link_libraries(your_app PRIVATE cpu12::core)
 
 int main() {
   std::array<cpu12::Byte, cpu12::address_bytes> ram{};
-  constexpr auto program = cpu12::isa::program(cpu12::isa::nop, cpu12::isa::stop);
+  constexpr std::array<cpu12::Byte, 3> program{0xa7, 0x18, 0x3e}; // NOP; STOP
   std::ranges::copy(program, ram.begin());
   const std::array regions{
       cpu12::Ram{.bytes = std::span(ram).first(program.size()), .writable = false},

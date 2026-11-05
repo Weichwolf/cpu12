@@ -4,7 +4,7 @@
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
 #include "instruction.hpp"
-#include "memory.hpp"
+#include "memory_access.hpp"
 #include "runtime.hpp"
 
 #include <array>
