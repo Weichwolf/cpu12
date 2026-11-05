@@ -6,6 +6,7 @@
 #include "jit/code.hpp"
 #include "jit/emission.hpp"
 #include "jit/emitter.hpp"
+#include "jit/resident.hpp"
 #include "runtime.hpp"
 
 #include <array>
@@ -107,7 +108,11 @@ std::vector<std::uint8_t> emit_block(const std::span<const BlockInstruction> ins
     const auto done = code.relative32();
     code.bind(done, finished);
   }
-  return std::move(code).take();
+  auto general = std::move(code).take();
+  if (const auto plan = resident_plan(instructions, memory)) {
+    return emit_resident(*plan, general);
+  }
+  return general;
 }
 
 #if defined(__x86_64__) && defined(__linux__)

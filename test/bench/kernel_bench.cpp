@@ -94,6 +94,11 @@ void execute(Core &core, std::array<Byte, address_bytes> &ram, const Fixture &fi
       state.registers.pc != entry + fixture.program.size() ||
       state.registers.sp != stack - frame_bytes || state.registers.ccr != fixture.expected_ccr ||
       ram[data] != fixture.expected_memory) {
+    std::cerr << "fixture=" << fixture.name << " fault=" << static_cast<unsigned>(result.fault)
+              << " retired=" << result.retired << " d=" << state.registers.d
+              << " x=" << state.registers.x << " pc=" << state.registers.pc
+              << " sp=" << state.registers.sp << " ccr=" << unsigned{state.registers.ccr}
+              << " memory=" << unsigned{ram[data]} << '\n';
     throw std::runtime_error("Guest benchmark failed independent result expectations");
   }
 }
@@ -118,6 +123,57 @@ void execute_host(std::array<Byte, address_bytes> &ram, const Fixture &fixture) 
                                   static_cast<Byte>(return_pc >> byte_bits),
                                   static_cast<Byte>(return_pc & byte_mask)};
   std::ranges::copy(frame, ram.begin() + stack - frame.size());
+}
+
+void verify_arithmetic_host() {
+  constexpr unsigned word_mask = 0xffff;
+  constexpr unsigned sign = 0x8000;
+  constexpr unsigned zero = 4;
+  constexpr unsigned negative = 8;
+  constexpr std::array<Address, 12> values{
+      0, 1, 0x7ffc, 0x7ffd, 0x7ffe, 0x7fff, 0x8000, 0xfffb, 0xfffc, 0xfffd, 0xfffe, 0xffff};
+  constexpr std::array<Address, 3> counts{1, 2, iterations};
+  for (const auto value : values) {
+    for (const auto count : counts) {
+      test::host::KernelRegisters state{.value = value, .count = count};
+      test::host::arithmetic_kernel(state);
+      const auto result = test::host::arithmetic_result(state);
+      const auto before_last = (unsigned{value} + 3U * (unsigned{count} - 1U)) & word_mask;
+      const auto expected = (before_last + 3U) & word_mask;
+      const auto ccr = zero | (expected >= sign ? negative : 0U) |
+                       static_cast<unsigned>(before_last + 3U > word_mask);
+      if (result.d != expected || result.x != 0 || result.ccr != ccr) {
+        throw std::runtime_error("Host ALU ASM disagrees with independent modular sum/final flags");
+      }
+    }
+  }
+}
+
+void verify_memory_host() {
+  constexpr unsigned byte_modulus = 256;
+  constexpr unsigned nibble_modulus = 16;
+  constexpr unsigned sign = 128;
+  constexpr unsigned negative = 8;
+  constexpr unsigned half = 0x20;
+  constexpr unsigned zero = 4;
+  constexpr std::array<Address, 3> counts{1, 2, iterations};
+  for (unsigned value = 0; value < byte_modulus; ++value) {
+    for (const auto count : counts) {
+      auto payload = static_cast<Byte>(value);
+      test::host::KernelRegisters state{.count = count};
+      test::host::memory_kernel(state, payload);
+      const auto result = test::host::memory_result(state);
+      const auto before_last = (value + count - 1U) % byte_modulus;
+      const auto expected = (before_last + 1U) % byte_modulus;
+      const auto ccr = zero | (expected >= sign ? negative : 0U) |
+                       ((((before_last % nibble_modulus) + 1U) / nibble_modulus) * half) |
+                       ((before_last + 1U) / byte_modulus);
+      if (payload != expected || result.d != expected * byte_modulus || result.x != 0 ||
+          result.ccr != ccr) {
+        throw std::runtime_error("Host RAM ASM disagrees with independent byte sum/final flags");
+      }
+    }
+  }
 }
 
 template <class Operation> double median(Operation operation) {
@@ -166,6 +222,8 @@ void measure(const Fixture &fixture) {
 
 int main() {
   try {
+    verify_arithmetic_host();
+    verify_memory_host();
     // Warm measurements include register/input reset and correctness verification.
     std::cout << "comparison=asm_with_stop_vs_core warm_scope=reset+run+verify trials=" << trials
               << " repetitions=" << repetitions << '\n';
