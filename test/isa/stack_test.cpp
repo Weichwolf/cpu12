@@ -26,7 +26,7 @@ void stack_case(Core &core, const std::span<Byte> ram, const Input input) {
   const auto before = input.before;
   const auto wanted = expected(operation, before, input.operand);
   const auto address = operation.push ? wanted.sp : before.sp;
-  const auto left = static_cast<std::uint16_t>(address - 1U);
+  const auto left = static_cast<std::uint16_t>(address + 0xffffU);
   const auto right = static_cast<std::uint16_t>(static_cast<unsigned>(address) + operation.width);
   constexpr Byte left_guard = 0xa5;
   constexpr Byte right_guard = 0x5a;

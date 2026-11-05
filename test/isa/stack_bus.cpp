@@ -151,7 +151,7 @@ void indirect_case(const Acceptance acceptance) {
   Core core(Memory::external(), &io);
   port.core = &core;
   core.set_registers(port.before);
-  const auto stack = static_cast<std::uint16_t>(port.before.sp - 2U);
+  const auto stack = static_cast<std::uint16_t>(static_cast<int>(port.before.sp) - 2);
   const auto return_pc = static_cast<std::uint16_t>(port.before.pc + code.size());
   if (read && write) {
     auto wanted = port.before;
@@ -204,7 +204,7 @@ void ordinary_calls() {
       const auto code = std::span(point.code).first(point.length);
       auto wanted = port.before;
       wanted.pc = point.target;
-      wanted.sp = static_cast<std::uint16_t>(wanted.sp - 2U);
+      wanted.sp = static_cast<std::uint16_t>(static_cast<int>(wanted.sp) - 2);
       if (accept) {
         call(core, port.ram, code, port.before, wanted);
       } else {

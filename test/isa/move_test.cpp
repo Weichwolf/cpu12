@@ -26,7 +26,7 @@ void one(Core &core, const std::span<Byte> ram, const Point point) {
   const unsigned width = point.word ? 2 : 1;
   const auto low_source = static_cast<std::uint16_t>(wanted.source + 1U);
   const auto low_destination = static_cast<std::uint16_t>(wanted.destination + 1U);
-  const auto left = static_cast<std::uint16_t>(wanted.destination - 1U);
+  const auto left = static_cast<std::uint16_t>(wanted.destination + 0xffffU);
   const auto right = static_cast<std::uint16_t>(wanted.destination + width);
   constexpr Byte first = 0xa5;
   constexpr Byte second = 0x5a;

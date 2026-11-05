@@ -26,7 +26,7 @@ void relative_calls(Core &core, const std::span<Byte> ram) {
         auto before = seed;
         before.sp = position;
         auto wanted = before;
-        wanted.sp = static_cast<std::uint16_t>(position - 2U);
+        wanted.sp = static_cast<std::uint16_t>(static_cast<int>(position) - 2);
         wanted.pc = static_cast<std::uint16_t>(static_cast<int>(before.pc) + 2 + delta);
         call(core, ram, code, before, wanted);
       }
@@ -45,7 +45,7 @@ void fixed_case(Core &core,
         before.sp = position;
         before.ccr = static_cast<Byte>(flags);
         auto wanted = before;
-        wanted.sp = static_cast<std::uint16_t>(position - 2U);
+        wanted.sp = static_cast<std::uint16_t>(static_cast<int>(position) - 2);
         wanted.pc = target;
         call(core, ram, code, before, wanted);
       }
@@ -77,7 +77,7 @@ void indexed_calls(Core &core, const std::span<Byte> ram) {
         before.ccr = static_cast<Byte>(flags);
         auto wanted = before;
         wanted.pc = form.indirect ? indirect_target : pointer;
-        wanted.sp = static_cast<std::uint16_t>(before.sp - 2U);
+        wanted.sp = static_cast<std::uint16_t>(static_cast<int>(before.sp) - 2);
         // Each stack write can alias this pointer; restore the authored input.
         if (form.indirect) { word(ram, pointer, indirect_target); }
         call(core, ram, code.view(), before, wanted);
@@ -109,7 +109,7 @@ void auto_case(Core &core, const std::span<Byte> ram, const Auto point) {
       wanted.*fields[point.base] =
           static_cast<std::uint16_t>(static_cast<int>(before.*fields[point.base]) + point.delta);
       wanted.pc = point.pre ? wanted.*fields[point.base] : before.*fields[point.base];
-      wanted.sp = static_cast<std::uint16_t>(wanted.sp - 2U);
+      wanted.sp = static_cast<std::uint16_t>(static_cast<int>(wanted.sp) - 2);
       call(core, ram, code, before, wanted);
     }
   }
@@ -132,7 +132,7 @@ void overlapping_pointers(Core &core, const std::span<Byte> ram) {
       {{indexed_jsr, 0xf3, 0xff, 0xfe}, {indexed_jsr, 0xe3, 0, 0}}};
   for (const auto seed : seeds) {
     auto before = seed;
-    before.x = static_cast<std::uint16_t>(before.sp - 2U);
+    before.x = static_cast<std::uint16_t>(static_cast<int>(before.sp) - 2);
     auto wanted = before;
     wanted.pc = target;
     wanted.sp = before.x;

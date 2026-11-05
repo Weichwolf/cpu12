@@ -29,7 +29,7 @@ void one(Core &core,
          const Point point) {
   const auto result = prediction(point.operation, point.before, point.data);
   ram[point.address] = static_cast<Byte>(point.data);
-  const auto left = static_cast<std::uint16_t>(point.address - 1U);
+  const auto left = static_cast<std::uint16_t>(point.address + 0xffffU);
   const auto right = static_cast<std::uint16_t>(point.address + 1U);
   constexpr Byte left_guard = 0xa5;
   constexpr Byte right_guard = 0x5a;

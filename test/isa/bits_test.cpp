@@ -19,7 +19,7 @@ constexpr std::array<unsigned, 4> flags{0, 0xff, 0xa5, 0x5a};
 
 void one(Core &core, const std::span<Byte> ram, const Code &code, const Point point) {
   ram[point.address] = static_cast<Byte>(point.data);
-  const auto left = static_cast<std::uint16_t>(point.address - 1U);
+  const auto left = static_cast<std::uint16_t>(point.address + 0xffffU);
   const auto right = static_cast<std::uint16_t>(point.address + 1U);
   constexpr Byte left_guard = 0xa5;
   constexpr Byte right_guard = 0x5a;
