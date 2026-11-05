@@ -106,14 +106,17 @@ std::optional<Instruction> decode_register(const std::span<const std::uint8_t> b
   constexpr unsigned low_index_boundary = 4;
   constexpr unsigned accumulator_b = 0x50;
   constexpr unsigned high_accumulator_b = 0xc7;
+  const bool word = opcode == word_right || opcode == word_left;
+  auto target = opcode < low_index_boundary ? WordTarget::y : WordTarget::x;
+  if (word) { target = WordTarget::d; }
   return Instruction{.kind = Kind::register_operation,
                      .opcode = opcode,
                      .length = static_cast<std::uint8_t>(length),
                      .operand = static_cast<std::uint16_t>(mask ? bytes[1] : 0U),
                      .accumulator_b = opcode >= high_accumulator_b ||
                                       (opcode >= accumulator_b && opcode < word_left),
-                     .word = opcode == word_right || opcode == word_left,
-                     .target = opcode < low_index_boundary ? WordTarget::y : WordTarget::x,
+                     .word = word,
+                     .target = target,
                      .operation = *kind};
 }
 }

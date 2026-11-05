@@ -105,7 +105,9 @@ void set_flag(Code &code, const FlagValue flag) {
 void capture(Code &code, const ResidentOperation &operation, EmissionState &state) {
   const auto arithmetic = operation.instruction.kind == Kind::add ||
                           operation.instruction.kind == Kind::subtract ||
-                          operation.instruction.kind == Kind::compare;
+                          operation.instruction.kind == Kind::compare ||
+                          (operation.instruction.kind == Kind::register_operation &&
+                           operation.instruction.operation == RegisterOp::arithmetic_left);
   const auto mask = operation.flags & (arithmetic ? ~0U : ~flag_v);
   if (mask == 0) { return; }
   const auto reg = snapshots[state.flags.size()];
@@ -300,6 +302,53 @@ void immediate_operation(Code &code,
   if (instruction.kind == Kind::load && needed_flags) { test_value(code, instruction, plan); }
 }
 
+void multiply(Code &code, const ResidentOperation &operation, EmissionState &state) {
+  constexpr std::array<std::uint8_t, 3> signed_d{0x0f, 0xbf, 0xc3};
+  constexpr std::array<std::uint8_t, 3> signed_y{0x0f, 0xbf, 0xd2};
+  constexpr std::array<std::uint8_t, 3> unsigned_d{0x0f, 0xb7, 0xc3};
+  constexpr std::array<std::uint8_t, 3> unsigned_y{0x0f, 0xb7, 0xd2};
+  const bool signed_product = operation.instruction.math == MathOp::multiply_signed;
+  code.raw(signed_product ? signed_d : unsigned_d);
+  code.raw(signed_product ? signed_y : unsigned_y);
+  constexpr std::array<std::uint8_t, 10> product{
+      0x0f, 0xaf, 0xc2, 0x89, 0xc3, 0x89, 0xc2, 0xc1, 0xea, 0x10};
+  code.raw(product); // IMUL EAX,EDX; retain low D in BX and high Y in DX.
+  if (operation.flags == 0) { return; }
+  constexpr std::array<std::uint8_t, 6> snapshot{0x85, 0xc0, 0x9f, 0x0f, 0xb6, 0xc4};
+  code.raw(snapshot); // LAHF N/Z from the full product, independently of word D.
+  const auto reg = snapshots[state.flags.size()];
+  rex(code, reg);
+  code.byte(mov_to);
+  code.byte(static_cast<std::uint8_t>(register_operand | (reg & 7U)));
+  if ((operation.flags & flag_c) != 0) {
+    constexpr std::array<std::uint8_t, 10> carry{
+        0x0f, 0xba, 0xe3, 0x0f, 0x0f, 0x92, 0xc0, 0x0f, 0xb6, 0xc0};
+    code.raw(carry); // Guest C is bit 15 of the product, not x86 multiply overflow.
+    rex(code, reg);
+    code.byte(0x09);
+    code.byte(static_cast<std::uint8_t>(register_operand | (reg & 7U)));
+  }
+  state.flags.push_back({.mask = operation.flags, .reg = reg});
+  if (operation.branch_zero) {
+    constexpr std::array<std::uint8_t, 2> test_product{0x85, 0xdb};
+    code.raw(test_product); // EBX still holds the full product, not only guest word D.
+  }
+}
+
+void resident_unary(Code &code, const Instruction &instruction) {
+  if (instruction.operation == RegisterOp::arithmetic_left) {
+    constexpr std::array<std::uint8_t, 3> shift{0x66, 0xd1, 0xe3}; // SHL BX,1.
+    code.raw(shift);
+    return;
+  }
+  constexpr std::array<std::uint8_t, 2> increment{0x66, 0xff};
+  code.raw(increment);
+  const bool incrementing = instruction.operation == RegisterOp::index_increment ||
+                            instruction.operation == RegisterOp::increment;
+  const unsigned group = incrementing ? 0U : 1U;
+  code.byte(static_cast<std::uint8_t>(register_operand | (group << 3U) | native_word(instruction)));
+}
+
 void body(Code &code, const ResidentPlan &plan, EmissionState &state) {
   for (const auto &operation : plan.operations) {
     const auto &instruction = operation.instruction;
@@ -313,14 +362,12 @@ void body(Code &code, const ResidentPlan &plan, EmissionState &state) {
         !needed_flags) {
       continue;
     }
+    if (instruction.kind == Kind::multiply_divide) {
+      multiply(code, operation, state);
+      continue;
+    }
     if (instruction.kind == Kind::register_operation || instruction.kind == Kind::loop) {
-      constexpr std::array<std::uint8_t, 2> increment{0x66, 0xff};
-      code.raw(increment);
-      const bool incrementing = instruction.operation == RegisterOp::index_increment ||
-                                instruction.operation == RegisterOp::increment;
-      const unsigned group = incrementing ? 0U : 1U;
-      code.byte(
-          static_cast<std::uint8_t>(register_operand | (group << 3U) | native_word(instruction)));
+      resident_unary(code, instruction);
     } else if (instruction.addressing == Addressing::indexed) {
       indexed_operation(code, operation, plan, needed_flags);
     } else if (operation.pointer != nullptr) {
@@ -434,6 +481,14 @@ void pc(Code &code, const Address value) {
   code.u16(value);
 }
 
+bool carry_branch(const ResidentPlan &plan) {
+  const auto &last = plan.operations.back().instruction;
+  constexpr unsigned clear = 4;
+  constexpr unsigned set = 5;
+  return !plan.loop && last.kind == Kind::branch &&
+         (last.condition == clear || last.condition == set);
+}
+
 void finish_branch(Code &code,
                    const ResidentPlan &plan,
                    const std::size_t loop,
@@ -461,16 +516,19 @@ void finish_branch(Code &code,
   } else if (condition < 2) {
     pc(code, condition == 0 ? target : next);
   } else {
-    if (!plan.host_zero) {
+    const bool carry = carry_branch(plan);
+    if (carry || !plan.host_zero) {
       constexpr auto offset = static_cast<std::uint8_t>(offsetof(Registers, ccr));
       constexpr std::array<std::uint8_t, 2> test{0xf6, 0x47};
       code.raw(test);
       code.byte(offset);
-      code.byte(flag_z);
+      code.byte(carry ? flag_c : flag_z);
     }
     pc(code, next);
     code.byte(escape);
-    const bool branch_nonzero = (condition == not_equal) == plan.host_zero;
+    constexpr unsigned carry_set = 5;
+    const bool branch_nonzero =
+        carry ? condition == carry_set : (condition == not_equal) == plan.host_zero;
     code.byte(branch_nonzero ? test8 : test_word);
     const auto skip = code.relative32();
     pc(code, target);
@@ -607,13 +665,14 @@ std::vector<std::uint8_t> emit_variant(const ResidentPlan &plan,
   const auto loop = code.size();
   EmissionState state;
   body(code, plan, state);
-  finish_branch(code, plan, loop, mode);
+  if (!carry_branch(plan)) { finish_branch(code, plan, loop, mode); }
   deferred_flags(code, plan, state);
   if (plan.swapped_d && (plan.dirty_words & (1U << word_registers[0])) != 0) {
     swap_word(code, word_registers[0]);
   }
   registers(code, plan, true);
   if (plan.changed != 0) { publish_flags(code, plan, state); }
+  if (carry_branch(plan)) { finish_branch(code, plan, loop, mode); }
   constexpr std::uint8_t pop_rax = 0x58;
   code.byte(pop_rax);
   preserve(code, plan, true, mode);

@@ -63,10 +63,17 @@ bool indexed_memory(ResidentPlan &plan, const Memory &memory) {
 
 bool supported(const Instruction &instruction) {
   if (instruction.kind == Kind::nop || indexed_load(instruction)) { return true; }
+  if (instruction.kind == Kind::multiply_divide) {
+    return instruction.math == MathOp::multiply_signed ||
+           instruction.math == MathOp::multiply_unsigned;
+  }
   if (instruction.kind == Kind::branch) {
+    constexpr unsigned carry_clear = 4;
+    constexpr unsigned carry_set = 5;
     constexpr unsigned not_equal = 6;
     constexpr unsigned equal = 7;
-    return instruction.condition < 2 || instruction.condition == not_equal ||
+    return instruction.condition < 2 || instruction.condition == carry_clear ||
+           instruction.condition == carry_set || instruction.condition == not_equal ||
            instruction.condition == equal;
   }
   if (instruction.kind == Kind::loop) {
@@ -77,7 +84,9 @@ bool supported(const Instruction &instruction) {
   }
   if (instruction.kind == Kind::register_operation) {
     return instruction.operation == RegisterOp::index_increment ||
-           instruction.operation == RegisterOp::index_decrement;
+           instruction.operation == RegisterOp::index_decrement ||
+           (instruction.word && instruction.target == WordTarget::d &&
+            instruction.operation == RegisterOp::arithmetic_left);
   }
   const auto kind = instruction.kind;
   const bool arithmetic = kind == Kind::load || kind == Kind::store || kind == Kind::add ||
@@ -129,6 +138,10 @@ bool induction(ResidentPlan &plan, const Address target) {
   if (counter == nullptr || (!counted && counter->instruction.kind != Kind::register_operation)) {
     return false;
   }
+  if (!counted && counter->instruction.operation != RegisterOp::index_increment &&
+      counter->instruction.operation != RegisterOp::index_decrement) {
+    return false;
+  }
   const auto word = native_word(counter->instruction);
   for (const auto &operation : plan.operations) {
     if (&operation != counter && (written_words(operation.instruction) & (1U << word)) != 0) {
@@ -149,7 +162,9 @@ unsigned value_lanes(const Instruction &instruction) {
   constexpr unsigned lane_b = 1U << 4U;
   const auto word = native_word(instruction);
   if (word != d) { return 1U << word; }
-  if (instruction.word) { return lane_a | lane_b; }
+  if (instruction.word) {
+    return lane_a | lane_b | (instruction.kind == Kind::multiply_divide ? (1U << 2U) : 0U);
+  }
   return instruction.accumulator_b ? lane_b : lane_a;
 }
 
@@ -241,14 +256,22 @@ void forward_operand(ResidentPlan &plan) {
 void analyze(ResidentPlan &plan) {
   unsigned live = flags_nzvc | flag_h;
   unsigned overwritten = 0;
-  bool last_zero = plan.operations.back().instruction.kind == Kind::branch;
+  const auto &last = plan.operations.back().instruction;
+  constexpr unsigned not_equal = 6;
+  constexpr unsigned equal = 7;
+  bool last_zero =
+      last.kind == Kind::branch && (last.condition == not_equal || last.condition == equal);
   for (auto position = plan.operations.rbegin(); position != plan.operations.rend(); ++position) {
     const auto &instruction = position->instruction;
     const auto changed = written_flags(instruction);
     const auto writes = written_words(instruction);
     position->flags = live & changed;
-    const bool stable_flags = position->pointer == nullptr || instruction.kind == Kind::load ||
-                              instruction.kind == Kind::store;
+    const bool native_result = instruction.kind == Kind::multiply_divide ||
+                               (instruction.kind == Kind::register_operation &&
+                                instruction.operation == RegisterOp::arithmetic_left);
+    const bool stable_flags =
+        !native_result && (position->pointer == nullptr || instruction.kind == Kind::load ||
+                           instruction.kind == Kind::store);
     position->deferred =
         stable_flags && position->flags != 0 && (value_lanes(instruction) & overwritten) == 0;
     position->branch_zero = last_zero && (changed & flag_z) != 0;
@@ -257,7 +280,8 @@ void analyze(ResidentPlan &plan) {
       overwritten |= value_lanes(instruction) | (indexed_load(instruction) ? (1U << 1U) : 0U);
     }
     if (instruction.kind != Kind::nop && instruction.kind != Kind::branch) {
-      plan.used_words |= 1U << native_word(instruction);
+      plan.used_words |= (1U << native_word(instruction)) |
+                         (instruction.kind == Kind::multiply_divide ? (1U << 2U) : 0U);
       plan.dirty_words |= writes;
     }
     live &= ~changed;
@@ -284,6 +308,10 @@ unsigned native_word(const Instruction &instruction) {
 
 unsigned written_flags(const Instruction &instruction) {
   const auto kind = instruction.kind;
+  if (kind == Kind::multiply_divide) { return flag_n | flag_z | flag_c; }
+  if (kind == Kind::register_operation && instruction.operation == RegisterOp::arithmetic_left) {
+    return flags_nzvc;
+  }
   if (kind == Kind::add) { return flags_nzvc | (instruction.word ? 0U : flag_h); }
   if (kind == Kind::subtract || kind == Kind::compare) { return flags_nzvc; }
   if (kind == Kind::load || kind == Kind::store || kind == Kind::bit_and || kind == Kind::bit_or ||
@@ -294,6 +322,7 @@ unsigned written_flags(const Instruction &instruction) {
 }
 
 unsigned written_words(const Instruction &instruction) {
+  if (instruction.kind == Kind::multiply_divide) { return (1U << 3U) | (1U << 2U); }
   if (instruction.kind == Kind::load || instruction.kind == Kind::add ||
       instruction.kind == Kind::subtract || instruction.kind == Kind::bit_and ||
       instruction.kind == Kind::bit_or || instruction.kind == Kind::bit_xor ||
@@ -308,7 +337,8 @@ std::optional<ResidentPlan> resident_plan(const std::span<const BlockInstruction
   if (instructions.empty()) { return std::nullopt; }
   ResidentPlan plan;
   for (const auto &operation : instructions) {
-    const auto &instruction = operation.instruction;
+    auto instruction = operation.instruction;
+    if (instruction.kind == Kind::multiply_divide) { instruction.word = true; }
     if (!supported(instruction)) { return std::nullopt; }
     const Byte *data = nullptr;
     const bool access = instruction.addressing == Addressing::direct ||
