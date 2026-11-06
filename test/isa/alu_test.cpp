@@ -2,6 +2,7 @@
 #include "alu_model.hpp"
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
+#include "observed_core.hpp"
 #include "unary_model.hpp"
 
 #include <array>
@@ -9,6 +10,8 @@
 #include <exception>
 #include <iostream>
 #include <span>
+
+using cpu12::test::ObservedCore;
 
 namespace {
 using namespace cpu12;
@@ -36,7 +39,7 @@ struct Case {
   unsigned value, flags;
 };
 
-void unary_case(Core &core, const Case point) {
+void unary_case(ObservedCore &core, const Case point) {
   const auto op = point.operation;
   auto before = seed;
   before.ccr = static_cast<Byte>(point.flags);
@@ -60,7 +63,7 @@ void unary_case(Core &core, const Case point) {
   retired(core, std::array{op.opcode}, before, wanted);
 }
 
-void byte_domain(Core &core, const Operation operation) {
+void byte_domain(ObservedCore &core, const Operation operation) {
   for (unsigned value = 0; value <= byte_mask; ++value) {
     for (unsigned flags = 0; flags <= byte_mask; ++flags) {
       unary_case(core, {.operation = operation, .value = value, .flags = flags});
@@ -68,7 +71,7 @@ void byte_domain(Core &core, const Operation operation) {
   }
 }
 
-void byte_operations(Core &core) {
+void byte_operations(ObservedCore &core) {
   constexpr unsigned first_a = 0x40;
   constexpr unsigned first_b = 0x50;
   for (unsigned index = 0; index < functions.size(); ++index) {
@@ -85,7 +88,7 @@ void byte_operations(Core &core) {
   for (const auto operation : other) { byte_domain(core, operation); }
 }
 
-void word_operations(Core &core) {
+void word_operations(ObservedCore &core) {
   constexpr std::array<Operation, 2> operations{
       {{.opcode = 0x49, .function = Function::right, .word = true},
        {.opcode = 0x59, .function = Function::left, .word = true}}};
@@ -100,7 +103,7 @@ void word_operations(Core &core) {
   }
 }
 
-void index_operations(Core &core) {
+void index_operations(ObservedCore &core) {
   struct Index {
     Byte opcode;
     std::uint16_t Registers::*field;
@@ -131,7 +134,7 @@ void index_operations(Core &core) {
   }
 }
 
-void ccr_operations(Core &core) {
+void ccr_operations(ObservedCore &core) {
   constexpr std::array<Byte, 2> opcodes{0x10, 0x14};
   constexpr unsigned x_mask = 0x40;
   for (const auto opcode : opcodes) {
@@ -149,7 +152,7 @@ void ccr_operations(Core &core) {
   }
 }
 
-void refusals(Core &core) {
+void refusals(ObservedCore &core) {
   constexpr std::array<Byte, 4> unary{0x40, 0, 0, 0};
   constexpr std::array<Byte, 4> mask{0x14, 0, 0, 0};
   for (const auto input : {unary, mask}) {
@@ -168,7 +171,7 @@ void refusals(Core &core) {
 
 int main() {
   try {
-    Core core;
+    ObservedCore core;
     byte_operations(core);
     word_operations(core);
     index_operations(core);

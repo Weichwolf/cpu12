@@ -2,6 +2,7 @@
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
 #include "isa.hpp"
+#include "observed_core.hpp"
 
 #include <array>
 #include <cstddef>
@@ -10,6 +11,8 @@
 #include <span>
 #include <stdexcept>
 #include <vector>
+
+using cpu12::test::ObservedCore;
 
 namespace {
 using namespace cpu12;
@@ -191,7 +194,7 @@ auto predict(const std::span<const Operation> operations, const Byte ccr, const 
 }
 
 struct Port {
-  Core *core = nullptr;
+  ObservedCore *core = nullptr;
   const Snapshot *expected = nullptr;
   const Bytes *bytes = nullptr;
   unsigned reads = 0;
@@ -213,7 +216,7 @@ struct Device {
   Port port{.bytes = &bytes};
   Io io{.owner = &port, .read_word = Port::read};
   std::array<Ram, 3> regions;
-  Core core;
+  ObservedCore core;
 
   explicit Device(const std::span<Byte> code)
       : regions{Ram{.first = entry, .bytes = code, .writable = false},

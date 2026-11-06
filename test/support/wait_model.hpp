@@ -2,6 +2,7 @@
 #pragma once
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
+#include "observed_core.hpp"
 
 #include <array>
 #include <cstdint>
@@ -60,7 +61,7 @@ inline void check_frame(const Image &image, const Registers before, const Form f
   }
 }
 
-inline void enter(Core &core, const Image &image, const Registers before, const Form form) {
+inline void enter(ObservedCore &core, const Image &image, const Registers before, const Form form) {
   const auto result = core.run_instruction(form.bytes());
   require(result.retired == 1 && result.fault == Fault::none && result.state == form.state &&
               result.pc == before.pc && core.state().execution == form.state &&

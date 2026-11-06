@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
+#include "observed_core.hpp"
 #include "reset_model.hpp"
 
 #include <array>
@@ -8,7 +9,7 @@
 namespace cpu12::test::resetting {
 namespace {
 struct Bus {
-  Core *core = nullptr;
+  ObservedCore *core = nullptr;
   static constexpr Address initial_target = 0x1234;
   Address target = initial_target, observed = 0;
   Address vector_address = vector;
@@ -39,7 +40,7 @@ struct Bus {
 void failure_and_recovery() {
   Bus bus;
   Io io{.owner = &bus, .read_word = Bus::word};
-  Core core(Memory::external(), &io);
+  ObservedCore core(Memory::external(), &io);
   bus.core = &core;
   core.set_registers(seed);
   const auto result = core.reset(vector);
@@ -60,7 +61,7 @@ void failure_and_recovery() {
 void prior_data_failure() {
   Bus bus{.allow = true};
   Io io{.owner = &bus, .read = Bus::byte, .read_word = Bus::word};
-  Core core(Memory::external(), &io);
+  ObservedCore core(Memory::external(), &io);
   bus.core = &core;
   core.set_registers(seed);
   constexpr std::array<Byte, 3> load{0xb6, 0xab, 0xcd};
@@ -74,7 +75,7 @@ void prior_data_failure() {
 void missing_word() {
   Bus bus;
   Io io{.owner = &bus, .read = Bus::byte};
-  Core core(Memory::external(), &io);
+  ObservedCore core(Memory::external(), &io);
   bus.core = &core;
   core.set_registers(seed);
   const auto result = core.reset(vector);
@@ -94,7 +95,7 @@ void partial_window() {
     constexpr Byte low = 0xcd;
     std::array<Byte, 1> known{first == wrapped_vector ? high : low};
     Io io{.owner = &bus, .read_word = Bus::word};
-    Core core(Memory::window({.first = first, .bytes = known}), &io);
+    ObservedCore core(Memory::window({.first = first, .bytes = known}), &io);
     bus.core = &core;
     core.set_registers(seed);
     accept(core, wrapped_vector, seed, target);

@@ -45,7 +45,6 @@ void capture(const std::span<const Byte> code, const bool accepted = true) {
   const auto result = cpu12::detail::fetch(Memory::external(), context, Source::start);
   require(context.fault == Fault::none && result.supported == accepted &&
               result.size == code.size() && source.calls == code.size() &&
-              context.fetch_callbacks == code.size() &&
               std::ranges::equal(std::span(result.bytes).first(result.size), code),
           "Independent instruction shape fetches exactly its bytes, in order, across PC wrap");
   ++captures;

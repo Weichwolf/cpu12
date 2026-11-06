@@ -2,6 +2,7 @@
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
 #include "isa.hpp"
+#include "observed_core.hpp"
 
 #include <array>
 #include <cstddef>
@@ -10,6 +11,8 @@
 #include <iostream>
 #include <span>
 #include <stdexcept>
+
+using cpu12::test::ObservedCore;
 
 namespace {
 using namespace cpu12;
@@ -88,7 +91,7 @@ struct Device {
   Program code;
   Storage storage;
   std::array<Ram, 3> regions;
-  Core core;
+  ObservedCore core;
 
   Device(const Form form, const Store store, const bool knowledge)
       : code(program(form, store)),

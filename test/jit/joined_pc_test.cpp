@@ -2,6 +2,7 @@
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
 #include "isa.hpp"
+#include "observed_core.hpp"
 
 #include <algorithm>
 #include <array>
@@ -9,6 +10,8 @@
 #include <iostream>
 #include <span>
 #include <stdexcept>
+
+using cpu12::test::ObservedCore;
 
 namespace {
 using namespace cpu12;
@@ -20,7 +23,7 @@ void require(const bool condition, const char *message) {
 }
 
 struct Fetch {
-  const Core *core = nullptr;
+  const ObservedCore *core = nullptr;
   Registers expected;
   unsigned calls = 0;
   bool observed = true;
@@ -43,7 +46,7 @@ void fallthrough() {
                            Ram{.first = entry, .bytes = high, .writable = false}};
   Fetch fetch;
   Io io{.owner = &fetch, .fetch = Fetch::read};
-  Core core(Memory::mapped(regions), &io);
+  ObservedCore core(Memory::mapped(regions), &io);
   fetch.core = &core;
   constexpr Registers initial{
       .pc = entry, .d = product, .x = 123, .y = negative_one, .sp = 0x9000, .ccr = 2};
@@ -99,7 +102,7 @@ void relative() {
       Ram{.first = isa::stop.size(),
           .bytes = std::span(ram).subspan(isa::stop.size(), entry - isa::stop.size())},
       Ram{.first = entry, .bytes = std::span(ram).subspan(entry), .writable = false}};
-  Core core(Memory::mapped(regions));
+  ObservedCore core(Memory::mapped(regions));
   constexpr Registers initial{
       .pc = entry, .d = product, .x = 123, .y = negative_one, .sp = stack, .ccr = 2};
   for (unsigned repetition = 0; repetition < 2; ++repetition) {

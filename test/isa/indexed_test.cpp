@@ -2,6 +2,7 @@
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
 #include "indexed_model.hpp"
+#include "observed_core.hpp"
 #include "reference.hpp"
 
 #include <array>
@@ -13,6 +14,8 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+
+using cpu12::test::ObservedCore;
 
 namespace {
 using namespace cpu12;
@@ -50,7 +53,10 @@ std::uint16_t prepare(std::span<Byte> ram, const Form form, const Registers &bef
   return target;
 }
 
-void retired(Core &core, const Encoding &instruction, Registers wanted, const Registers before) {
+void retired(ObservedCore &core,
+             const Encoding &instruction,
+             Registers wanted,
+             const Registers before) {
   wanted.pc = static_cast<std::uint16_t>(static_cast<unsigned>(before.pc) + instruction.length);
   core.set_registers(before);
   const auto actual = core.run_instruction(instruction.view());
@@ -60,7 +66,10 @@ void retired(Core &core, const Encoding &instruction, Registers wanted, const Re
   ++checked;
 }
 
-void byte_arithmetic(Core &core, std::span<Byte> ram, const Form form, const Registers before) {
+void byte_arithmetic(ObservedCore &core,
+                     std::span<Byte> ram,
+                     const Form form,
+                     const Registers before) {
   constexpr unsigned indexed_delta = 0x20;
   constexpr std::array<unsigned, 16> immediate{0x86,
                                                0xc6,
@@ -107,7 +116,7 @@ std::uint8_t store_flags(const Registers before, const unsigned value, const boo
                                    (value == 0 ? 4U : 0U));
 }
 
-void byte_stores(Core &core, std::span<Byte> ram, const Form form, const Registers before) {
+void byte_stores(ObservedCore &core, std::span<Byte> ram, const Form form, const Registers before) {
   constexpr unsigned store_a = 0x6a;
   for (const bool b : {false, true}) {
     const auto address = prepare(ram, form, before);
@@ -124,7 +133,10 @@ void byte_stores(Core &core, std::span<Byte> ram, const Form form, const Registe
   }
 }
 
-void word_operations(Core &core, std::span<Byte> ram, const Form form, const Registers before) {
+void word_operations(ObservedCore &core,
+                     std::span<Byte> ram,
+                     const Form form,
+                     const Registers before) {
   for (const auto operation : words) {
     for (const auto operand : operands) {
       const auto address = prepare(ram, form, before);
@@ -148,7 +160,7 @@ void word_operations(Core &core, std::span<Byte> ram, const Form form, const Reg
 
 void matrix() {
   std::array<Byte, address_bytes> ram{};
-  Core core(Memory::unified(ram));
+  ObservedCore core(Memory::unified(ram));
   for (const auto form : forms()) {
     for (const auto before : seeds) {
       byte_arithmetic(core, ram, form, before);
@@ -212,7 +224,7 @@ void dynamic_window() {
   std::array<Byte, 16> ram{ram_value};
   Bus bus{.expected_address = port, .payload = bus_value};
   auto io = bus.io();
-  Core core(Memory::window({.first = start, .bytes = ram}), &io);
+  ObservedCore core(Memory::window({.first = start, .bytes = ram}), &io);
   constexpr std::array<Byte, 2> load{0xa6, 0};
   core.set_registers({.x = start});
   require(core.run_instruction(load).retired == 1 && core.registers().d == ram_value << byte_bits &&
@@ -241,7 +253,7 @@ void indirect_bus() {
   constexpr std::uint16_t source = 0xabcd;
   Bus bus{.expected_address = port, .target = pointer_address};
   auto io = bus.io();
-  Core core(Memory::external(), &io);
+  ObservedCore core(Memory::external(), &io);
   constexpr std::array<Byte, 4> store{0x6a, 0xe3, 0, 0};
   constexpr std::array<Byte, 4> load{0xa6, 0xe3, 0, 0};
   const Registers before{.pc = 0xfffe, .d = source, .x = pointer_address, .ccr = 0xff};
@@ -290,7 +302,7 @@ void indirect_bus() {
 }
 
 void refusals() {
-  Core core;
+  ObservedCore core;
   const auto before = seeds[0];
   constexpr std::array<Byte, 3> lea{0x19, 0x1a, 0x1b};
   constexpr std::array<Byte, 8> indirect{0xe3, 0xeb, 0xf3, 0xfb, 0xe7, 0xef, 0xf7, 0xff};

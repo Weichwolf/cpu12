@@ -2,12 +2,15 @@
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
 #include "isa.hpp"
+#include "observed_core.hpp"
 
 #include <array>
 #include <exception>
 #include <iostream>
 #include <span>
 #include <stdexcept>
+
+using cpu12::test::ObservedCore;
 
 namespace {
 using namespace cpu12;
@@ -18,7 +21,7 @@ void require(const bool condition, const char *message) {
   if (!condition) { throw std::runtime_error(message); }
 }
 
-void execute(Core &core, const Address pc) {
+void execute(ObservedCore &core, const Address pc) {
   auto initial = seed;
   initial.pc = pc;
   core.set_registers(initial);
@@ -39,7 +42,7 @@ void index() {
   constexpr Address last = 0xffff;
   rom[last] = isa::nop[0];
   const Ram image{.bytes = std::span(rom), .writable = false};
-  Core core(Memory::window(image));
+  ObservedCore core(Memory::window(image));
   for (unsigned page = 0; page < pages; ++page) {
     execute(core, static_cast<Address>((page << page_shift) | offset));
   }

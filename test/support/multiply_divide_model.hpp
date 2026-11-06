@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #pragma once
 #include "cpu12/core.hpp"
+#include "observed_core.hpp"
 
 #include <array>
 #include <cstdint>
@@ -85,7 +86,7 @@ inline Expected multiply(const Input input) {
   return {.registers = wanted};
 }
 
-inline void retired(Core &core, const Input input, const Expected expected) {
+inline void retired(ObservedCore &core, const Input input, const Expected expected) {
   core.set_registers(input.before);
   const auto code = encode(input.operation);
   const auto result = core.run_instruction(code.view());
@@ -106,5 +107,5 @@ inline void retired(Core &core, const Input input, const Expected expected) {
   if (expected.undefined_d || expected.defined_ccr != byte_mask) { ++policy_cases; }
 }
 
-void divisions(Core &core);
+void divisions(ObservedCore &core);
 }

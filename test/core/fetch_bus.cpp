@@ -2,6 +2,7 @@
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
 #include "fetch_model.hpp"
+#include "observed_core.hpp"
 
 #include <array>
 #include <stdexcept>
@@ -15,7 +16,7 @@ struct Bus {
   unsigned length = maximum_capture_bytes, failure = maximum_capture_bytes;
   unsigned calls = 0, reads = 0;
   std::array<Address, 16> addresses{};
-  Core *core = nullptr;
+  ObservedCore *core = nullptr;
   bool guarded = true;
   bool read_accepted = true;
 
@@ -53,7 +54,7 @@ void failed_phases() {
   for (unsigned phase = 0; phase < maximum_capture_bytes; ++phase) {
     Bus bus{.failure = phase};
     Io io{.owner = &bus, .read = Bus::read, .fetch = Bus::fetch};
-    Core core(Memory::external(), &io);
+    ObservedCore core(Memory::external(), &io);
     core.set_registers(seed);
     const auto result = core.step();
     require(
@@ -87,7 +88,7 @@ void unsupported() {
     bus.code[0] = bytes[0];
     bus.code[1] = bytes[1];
     Io io{.owner = &bus, .fetch = Bus::fetch};
-    Core core(Memory::external(), &io);
+    ObservedCore core(Memory::external(), &io);
     core.set_registers(seed);
     const auto result = core.step();
     const unsigned fetched = bytes[0] == 0 ? 1 : 2;
@@ -104,7 +105,7 @@ void unsupported() {
 void separation() {
   Bus bus;
   Io data_only{.owner = &bus, .read = Bus::read};
-  Core core(Memory::external(), &data_only);
+  ObservedCore core(Memory::external(), &data_only);
   core.set_registers(seed);
   require(core.run(0).retired == 0 && core.run(0).fault == Fault::none && bus.reads == 0,
           "Zero instruction budget has no memory or code effects");
@@ -115,7 +116,7 @@ void separation() {
   guarded.code[0] = nop;
   guarded.length = 1;
   Io io{.owner = &guarded, .fetch = Bus::fetch};
-  Core target(Memory::external(), &io);
+  ObservedCore target(Memory::external(), &io);
   guarded.core = &target;
   target.set_registers(seed);
   require(target.step().retired == 1 && guarded.guarded && guarded.calls == 1 &&
@@ -133,7 +134,7 @@ void seams() {
     std::array<Byte, 1> known{bus.code[position]};
     const auto first = static_cast<Address>(seed.pc + position);
     Io io{.owner = &bus, .fetch = Bus::fetch};
-    Core core(Memory::window({.first = first, .bytes = known}), &io);
+    ObservedCore core(Memory::window({.first = first, .bytes = known}), &io);
     core.set_registers(seed);
     auto expected = seed;
     expected.pc = 1;
@@ -154,7 +155,7 @@ void data_failure() {
   bus.code = code;
   bus.length = 3;
   Io io{.owner = &bus, .read = Bus::read, .fetch = Bus::fetch};
-  Core core(Memory::external(), &io);
+  ObservedCore core(Memory::external(), &io);
   core.set_registers(seed);
   const auto result = core.step();
   constexpr Address port = 0xff90;

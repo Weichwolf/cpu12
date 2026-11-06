@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
+#include "observed_core.hpp"
 #include "stack_model.hpp"
 
 #include <array>
@@ -16,7 +17,7 @@ struct Event {
 };
 
 struct Port {
-  Core *core = nullptr;
+  ObservedCore *core = nullptr;
   Registers before{};
   std::array<Byte, memory_bytes> ram{};
   std::array<Event, 4> events{};
@@ -71,7 +72,7 @@ struct Port {
   }
 };
 
-void refusal(Core &core,
+void refusal(ObservedCore &core,
              const std::span<const Byte> code,
              const Registers before,
              const RunResult fault) {
@@ -93,7 +94,7 @@ void inherent(const StackOp operation) {
   for (const bool accept : {false, true}) {
     Port port{.before = seeds[0], .accept_read = accept, .accept_write = accept};
     auto io = port.io();
-    Core core(Memory::external(), &io);
+    ObservedCore core(Memory::external(), &io);
     port.core = &core;
     core.set_registers(port.before);
     constexpr std::uint16_t operand = 0x1234;
@@ -147,7 +148,7 @@ void indirect_case(const Acceptance acceptance) {
   port.before.x = pointer;
   word(port.ram, pointer, target);
   auto io = port.io();
-  Core core(Memory::external(), &io);
+  ObservedCore core(Memory::external(), &io);
   port.core = &core;
   core.set_registers(port.before);
   const auto stack = static_cast<std::uint16_t>(static_cast<int>(port.before.sp) - 2);
@@ -197,7 +198,7 @@ void ordinary_calls() {
     for (const bool accept : {false, true}) {
       Port port{.before = seeds[0], .accept_write = accept};
       auto io = port.io();
-      Core core(Memory::external(), &io);
+      ObservedCore core(Memory::external(), &io);
       port.core = &core;
       core.set_registers(port.before);
       const auto code = std::span(point.code).first(point.length);
@@ -229,8 +230,8 @@ void window_seams() {
   for (const bool accept : {false, true}) {
     Port port{.before = seeds[0], .accept_write = accept};
     auto io = port.io();
-    Core core(Memory::window({.first = first, .bytes = std::span(port.ram).subspan(first, 1)}),
-              &io);
+    ObservedCore core(
+        Memory::window({.first = first, .bytes = std::span(port.ram).subspan(first, 1)}), &io);
     port.core = &core;
     core.set_registers(port.before);
     constexpr Byte untouched = 0xa5;

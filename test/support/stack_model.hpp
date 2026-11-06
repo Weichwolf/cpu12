@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #pragma once
 #include "cpu12/core.hpp"
+#include "observed_core.hpp"
 
 #include <array>
 #include <cstddef>
@@ -108,7 +109,7 @@ inline Registers expected(const StackOp operation, Registers before, const std::
   return before;
 }
 
-inline void retired(Core &core,
+inline void retired(ObservedCore &core,
                     const std::span<const Byte> code,
                     const Registers before,
                     const Registers wanted) {
@@ -120,7 +121,7 @@ inline void retired(Core &core,
   ++checked;
 }
 
-inline void call(Core &core,
+inline void call(ObservedCore &core,
                  const std::span<Byte> ram,
                  const std::span<const Byte> code,
                  const Registers before,

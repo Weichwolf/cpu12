@@ -2,6 +2,7 @@
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
 #include "irq_model.hpp"
+#include "observed_core.hpp"
 
 #include <array>
 #include <span>
@@ -25,7 +26,7 @@ constexpr std::array<Transfer, 6> sequence{
 
 struct Bus {
   Image image{};
-  Core *core = nullptr;
+  ObservedCore *core = nullptr;
   unsigned calls = 0, failure = 6;
   bool intact = true;
   std::array<Transfer, 16> trace{};
@@ -69,7 +70,7 @@ void failures() {
     Bus bus{.failure = phase};
     prepare_vector(bus.image, vector);
     Io io{.owner = &bus, .write = Bus::byte, .read_word = Bus::read, .write_word = Bus::word};
-    Core core(Memory::external(), &io);
+    ObservedCore core(Memory::external(), &io);
     bus.core = &core;
     core.set_registers(seed);
     if (phase == sequence.size()) {
@@ -118,7 +119,8 @@ void partial_ram() {
   prepare_vector(bus.image, vector);
   constexpr Address first = seed.sp - 9;
   Io io{.owner = &bus, .write = Bus::byte, .read_word = Bus::read, .write_word = Bus::word};
-  Core core(Memory::window({.first = first, .bytes = std::span(bus.image).subspan(first, 9)}), &io);
+  ObservedCore core(
+      Memory::window({.first = first, .bytes = std::span(bus.image).subspan(first, 9)}), &io);
   bus.core = &core;
   core.set_registers(seed);
   accept(core, seed, {.vector = vector}, bus.image);
@@ -128,7 +130,7 @@ void partial_ram() {
 }
 
 void missing_vector() {
-  Core core;
+  ObservedCore core;
   core.set_registers(seed);
   const auto result = core.interrupt({.vector = vector});
   require(!result.accepted && result.fault == Fault::memory_read && result.address == vector &&

@@ -3,10 +3,13 @@
 #include "cpu12/memory.hpp"
 #include "isa.hpp"
 #include "mapped_memory.hpp"
+#include "observed_core.hpp"
 
 #include <array>
 #include <exception>
 #include <iostream>
+
+using cpu12::test::ObservedCore;
 
 namespace {
 using namespace cpu12;
@@ -23,7 +26,7 @@ void byte_access() {
   auto grants = bytes.grants();
   Owner owner;
   auto io = owner.io();
-  Core core(Memory::mapped(grants), &io);
+  ObservedCore core(Memory::mapped(grants), &io);
   constexpr auto store = extended<isa::Opcode::staa_extended>(second + 3);
   constexpr auto load = extended<isa::Opcode::ldaa_extended>(second + 3);
   core.set_registers(seed);
@@ -56,7 +59,7 @@ void words() {
   const auto grants = bytes.grants();
   Owner owner;
   auto io = owner.io();
-  Core core(Memory::mapped(grants), &io);
+  ObservedCore core(Memory::mapped(grants), &io);
   constexpr auto store = extended<isa::Opcode::std_extended>(first + 1);
   constexpr auto load = extended<isa::Opcode::ldd_extended>(first + 1);
   core.set_registers(seed);
@@ -81,7 +84,7 @@ void words() {
 void modifying_and_indirect() {
   Storage bytes;
   const auto grants = bytes.grants();
-  Core core(Memory::mapped(grants));
+  ObservedCore core(Memory::mapped(grants));
   bytes.low[4] = maximum;
   bytes.low_known[4] = known_flag;
   core.set_registers(seed);

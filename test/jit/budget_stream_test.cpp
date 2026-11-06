@@ -2,6 +2,7 @@
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
 #include "isa.hpp"
+#include "observed_core.hpp"
 
 #include <algorithm>
 #include <array>
@@ -10,6 +11,8 @@
 #include <iostream>
 #include <span>
 #include <stdexcept>
+
+using cpu12::test::ObservedCore;
 
 namespace {
 using namespace cpu12;
@@ -132,7 +135,7 @@ struct Schedule {
   unsigned cap, seed;
 };
 
-void run(Core &core, Image &ram, Model &model, const Schedule schedule) {
+void run(ObservedCore &core, Image &ram, Model &model, const Schedule schedule) {
   const auto expected_instructions = (unsigned{model.registers.y} * 4U) + 1U;
   const auto before = core.statistics().native_instructions;
   core.set_registers(model.registers);
@@ -181,7 +184,7 @@ void exercise() {
                                .bytes = std::span(ram).subspan(entry, program.size()),
                                .writable = false},
                            Ram{.first = end, .bytes = std::span(ram).subspan(end)}};
-  Core core(Memory::mapped(regions));
+  ObservedCore core(Memory::mapped(regions));
   constexpr std::array<Address, 3> counts{1, 2, 7};
   constexpr std::array<unsigned, 7> caps{1, 2, 3, 4, 5, 7, 16};
   std::uint64_t compiled = 0;

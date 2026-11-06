@@ -2,6 +2,7 @@
 #pragma once
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
+#include "observed_core.hpp"
 
 #include <array>
 #include <cstdint>
@@ -28,7 +29,8 @@ inline Registers expected(const Registers before, const Address target) {
   return result;
 }
 
-inline void accept(Core &core, const Address at, const Registers before, const Address target) {
+inline void
+accept(ObservedCore &core, const Address at, const Registers before, const Address target) {
   const auto result = core.reset(at);
   require(
       result.accepted && result.fault == Fault::none && result.pc == before.pc &&

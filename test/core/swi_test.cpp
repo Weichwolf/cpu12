@@ -2,11 +2,14 @@
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
 #include "isa.hpp"
+#include "observed_core.hpp"
 
 #include <array>
 #include <exception>
 #include <iostream>
 #include <stdexcept>
+
+using cpu12::test::ObservedCore;
 
 namespace {
 using namespace cpu12;
@@ -52,7 +55,7 @@ void masks_and_return() {
     for (unsigned flags = 0; flags <= maximum_ccr; ++flags) {
       Image image{};
       set_vector(image);
-      Core core(Memory::unified(image));
+      ObservedCore core(Memory::unified(image));
       auto before = seed;
       before.pc = position;
       before.sp = position;
@@ -92,7 +95,7 @@ constexpr std::array<Transfer, 6> sequence{
 
 struct Bus {
   Image image{};
-  Core *core = nullptr;
+  ObservedCore *core = nullptr;
   unsigned calls = 0, refused = sequence.size();
   bool intact = true;
 
@@ -135,7 +138,7 @@ void refusals() {
   for (unsigned refused = 0; refused <= sequence.size(); ++refused) {
     Bus bus{.refused = refused};
     Io io{.owner = &bus, .write = &Bus::byte, .read_word = &Bus::read, .write_word = &Bus::word};
-    Core core(Memory::external(), &io);
+    ObservedCore core(Memory::external(), &io);
     bus.core = &core;
     core.set_registers(seed);
     const auto result = core.run_instruction(isa::swi);
@@ -175,7 +178,7 @@ void fetched() {
   set_vector(image);
   image[seed.pc] = isa::swi[0];
   image[handler] = isa::rti[0];
-  Core core(Memory::unified(image));
+  ObservedCore core(Memory::unified(image));
   core.set_registers(seed);
   const auto result = core.run(2);
   auto wanted = seed;

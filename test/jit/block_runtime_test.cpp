@@ -2,6 +2,7 @@
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
 #include "isa.hpp"
+#include "observed_core.hpp"
 
 #include <algorithm>
 #include <array>
@@ -9,6 +10,8 @@
 #include <iostream>
 #include <span>
 #include <stdexcept>
+
+using cpu12::test::ObservedCore;
 
 namespace {
 using namespace cpu12;
@@ -21,7 +24,7 @@ void require(const bool condition, const char *message) {
 struct Device {
   std::array<Byte, address_bytes> ram{};
   std::array<Ram, 3> regions;
-  Core core;
+  ObservedCore core;
 
   explicit Device(const std::span<const Byte> program)
       : regions{Ram{.first = 0, .bytes = std::span(ram).first(entry)},

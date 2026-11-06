@@ -2,12 +2,15 @@
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
 #include "isa.hpp"
+#include "observed_core.hpp"
 
 #include <array>
 #include <exception>
 #include <iostream>
 #include <span>
 #include <stdexcept>
+
+using cpu12::test::ObservedCore;
 
 namespace {
 using namespace cpu12;
@@ -29,7 +32,7 @@ struct Access {
 };
 
 struct Port {
-  Core *core = nullptr;
+  ObservedCore *core = nullptr;
   Registers expected;
   Address address = 0, value = 0;
   unsigned reads = 0, writes = 0;
@@ -136,7 +139,7 @@ Expected predict(const Registers before, const Layout layout, const Access acces
   return result;
 }
 
-void check_result(const Core &core,
+void check_result(const ObservedCore &core,
                   const Port &port,
                   const RunResult result,
                   const Layout layout,
@@ -168,7 +171,7 @@ unsigned exercise(const Layout layout, const Access access) {
   auto regions = grants(storage, layout);
   Port port;
   Io io{.owner = &port, .read_word = &Port::read, .write_word = &Port::write};
-  Core core(Memory::mapped(regions), &io);
+  ObservedCore core(Memory::mapped(regions), &io);
   const auto code = instruction(layout, access);
   constexpr unsigned flags_count = 256;
   for (unsigned ccr = 0; ccr < flags_count; ++ccr) {
@@ -208,7 +211,7 @@ unsigned read_only_byte_boundary() {
                            Ram{.first = at, .bytes = data, .writable = false}};
   Port port;
   Io io{.owner = &port, .read_word = &Port::read};
-  Core core(Memory::mapped(regions), &io);
+  ObservedCore core(Memory::mapped(regions), &io);
   for (unsigned value = 0; value <= byte_mask; ++value) {
     data[0] = static_cast<Byte>(value);
     for (unsigned ccr = 0; ccr <= byte_mask; ++ccr) {

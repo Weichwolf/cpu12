@@ -3,6 +3,7 @@
 #include "cpu12/memory.hpp"
 #include "isa.hpp"
 #include "mapped_memory.hpp"
+#include "observed_core.hpp"
 
 #include <array>
 #include <span>
@@ -25,7 +26,7 @@ void remapping() {
   bytes.low_known[0] = 1;
   bytes.high[0] = second_value;
   bytes.high_known[0] = 1;
-  Core core(Memory::mapped(a));
+  ObservedCore core(Memory::mapped(a));
   constexpr auto load = extended<isa::Opcode::ldaa_extended>(first);
   for (unsigned pass = 0; pass < 4; ++pass) {
     core.set_registers(seed);
@@ -47,7 +48,7 @@ void remapping() {
   a[0].bytes = {};
   core.set_registers(seed);
   require(core.run_instruction(load).retired == 1 && core.registers().d == second_result,
-          "Caller descriptor mutation cannot silently remap the Core's copied grants");
+          "Caller descriptor mutation cannot silently remap the ObservedCore's copied grants");
 }
 
 void alias_and_permissions() {
@@ -57,7 +58,7 @@ void alias_and_permissions() {
   grants[1].known = bytes.low_known;
   Owner owner;
   auto io = owner.io();
-  Core core(Memory::mapped(grants), &io);
+  ObservedCore core(Memory::mapped(grants), &io);
   constexpr auto store = extended<isa::Opcode::staa_extended>(first + 2);
   constexpr auto load = extended<isa::Opcode::ldaa_extended>(second + 2);
   core.set_registers(seed);
@@ -89,7 +90,7 @@ void fetch_and_boundaries() {
   bytes.high_known[0] = 1;
   Owner owner;
   auto io = owner.io();
-  Core core(Memory::mapped(grants), &io);
+  ObservedCore core(Memory::mapped(grants), &io);
   core.set_registers({.pc = second});
   require(core.step().retired == 1 && owner.reads == 0,
           "Normal architectural fetch uses a known mapped program byte directly");
@@ -112,7 +113,7 @@ void fetch_and_boundaries() {
 
 void boundary_state() {
   std::array<Byte, 64> bytes{};
-  Core core(Memory::unified(bytes));
+  ObservedCore core(Memory::unified(bytes));
   auto initial = seed;
   initial.sp = 0x20;
   initial.ccr = 0x10;

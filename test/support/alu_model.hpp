@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #pragma once
 #include "cpu12/core.hpp"
+#include "observed_core.hpp"
 
 #include <cstdint>
 #include <span>
@@ -28,7 +29,7 @@ inline Registers accumulator(Registers before, const bool b, const unsigned valu
   return before;
 }
 
-inline void retired(Core &core,
+inline void retired(ObservedCore &core,
                     const std::span<const Byte> code,
                     const Registers before,
                     const Registers wanted) {

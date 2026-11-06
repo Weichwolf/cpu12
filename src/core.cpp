@@ -362,11 +362,7 @@ EventResult Core::resume_from_stop() {
 }
 
 Statistics Core::statistics() const noexcept {
-  auto result = impl_->jit.statistics();
-  result.read_callbacks = impl_->context.read_callbacks;
-  result.write_callbacks = impl_->context.write_callbacks;
-  result.fetch_callbacks = impl_->context.fetch_callbacks;
-  return result;
+  return impl_->jit.statistics();
 }
 
 }

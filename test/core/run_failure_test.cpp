@@ -2,12 +2,15 @@
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
 #include "isa.hpp"
+#include "observed_core.hpp"
 
 #include <array>
 #include <exception>
 #include <iostream>
 #include <span>
 #include <stdexcept>
+
+using cpu12::test::ObservedCore;
 
 namespace {
 using namespace cpu12;
@@ -46,7 +49,7 @@ void exercise() {
                            Ram{.first = second, .bytes = second_code, .writable = false}};
   Port port;
   Io io{.owner = &port, .read_word = Port::read};
-  Core core(Memory::mapped(regions), &io);
+  ObservedCore core(Memory::mapped(regions), &io);
   constexpr RunResult failed{.retired = 4,
                              .fault = Fault::memory_read,
                              .pc = second,

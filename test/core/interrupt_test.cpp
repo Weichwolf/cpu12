@@ -2,17 +2,20 @@
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
 #include "interrupt_model.hpp"
+#include "observed_core.hpp"
 
 #include <array>
 #include <exception>
 #include <iostream>
+
+using cpu12::test::ObservedCore;
 
 namespace {
 using namespace cpu12;
 using namespace cpu12::test::interrupts;
 constexpr unsigned word_maximum = 0xffff, byte_maximum = 0xff;
 
-void literal_frame(Core &core, Image &image) {
+void literal_frame(ObservedCore &core, Image &image) {
   put(image, seed.sp, literal);
   core.set_registers(seed);
   constexpr Registers wanted{
@@ -20,7 +23,7 @@ void literal_frame(Core &core, Image &image) {
   accept(core, seed, wanted);
 }
 
-void stack_positions(Core &core, Image &image) {
+void stack_positions(ObservedCore &core, Image &image) {
   constexpr Byte before_guard = 0xa5;
   constexpr Byte after_guard = 0x5a;
   for (unsigned sp = 0; sp <= word_maximum; ++sp) {
@@ -42,7 +45,7 @@ void stack_positions(Core &core, Image &image) {
   }
 }
 
-void word_values(Core &core, Image &image) {
+void word_values(ObservedCore &core, Image &image) {
   constexpr std::array fields{&Registers::pc, &Registers::d, &Registers::x, &Registers::y};
   for (const auto field : fields) {
     for (unsigned value = 0; value <= word_maximum; ++value) {
@@ -55,7 +58,7 @@ void word_values(Core &core, Image &image) {
   }
 }
 
-void condition_codes(Core &core, Image &image) {
+void condition_codes(ObservedCore &core, Image &image) {
   for (unsigned old = 0; old <= byte_maximum; ++old) {
     for (unsigned saved = 0; saved <= byte_maximum; ++saved) {
       auto before = seed;
@@ -75,7 +78,7 @@ void fetched_return() {
   constexpr Byte nop = 0xa7;
   image[restored.pc] = nop;
   put(image, seed.sp, literal);
-  Core core(Memory::unified(image));
+  ObservedCore core(Memory::unified(image));
   core.set_registers(seed);
   auto wanted = expected(seed, restored);
   ++wanted.pc;
@@ -90,7 +93,7 @@ void fetched_return() {
 int main() {
   try {
     Image image{};
-    Core core(Memory::unified(image));
+    ObservedCore core(Memory::unified(image));
     literal_frame(core, image);
     stack_positions(core, image);
     word_values(core, image);

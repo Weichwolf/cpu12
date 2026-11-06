@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
+#include "observed_core.hpp"
 #include "reset_model.hpp"
 
 #include <algorithm>
@@ -8,12 +9,14 @@
 #include <exception>
 #include <iostream>
 
+using cpu12::test::ObservedCore;
+
 namespace {
 using namespace cpu12;
 using namespace cpu12::test::resetting;
 constexpr unsigned word_maximum = 0xffff;
 
-void vectors(Core &core, Image &image) {
+void vectors(ObservedCore &core, Image &image) {
   constexpr Byte high = 0x12;
   constexpr Byte low = 0x34;
   constexpr Address target = 0x1234;
@@ -29,7 +32,7 @@ void vectors(Core &core, Image &image) {
   }
 }
 
-void destinations(Core &core, Image &image) {
+void destinations(ObservedCore &core, Image &image) {
   constexpr unsigned byte_bits = 8;
   constexpr unsigned byte_mask = 0xff;
   for (unsigned target = 0; target <= word_maximum; ++target) {
@@ -40,7 +43,7 @@ void destinations(Core &core, Image &image) {
   }
 }
 
-void flags(Core &core, Image &image) {
+void flags(ObservedCore &core, Image &image) {
   constexpr Address target = 0xabcd;
   constexpr Byte high = 0xab;
   constexpr Byte low = 0xcd;
@@ -62,7 +65,7 @@ void connected_program() {
   std::ranges::copy(program, image.begin() + entry);
   image[vector] = 2;
   image[vector + 1U] = 0;
-  Core core(Memory::unified(image));
+  ObservedCore core(Memory::unified(image));
   core.set_registers(seed);
   constexpr Registers wanted{.pc = entry + program.size(),
                              .d = 0x8034,
@@ -85,7 +88,7 @@ void connected_program() {
 int main() {
   try {
     Image image{};
-    Core core(Memory::unified(image));
+    ObservedCore core(Memory::unified(image));
     vectors(core, image);
     destinations(core, image);
     flags(core, image);

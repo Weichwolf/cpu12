@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
+#include "observed_core.hpp"
 #include "tail_chain_model.hpp"
 
 #include <array>
 #include <exception>
 #include <iostream>
+
+using cpu12::test::ObservedCore;
 
 namespace {
 using namespace cpu12;
@@ -24,7 +27,7 @@ Address safe_vector(const Address stack) {
 
 void stack_positions() {
   Image image{};
-  Core core(Memory::unified(image));
+  ObservedCore core(Memory::unified(image));
   constexpr unsigned maximum = 0xffff;
   for (const auto kind : {InterruptKind::maskable, InterruptKind::xirq}) {
     for (unsigned sp = 0; sp <= maximum; ++sp) {
@@ -56,7 +59,7 @@ void stack_positions() {
 void flags() {
   Image image{};
   image[vector] = 4;
-  Core core(Memory::unified(image));
+  ObservedCore core(Memory::unified(image));
   constexpr unsigned maximum = 0xff;
   for (const auto kind : {InterruptKind::maskable, InterruptKind::xirq}) {
     for (unsigned old = 0; old <= maximum; ++old) {
@@ -88,7 +91,7 @@ void flags() {
 
 void vector_destinations() {
   Image image{};
-  Core core(Memory::unified(image));
+  ObservedCore core(Memory::unified(image));
   constexpr unsigned maximum = 0xffff;
   constexpr unsigned bits = 8;
   constexpr unsigned mask = 0xff;
@@ -120,7 +123,7 @@ void native_program() {
   image[target + 1U] = rti[0];
   image[second_handler] = nop[0];
   image[second_handler + 1U] = rti[0];
-  Core core(Memory::unified(image));
+  ObservedCore core(Memory::unified(image));
   core.set_registers(initial);
   require(core.reset(reset).accepted && core.run(2).retired == 2 &&
               core.state().execution == ExecutionState::waiting,

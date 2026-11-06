@@ -2,6 +2,7 @@
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
 #include "isa.hpp"
+#include "observed_core.hpp"
 
 #include <algorithm>
 #include <array>
@@ -13,6 +14,8 @@
 #include <span>
 #include <stdexcept>
 #include <vector>
+
+using cpu12::test::ObservedCore;
 
 namespace {
 using namespace cpu12;
@@ -296,7 +299,7 @@ struct Access {
 };
 
 struct StackPort {
-  Core *core = nullptr;
+  ObservedCore *core = nullptr;
   std::array<Byte, stack_bytes> *image = nullptr;
   Registers before{};
   std::array<Access, 5> expected{};
@@ -355,7 +358,7 @@ struct Device {
   std::array<Ram, 4> regions;
   StackPort port;
   Io io;
-  Core core;
+  ObservedCore core;
 
   explicit Device(Program &code, const bool external_stack = false)
       : regions{Ram{.first = entry, .bytes = code.code, .writable = false},

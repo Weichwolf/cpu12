@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
+#include "observed_core.hpp"
 #include "reference.hpp"
 
 #include <array>
@@ -137,7 +138,7 @@ void place(std::span<std::uint8_t> ram, const std::uint16_t address, const unsig
       static_cast<std::uint8_t>(value & byte_mask);
 }
 
-void run_case(cpu12::Core &core, const Case &test) {
+void run_case(cpu12::test::ObservedCore &core, const Case &test) {
   auto before = seed;
   before.*test.operation.field = static_cast<std::uint16_t>(test.left);
   before.ccr = test.ccr;
@@ -157,7 +158,9 @@ void run_case(cpu12::Core &core, const Case &test) {
   ++checked;
 }
 
-void arithmetic_matrix(cpu12::Core &core, std::span<std::uint8_t> ram, const Form form) {
+void arithmetic_matrix(cpu12::test::ObservedCore &core,
+                       std::span<std::uint8_t> ram,
+                       const Form form) {
   const auto address = form == Form::direct ? direct_address : extended_address;
   for (const auto &operation : operations) {
     for (const auto right : partners) {
@@ -177,7 +180,9 @@ void arithmetic_matrix(cpu12::Core &core, std::span<std::uint8_t> ram, const For
   }
 }
 
-void load_store_matrix(cpu12::Core &core, std::span<std::uint8_t> ram, const Form form) {
+void load_store_matrix(cpu12::test::ObservedCore &core,
+                       std::span<std::uint8_t> ram,
+                       const Form form) {
   const auto address = form == Form::direct ? direct_address : extended_address;
   for (unsigned value = 0; value < word_range; ++value) {
     place(ram, address, value);
@@ -255,7 +260,7 @@ void bus_contract() {
                .read = &WordBus::byte_read,
                .read_word = &WordBus::read,
                .write_word = &WordBus::write};
-  cpu12::Core core(cpu12::Memory::external(), &io);
+  cpu12::test::ObservedCore core(cpu12::Memory::external(), &io);
   for (const auto &operation : operations) {
     for (const auto right : partners) {
       bus.value = static_cast<std::uint16_t>(right);
@@ -314,7 +319,7 @@ void bus_contract() {
               read.address == bus.address && read.retired == 0 && core.registers() == seed,
           "Failed word reads cannot commit flags or destination registers");
   cpu12::Io missing_io{.owner = &bus, .read = &WordBus::byte_read};
-  cpu12::Core missing(cpu12::Memory::external(), &missing_io);
+  cpu12::test::ObservedCore missing(cpu12::Memory::external(), &missing_io);
   missing.set_registers(seed);
   require(missing.run_instruction(load.view()).fault == cpu12::Fault::memory_read &&
               bus.byte_calls == 0,
@@ -323,7 +328,7 @@ void bus_contract() {
 
 void boundaries_and_keys() {
   std::array<std::uint8_t, word_range> ram{};
-  cpu12::Core core(cpu12::Memory::unified(ram));
+  cpu12::test::ObservedCore core(cpu12::Memory::unified(ram));
   constexpr std::uint16_t last = 0xffff;
   constexpr unsigned pattern = 0x1234;
   place(ram, last, pattern);
@@ -363,7 +368,8 @@ void boundaries_and_keys() {
   bus.value = pattern;
   bus.ram_high = high.data();
   cpu12::Io io{.owner = &bus, .read_word = &WordBus::read, .write_word = &WordBus::write};
-  cpu12::Core mixed(cpu12::Memory::window({.first = port_address, .bytes = high}), &io);
+  cpu12::test::ObservedCore mixed(cpu12::Memory::window({.first = port_address, .bytes = high}),
+                                  &io);
   run_case(mixed,
            {.operation = operations[0],
             .form = Form::extended,
@@ -387,9 +393,9 @@ void boundaries_and_keys() {
 
 int main() {
   try {
-    require(cpu12::Core::native_supported(), "Native host required");
+    require(cpu12::test::ObservedCore::native_supported(), "Native host required");
     std::array<std::uint8_t, word_range> ram{};
-    cpu12::Core core(cpu12::Memory::unified(ram));
+    cpu12::test::ObservedCore core(cpu12::Memory::unified(ram));
     arithmetic_matrix(core, ram, Form::immediate);
     arithmetic_matrix(core, ram, Form::direct);
     arithmetic_matrix(core, ram, Form::extended);

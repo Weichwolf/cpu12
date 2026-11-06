@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
+#include "observed_core.hpp"
 #include "stack_model.hpp"
 
 #include <array>
@@ -8,6 +9,8 @@
 #include <exception>
 #include <iostream>
 #include <span>
+
+using cpu12::test::ObservedCore;
 
 namespace {
 using namespace cpu12;
@@ -21,7 +24,7 @@ struct Input {
   std::uint16_t operand;
 };
 
-void stack_case(Core &core, const std::span<Byte> ram, const Input input) {
+void stack_case(ObservedCore &core, const std::span<Byte> ram, const Input input) {
   const auto operation = input.operation;
   const auto before = input.before;
   const auto wanted = expected(operation, before, input.operand);
@@ -46,7 +49,7 @@ void stack_case(Core &core, const std::span<Byte> ram, const Input input) {
 
 void inherent_matrix() {
   std::array<Byte, memory_bytes> ram{};
-  Core core(Memory::unified(ram));
+  ObservedCore core(Memory::unified(ram));
   const auto start = checked;
   for (const auto operation : operations) {
     for (const auto seed : seeds) {
@@ -68,7 +71,7 @@ void inherent_matrix() {
 
 void full_word_domains() {
   std::array<Byte, memory_bytes> ram{};
-  Core core(Memory::unified(ram));
+  ObservedCore core(Memory::unified(ram));
   for (const auto operation : operations) {
     if (operation.width != 2) { continue; }
     for (unsigned operand = 0; operand < memory_bytes; ++operand) {
@@ -84,7 +87,7 @@ void full_word_domains() {
 
 void full_ccr_domains() {
   std::array<Byte, memory_bytes> ram{};
-  Core core(Memory::unified(ram));
+  ObservedCore core(Memory::unified(ram));
   constexpr StackOp pulc{.opcode = 0x38, .target = Target::ccr, .width = 1, .push = false};
   for (const auto position : positions) {
     for (unsigned old = 0; old <= byte_mask; ++old) {
@@ -103,7 +106,7 @@ void full_ccr_domains() {
 
 void full_byte_domains() {
   std::array<Byte, memory_bytes> ram{};
-  Core core(Memory::unified(ram));
+  ObservedCore core(Memory::unified(ram));
   for (const auto operation : operations) {
     if (operation.width != 1) { continue; }
     for (unsigned operand = 0; operand <= byte_mask; ++operand) {
@@ -117,7 +120,7 @@ void full_byte_domains() {
 
 void nested_program() {
   std::array<Byte, memory_bytes> ram{};
-  Core core(Memory::unified(ram));
+  ObservedCore core(Memory::unified(ram));
   constexpr std::uint16_t main_entry = 0x8000;
   constexpr std::uint16_t routine = 0x8100;
   constexpr std::uint16_t inner = 0x8110;
@@ -156,7 +159,7 @@ void nested_program() {
 }
 
 void refusals() {
-  Core core;
+  ObservedCore core;
   core.set_registers(seeds[0]);
   constexpr std::array<std::array<Byte, 4>, 4> incomplete{
       {{0x15, 0xe3, 0, 0}, {0x16, 0x12, 0, 0}, {0x17, 0x12, 0, 0}, {7, 0x12, 0, 0}}};

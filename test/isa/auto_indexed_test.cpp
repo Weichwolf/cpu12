@@ -2,6 +2,7 @@
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
 #include "indexed_model.hpp"
+#include "observed_core.hpp"
 #include "reference.hpp"
 
 #include <array>
@@ -13,6 +14,8 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+
+using cpu12::test::ObservedCore;
 
 namespace {
 using namespace cpu12;
@@ -60,7 +63,7 @@ void word(std::span<Byte> ram, const std::uint16_t address, const unsigned value
   ram[static_cast<std::uint16_t>(static_cast<unsigned>(address) + 1U)] = static_cast<Byte>(value);
 }
 
-void retired(Core &core,
+void retired(ObservedCore &core,
              const std::span<const Byte> code,
              Registers wanted,
              const Registers before) {
@@ -77,7 +80,10 @@ void retired(Core &core,
   ++checked;
 }
 
-void byte_operations(Core &core, std::span<Byte> ram, const Auto point, const Registers before) {
+void byte_operations(ObservedCore &core,
+                     std::span<Byte> ram,
+                     const Auto point,
+                     const Registers before) {
   constexpr std::array<unsigned, 16> operations{0x86,
                                                 0xc6,
                                                 0x8b,
@@ -125,7 +131,10 @@ void byte_operations(Core &core, std::span<Byte> ram, const Auto point, const Re
   }
 }
 
-void word_operations(Core &core, std::span<Byte> ram, const Auto point, const Registers before) {
+void word_operations(ObservedCore &core,
+                     std::span<Byte> ram,
+                     const Auto point,
+                     const Registers before) {
   const auto updated = point.updated(before);
   for (const auto operation : words) {
     for (const auto value : operands) {
@@ -146,7 +155,7 @@ void word_operations(Core &core, std::span<Byte> ram, const Auto point, const Re
   }
 }
 
-void effective_addresses(Core &core, const Auto point, const Registers before) {
+void effective_addresses(ObservedCore &core, const Auto point, const Registers before) {
   constexpr unsigned flag_values = 256;
   for (unsigned target = 0; target < fields.size(); ++target) {
     for (unsigned flags = 0; flags < flag_values; ++flags) {
@@ -161,7 +170,7 @@ void effective_addresses(Core &core, const Auto point, const Registers before) {
 
 void matrix() {
   std::array<Byte, address_bytes> ram{};
-  Core core(Memory::unified(ram));
+  ObservedCore core(Memory::unified(ram));
   for (unsigned base = 0; base < fields.size(); ++base) {
     for (int change = -8; change <= 8; ++change) {
       if (change == 0) { continue; }
@@ -191,7 +200,7 @@ void matrix() {
 }
 
 struct Port {
-  Core *core = nullptr;
+  ObservedCore *core = nullptr;
   Registers before{};
   std::uint16_t address = 0, payload = 0;
   unsigned reads = 0, writes = 0;
@@ -229,7 +238,7 @@ void faults() {
       const Auto point{.base = 0, .change = change, .pre = pre};
       Port port{.before = before, .address = point.address(before)};
       Io io{.owner = &port, .read_word = Port::read_word, .write_word = Port::write_word};
-      Core core(Memory::external(), &io);
+      ObservedCore core(Memory::external(), &io);
       port.core = &core;
       core.set_registers(before);
       const auto failure = core.run_instruction(point.code(store_x));
@@ -264,7 +273,7 @@ void faults() {
 
 void capture_keys() {
   std::array<Byte, address_bytes> ram{};
-  Core core(Memory::unified(ram));
+  ObservedCore core(Memory::unified(ram));
 
   struct Capture {
     std::array<Byte, 4> bytes;

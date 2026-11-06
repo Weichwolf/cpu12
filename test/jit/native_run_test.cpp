@@ -4,6 +4,7 @@
 #include "isa.hpp"
 #include "jit/arena.hpp"
 #include "jit/block.hpp"
+#include "observed_core.hpp"
 #include "runtime.hpp"
 
 #include <algorithm>
@@ -15,6 +16,8 @@
 #include <limits>
 #include <span>
 #include <stdexcept>
+
+using cpu12::test::ObservedCore;
 
 namespace {
 using namespace cpu12;
@@ -152,7 +155,7 @@ void sleep_boundaries() {
                                .writable = false},
                            Ram{.first = first + program.size(),
                                .bytes = std::span(ram).subspan(first + program.size())}};
-  Core core(Memory::mapped(regions));
+  ObservedCore core(Memory::mapped(regions));
   constexpr Byte disable_stop = 0x80;
   auto expected = seed;
   expected.pc = first + program.size();

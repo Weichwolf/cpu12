@@ -2,6 +2,7 @@
 #pragma once
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
+#include "observed_core.hpp"
 
 #include <array>
 #include <cstddef>
@@ -171,7 +172,7 @@ inline void require(const bool condition, const std::string_view message) {
   if (!condition) { throw std::runtime_error(std::string(message)); }
 }
 
-inline void retired(Core &core, const Point point, const Plan &wanted) {
+inline void retired(ObservedCore &core, const Point point, const Plan &wanted) {
   core.set_registers(point.before);
   const auto result = core.run_instruction(wanted.code.view());
   require(result.retired == 1 && result.fault == Fault::none && result.pc == point.before.pc &&

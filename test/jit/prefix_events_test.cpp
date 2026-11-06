@@ -2,6 +2,7 @@
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
 #include "isa.hpp"
+#include "observed_core.hpp"
 
 #include <algorithm>
 #include <array>
@@ -10,6 +11,8 @@
 #include <iostream>
 #include <span>
 #include <stdexcept>
+
+using cpu12::test::ObservedCore;
 
 namespace {
 using namespace cpu12;
@@ -180,7 +183,7 @@ void require(const bool condition, const char *message) {
 }
 
 struct Port {
-  const Core *core = nullptr;
+  const ObservedCore *core = nullptr;
   Storage *storage = nullptr;
   Snapshot expected;
   Address offered = 0;
@@ -262,7 +265,7 @@ struct Device {
   std::array<Ram, 3> regions{Ram{.first = entry, .bytes = program, .writable = false},
                              Ram{.first = data, .bytes = storage.data},
                              Ram{.first = stack, .bytes = storage.stack}};
-  Core core{Memory::mapped(regions), &io};
+  ObservedCore core{Memory::mapped(regions), &io};
 };
 
 unsigned scenario(Device &device, const Trace &trace, const Run run) {
@@ -321,7 +324,7 @@ unsigned scenario(Device &device, const Trace &trace, const Run run) {
       state.failure.retired = 0;
     }
     require(device.core.state() == state,
-            "Connected execution must publish exact complete Core state");
+            "Connected execution must publish exact complete ObservedCore state");
     ++boundaries;
     if (failed || index == instructions) { break; }
   }

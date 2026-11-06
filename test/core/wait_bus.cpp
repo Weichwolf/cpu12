@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
+#include "observed_core.hpp"
 #include "wait_model.hpp"
 
 #include <array>
@@ -16,7 +17,7 @@ struct Transfer {
 
 struct Bus {
   Image image{};
-  Core *core = nullptr;
+  ObservedCore *core = nullptr;
   Form form = forms[0];
   unsigned writes = 0, reads = 0, fetches = 0, failure = 5;
   bool intact = true, vector_allowed = true;
@@ -76,7 +77,7 @@ void write_phases() {
     for (unsigned phase = 0; phase < expected.size(); ++phase) {
       Bus bus{.form = form, .failure = phase};
       Io io{.owner = &bus, .write = Bus::byte, .write_word = Bus::word};
-      Core core(Memory::external(), &io);
+      ObservedCore core(Memory::external(), &io);
       bus.core = &core;
       core.set_registers(seed);
       const auto result = core.run_instruction(form.bytes());
@@ -116,7 +117,7 @@ void wake_phases() {
           .read_word = Bus::read,
           .write_word = Bus::word,
           .fetch = Bus::fetch};
-    Core core(Memory::external(), &io);
+    ObservedCore core(Memory::external(), &io);
     bus.core = &core;
     core.set_registers(seed);
     enter(core, bus.image, seed, form);
@@ -141,7 +142,7 @@ void wake_phases() {
 void partial_window() {
   Bus bus;
   Io io{.owner = &bus, .write = Bus::byte, .write_word = Bus::word};
-  Core core(Memory::unified(std::span(bus.image).first(3)), &io);
+  ObservedCore core(Memory::unified(std::span(bus.image).first(3)), &io);
   bus.core = &core;
   core.set_registers(seed);
   enter(core, bus.image, seed, forms[0]);

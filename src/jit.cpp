@@ -108,7 +108,6 @@ public:
     (*mapping.pages[address >> native_page_shift])[address & page_mask] = entry;
     ++statistics.compiled_entries;
     const auto result = enter_blocks(entry, registers, context, budget, mapping.native_regions);
-    statistics.native_instructions += result.retired;
     return result;
   }
 };
@@ -166,7 +165,6 @@ bool Jit::execute(const std::span<const std::uint8_t> bytes,
   }
   enter(found->second, registers, context);
   if (context.fault == Fault::none) {
-    ++impl_->statistics.native_instructions;
     if (context.cpu.irq_delay != 0) { --context.cpu.irq_delay; }
     if (context.cpu.returned_frame) {
       constexpr unsigned rti = 0x0b;
@@ -187,7 +185,6 @@ Jit::run_block(const std::uint32_t budget, Registers &registers, NativeContext &
   const auto *entry = page != nullptr ? page[address & page_mask] : nullptr;
   if (entry == nullptr) { return impl_->run_cold(budget, registers, context); }
   const auto result = enter_blocks(entry, registers, context, budget, mapping.native_regions);
-  impl_->statistics.native_instructions += result.retired;
   return result;
 }
 

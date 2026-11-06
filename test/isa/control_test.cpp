@@ -2,6 +2,7 @@
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
 #include "indexed_model.hpp"
+#include "observed_core.hpp"
 
 #include <array>
 #include <cstddef>
@@ -12,6 +13,8 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+
+using cpu12::test::ObservedCore;
 
 namespace {
 using namespace cpu12;
@@ -58,7 +61,7 @@ bool branch_taken(const Branch input) {
   return truth[input.condition];
 }
 
-void retired(Core &core,
+void retired(ObservedCore &core,
              const std::span<const Byte> code,
              const Registers before,
              const Registers wanted) {
@@ -71,7 +74,7 @@ void retired(Core &core,
 }
 
 void long_branches() {
-  Core core;
+  ObservedCore core;
   constexpr std::array<int, 9> displacements{-32768, -32767, -256, -1, 0, 1, 255, 32766, 32767};
   constexpr unsigned first_branch = 0x20;
   constexpr unsigned page = 0x18;
@@ -101,7 +104,7 @@ void long_branches() {
 }
 
 void extended_jumps() {
-  Core core;
+  ObservedCore core;
   constexpr std::array<std::uint16_t, 9> targets{
       0, 1, 0xff, 0x100, 0x7fff, 0x8000, 0xfffd, 0xfffe, 0xffff};
   constexpr Byte opcode = 6;
@@ -124,7 +127,7 @@ void extended_jumps() {
 
 void indexed_jumps() {
   std::array<Byte, address_bytes> ram{};
-  Core core(Memory::unified(ram));
+  ObservedCore core(Memory::unified(ram));
   constexpr Byte opcode = 5;
   constexpr std::uint16_t target = 0xa55a;
   for (const auto form : forms()) {
@@ -153,7 +156,7 @@ struct Auto {
   bool pre;
 };
 
-void auto_case(Core &core, const Auto point) {
+void auto_case(ObservedCore &core, const Auto point) {
   constexpr std::array<Field, 3> fields{&Registers::x, &Registers::y, &Registers::sp};
   constexpr Byte opcode = 5;
   constexpr unsigned auto_mode = 0x20;
@@ -177,7 +180,7 @@ void auto_case(Core &core, const Auto point) {
 }
 
 void auto_jumps() {
-  Core core;
+  ObservedCore core;
   for (unsigned base = 0; base < 3; ++base) {
     for (int delta = -8; delta <= 8; ++delta) {
       if (delta == 0) { continue; }
@@ -191,7 +194,7 @@ void auto_jumps() {
 }
 
 void dynamic_jumps() {
-  Core core;
+  ObservedCore core;
   constexpr Byte opcode = 5;
   constexpr std::array<Byte, 4> postbytes{0, 15, 16, 31};
   for (const auto postbyte : postbytes) {
@@ -211,7 +214,7 @@ void dynamic_jumps() {
 }
 
 struct Port {
-  Core *core = nullptr;
+  ObservedCore *core = nullptr;
   Registers before{};
   unsigned calls = 0;
   std::uint16_t address = 0, target = 0;
@@ -232,7 +235,7 @@ void indirect_faults() {
   constexpr std::uint16_t initial_target = 0x4321;
   Port port{.before = seeds[0], .address = pointer_address, .target = initial_target};
   Io io{.owner = &port, .read_word = Port::read};
-  Core core(Memory::external(), &io);
+  ObservedCore core(Memory::external(), &io);
   port.core = &core;
   core.set_registers(port.before);
   constexpr std::array<Byte, 4> code{5, 0xe3, 0xff, 0xff}; // JMP [$ffff,X], X=0.
@@ -256,7 +259,7 @@ void indirect_faults() {
 }
 
 void refusals() {
-  Core core;
+  ObservedCore core;
   constexpr std::array<Byte, 4> valid{0x18, 0x20, 0, 0};
   auto wanted = seeds[0];
   wanted.pc = 2;

@@ -2,6 +2,7 @@
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
 #include "isa.hpp"
+#include "observed_core.hpp"
 
 #include <array>
 #include <cstdint>
@@ -18,18 +19,18 @@ void require(const bool condition, const std::string_view message) {
   if (!condition) { throw std::runtime_error(std::string(message)); }
 }
 
-static_assert(
-    std::is_same_v<decltype(std::declval<const cpu12::Core &>().state()), const cpu12::State &>);
+static_assert(std::is_same_v<decltype(std::declval<const cpu12::test::ObservedCore &>().state()),
+                             const cpu12::State &>);
 
 void live_state() {
   std::array<cpu12::Byte, 64> bytes{};
-  cpu12::Core core(cpu12::Memory::unified(bytes));
+  cpu12::test::ObservedCore core(cpu12::Memory::unified(bytes));
   const auto &view = core.state();
   const auto *identity = &view;
   const cpu12::Registers before{.pc = 0x1234, .d = 0x5678, .sp = 0x8000, .ccr = 0xa5};
   core.set_registers(before);
   require(&core.state() == identity && view.registers == before,
-          "State is a stable read-only view of the actual Core-owned register storage");
+          "State is a stable read-only view of the actual ObservedCore-owned register storage");
   const auto nop = core.run_instruction(cpu12::isa::nop);
   auto after = before;
   ++after.pc;
@@ -55,7 +56,7 @@ void unified() {
   auto memory = cpu12::Memory::unified(bytes);
   require(memory.storage().bytes.data() == bytes.data() && memory.storage().first == 0,
           "Unified memory is a borrowed byte view without copying");
-  cpu12::Core core(memory);
+  cpu12::test::ObservedCore core(memory);
   bytes[data_address] = static_cast<std::uint8_t>(first_value >> 8U);
   auto result = core.run_instruction(memory.storage().bytes.first(3));
   require(result.retired == 1 && core.registers().d == first_value && core.registers().pc == 3,
@@ -85,7 +86,7 @@ void retained_code() {
   }
   bytes[program_bytes - cpu12::isa::stop.size()] = cpu12::isa::stop[0];
   bytes[program_bytes - 1] = cpu12::isa::stop[1];
-  cpu12::Core core(cpu12::Memory::unified(bytes));
+  cpu12::test::ObservedCore core(cpu12::Memory::unified(bytes));
   for (unsigned pass = 0; pass < 2; ++pass) {
     core.set_registers({.sp = stack});
     const auto result = core.run();
@@ -116,7 +117,7 @@ struct Device {
 void external() {
   Device device;
   cpu12::Io peripherals{.owner = &device, .read = &Device::read};
-  cpu12::Core core(cpu12::Memory::external(), &peripherals);
+  cpu12::test::ObservedCore core(cpu12::Memory::external(), &peripherals);
   constexpr auto instruction =
       cpu12::isa::program(cpu12::isa::opcode<cpu12::isa::Opcode::ldaa_extended>(),
                           std::array<cpu12::Byte, 2>{0xff, 0x90});
@@ -142,7 +143,8 @@ int main() {
     retained_code();
     external();
     validation();
-    std::cout << "Memory/Core/Io API, unified storage, retained native code and explicit external "
+    std::cout << "Memory/ObservedCore/Io API, unified storage, retained native code and explicit "
+                 "external "
                  "access passed.\n";
   } catch (const std::exception &error) {
     std::cerr << error.what() << '\n';

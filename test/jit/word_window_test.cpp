@@ -2,6 +2,7 @@
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
 #include "isa.hpp"
+#include "observed_core.hpp"
 
 #include <array>
 #include <cstddef>
@@ -10,6 +11,8 @@
 #include <iostream>
 #include <span>
 #include <stdexcept>
+
+using cpu12::test::ObservedCore;
 
 namespace {
 using namespace cpu12;
@@ -50,7 +53,7 @@ struct Storage {
 };
 
 struct Port {
-  Core *core = nullptr;
+  ObservedCore *core = nullptr;
   Registers before{};
   Address address = 0, value = 0;
   unsigned reads = 0, writes = 0;
@@ -93,7 +96,7 @@ bool admitted(const Case point, const Storage &storage) {
   return storage.known[offset] != 0 && storage.known[offset + 1U] != 0;
 }
 
-void one(Core &core, Port &port, Storage &storage, const Case point) {
+void one(ObservedCore &core, Port &port, Storage &storage, const Case point) {
   storage.bytes = backing;
   storage.known.fill(0x80);
   if (point.unknown) { storage.known[2] = 0; }
@@ -149,7 +152,7 @@ void exercise(const Layout layout) {
   Storage storage;
   Port port;
   Io io{.owner = &port, .read_word = Port::read, .write_word = Port::write};
-  Core core(
+  ObservedCore core(
       Memory::window({.first = layout.first,
                       .bytes = std::span(storage.bytes).subspan(1, layout.size),
                       .known = layout.knowledge ? std::span(storage.known).subspan(1, layout.size)
@@ -200,7 +203,7 @@ void exercise(const Layout layout) {
 }
 
 void byte_flags() {
-  Core core;
+  ObservedCore core;
   for (const auto opcode : {isa::Opcode::ldaa_immediate, isa::Opcode::eora_immediate}) {
     for (unsigned value = 0; value <= byte_mask; ++value) {
       for (unsigned ccr = 0; ccr <= byte_mask; ++ccr) {

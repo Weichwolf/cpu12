@@ -3,6 +3,7 @@
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
 #include "isa.hpp"
+#include "observed_core.hpp"
 
 #include <array>
 #include <stdexcept>
@@ -35,7 +36,7 @@ struct Storage {
 struct Owner {
   unsigned reads = 0, writes = 0, width = 0;
   Address address = 0;
-  Core *core = nullptr;
+  ObservedCore *core = nullptr;
   bool refused_remap = false;
 
   static bool read(void *owner, const Address address, Byte &value) noexcept {

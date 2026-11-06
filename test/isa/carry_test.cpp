@@ -3,6 +3,7 @@
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
 #include "indexed_model.hpp"
+#include "observed_core.hpp"
 
 #include <array>
 #include <cstdint>
@@ -49,7 +50,7 @@ Registers expected(const Input input, Registers before) {
   return before;
 }
 
-void one_case(Core &core,
+void one_case(ObservedCore &core,
               const std::span<const Byte> code,
               const Registers before,
               Registers updated,
@@ -66,7 +67,7 @@ void one_case(Core &core,
   retired(core, code, before, wanted);
 }
 
-void immediate(Core &core) {
+void immediate(ObservedCore &core) {
   for (const auto opcode : opcodes) {
     const bool b = (opcode & b_bit) != 0;
     for (unsigned right = 0; right < range; ++right) {
@@ -84,7 +85,7 @@ void immediate(Core &core) {
   }
 }
 
-void constant_memory(Core &core, const std::span<Byte> ram) {
+void constant_memory(ObservedCore &core, const std::span<Byte> ram) {
   constexpr std::uint16_t extended_address = 0xffff;
   constexpr Byte direct_address = 0xff;
   for (const auto opcode : opcodes) {
@@ -109,7 +110,7 @@ void constant_memory(Core &core, const std::span<Byte> ram) {
   }
 }
 
-void indexed_cases(Core &core, const std::span<Byte> ram) {
+void indexed_cases(ObservedCore &core, const std::span<Byte> ram) {
   constexpr std::array<Registers, 3> states{
       {{.pc = 0xfffe, .d = 0x80ff, .x = 0xffff, .y = 0, .sp = 1, .ccr = 0xff},
        {.pc = 0, .d = 0x7f80, .x = 0, .y = 0xffff, .sp = 0x8000, .ccr = 0x20},
@@ -149,7 +150,7 @@ struct Auto {
   bool pre;
 };
 
-void auto_case(Core &core, const std::span<Byte> ram, const Auto point) {
+void auto_case(ObservedCore &core, const std::span<Byte> ram, const Auto point) {
   constexpr std::array<indexed::Field, 3> fields{&Registers::x, &Registers::y, &Registers::sp};
   constexpr unsigned post = 0x10;
   constexpr unsigned auto_mode = 0x20;
@@ -181,7 +182,7 @@ void auto_case(Core &core, const std::span<Byte> ram, const Auto point) {
   }
 }
 
-void auto_cases(Core &core, const std::span<Byte> ram) {
+void auto_cases(ObservedCore &core, const std::span<Byte> ram) {
   for (unsigned base = 0; base < 3; ++base) {
     for (int delta = -8; delta <= 8; ++delta) {
       if (delta == 0) { continue; }
@@ -193,7 +194,7 @@ void auto_cases(Core &core, const std::span<Byte> ram) {
 }
 
 struct Port {
-  Core *core = nullptr;
+  ObservedCore *core = nullptr;
   Registers before{};
   Byte data = 0;
   unsigned calls = 0;
@@ -222,7 +223,7 @@ void external() {
       Port port{.before = seed, .data = operand};
       port.before.ccr = static_cast<Byte>((seed.ccr & (byte_mask ^ carry)) | cin);
       Io io{.owner = &port, .read = Port::read};
-      Core core(Memory::external(), &io);
+      ObservedCore core(Memory::external(), &io);
       port.core = &core;
       core.set_registers(port.before);
       const std::array code{static_cast<Byte>(opcode + extended_delta), Byte{0x20}, Byte{0}};
@@ -244,7 +245,7 @@ void external() {
 
 void carry_operations() {
   std::array<Byte, address_bytes> ram{};
-  Core core(Memory::unified(ram));
+  ObservedCore core(Memory::unified(ram));
   const auto start = checked;
   immediate(core);
   constant_memory(core, ram);

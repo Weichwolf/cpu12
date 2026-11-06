@@ -2,6 +2,7 @@
 #include "bits_model.hpp"
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
+#include "observed_core.hpp"
 
 #include <array>
 #include <cstdint>
@@ -9,7 +10,7 @@
 namespace cpu12::test::bits {
 namespace {
 struct Port {
-  Core *core = nullptr;
+  ObservedCore *core = nullptr;
   Registers before{};
   std::uint16_t address = 0x4000;
   Byte data = 0;
@@ -96,7 +97,7 @@ Capture capture(Port &port, const Case scene) {
   return {.code = code, .point = point};
 }
 
-void failed(Core &core, const Capture &captured, const Port &port, const unsigned value) {
+void failed(ObservedCore &core, const Capture &captured, const Port &port, const unsigned value) {
   core.set_registers(port.before);
   const auto result = core.run_instruction(captured.code.view());
   const auto fault = port.accept_read ? Fault::memory_write : Fault::memory_read;
@@ -129,7 +130,7 @@ void one(const Case scene) {
   Io io{.owner = &port,
         .read = Port::read,
         .write = scene.input.operation.branch ? nullptr : Port::write};
-  Core core(memory, &io);
+  ObservedCore core(memory, &io);
   port.core = &core;
   const auto data =
       modified(scene.input.operation, {.data = scene.input.data, .mask = scene.input.mask});

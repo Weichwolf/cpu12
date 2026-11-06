@@ -3,12 +3,15 @@
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
 #include "indexed_model.hpp"
+#include "observed_core.hpp"
 
 #include <array>
 #include <cstdint>
 #include <exception>
 #include <iostream>
 #include <span>
+
+using cpu12::test::ObservedCore;
 
 namespace {
 using namespace cpu12;
@@ -17,7 +20,7 @@ namespace indexed = cpu12::test::indexed;
 constexpr std::array<unsigned, 8> values{0, 1, 0x7f, 0x80, 0xfe, 0xff, 0x55, 0xaa};
 constexpr std::array<unsigned, 4> flags{0, 0xff, 0xa5, 0x5a};
 
-void one(Core &core, const std::span<Byte> ram, const Code &code, const Point point) {
+void one(ObservedCore &core, const std::span<Byte> ram, const Code &code, const Point point) {
   ram[point.address] = static_cast<Byte>(point.data);
   const auto left = static_cast<std::uint16_t>(point.address + 0xffffU);
   const auto right = static_cast<std::uint16_t>(point.address + 1U);
@@ -42,9 +45,9 @@ void complete_domain(const Layout layout) {
   std::array<Byte, address_bytes> ram{};
   constexpr std::uint16_t first = 0x80;
   constexpr unsigned size = 0x80;
-  Core core(layout.partial
-                ? Memory::window({.first = first, .bytes = std::span(ram).subspan(first, size)})
-                : Memory::unified(ram));
+  ObservedCore core(layout.partial ? Memory::window({.first = first,
+                                                     .bytes = std::span(ram).subspan(first, size)})
+                                   : Memory::unified(ram));
   const auto start = checked;
   for (const auto operation : operations) {
     for (unsigned mask = 0; mask <= byte_mask; ++mask) {
@@ -71,7 +74,7 @@ void complete_domain(const Layout layout) {
 
 void flag_domain() {
   std::array<Byte, address_bytes> ram{};
-  Core core(Memory::unified(ram));
+  ObservedCore core(Memory::unified(ram));
   for (const auto operation : operations) {
     for (unsigned mask = 0; mask <= byte_mask; ++mask) {
       for (unsigned ccr = 0; ccr <= byte_mask; ++ccr) {
@@ -102,7 +105,7 @@ Code indexed_code(const indexed::Form form, const Point point) {
 
 void indexed_cases() {
   std::array<Byte, address_bytes> ram{};
-  Core core(Memory::unified(ram));
+  ObservedCore core(Memory::unified(ram));
   for (const auto form : indexed::forms()) {
     if (form.indirect) { continue; }
     for (const auto operation : operations) {
@@ -133,7 +136,7 @@ struct Auto {
   bool pre;
 };
 
-void auto_case(Core &core, const std::span<Byte> ram, const Auto change) {
+void auto_case(ObservedCore &core, const std::span<Byte> ram, const Auto change) {
   constexpr std::array<indexed::Field, 3> fields{&Registers::x, &Registers::y, &Registers::sp};
   const auto raw = change.delta > 0 ? static_cast<unsigned>(change.delta - 1)
                                     : 16U - static_cast<unsigned>(-change.delta);
@@ -169,7 +172,7 @@ void auto_case(Core &core, const std::span<Byte> ram, const Auto change) {
 
 void auto_cases() {
   std::array<Byte, address_bytes> ram{};
-  Core core(Memory::unified(ram));
+  ObservedCore core(Memory::unified(ram));
   for (unsigned base = 0; base < 3; ++base) {
     for (int delta = -8; delta <= 8; ++delta) {
       if (delta == 0) { continue; }
@@ -185,7 +188,7 @@ void auto_cases() {
 
 void capture_tail_cache() {
   std::array<Byte, address_bytes> ram{};
-  Core core(Memory::unified(ram));
+  ObservedCore core(Memory::unified(ram));
   constexpr std::uint16_t address = 0x2000;
   constexpr Byte word_offset = 0xe2;
   constexpr int positive_limit = 127;
@@ -219,7 +222,7 @@ void capture_tail_cache() {
 }
 
 void refusals() {
-  Core core;
+  ObservedCore core;
   for (const auto form : indexed::forms()) {
     if (!form.indirect) { continue; }
     for (const auto operation : operations) {

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
+#include "observed_core.hpp"
 #include "tail_chain_model.hpp"
 
 #include <array>
@@ -23,7 +24,7 @@ constexpr std::array<Read, 6> sequence{{{.address = frame_sp, .width = 1},
 
 struct Bus {
   Image image{};
-  Core *core = nullptr;
+  ObservedCore *core = nullptr;
   Registers expected = restored(initial);
   unsigned reads = 0, writes = 0;
   bool vector_allowed = false, writes_allowed = false, intact = true;
@@ -89,7 +90,7 @@ void failed_vector() {
   put_frame(bus.image, initial.sp);
   bus.image[vector] = 4;
   auto io = transport(bus);
-  Core core(Memory::external(), &io);
+  ObservedCore core(Memory::external(), &io);
   bus.core = &core;
   restore_frame(core, initial);
   const auto ready = core.state();
@@ -125,7 +126,7 @@ void following_instruction() {
   put_frame(bus.image, initial.sp);
   bus.image[vector] = 4;
   auto io = transport(bus);
-  Core core(Memory::external(), &io);
+  ObservedCore core(Memory::external(), &io);
   bus.core = &core;
   restore_frame(core, initial);
   ++bus.expected.pc;

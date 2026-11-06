@@ -94,9 +94,8 @@ struct State {
 };
 
 struct Statistics {
-  std::uint64_t native_instructions = 0, compiled_entries = 0;
-  std::uint64_t read_callbacks = 0, write_callbacks = 0;
-  std::uint64_t fetch_callbacks = 0;
+  // Translation-only accounting; execution and transport observers belong to the owner.
+  std::uint64_t compiled_entries = 0;
 };
 
 // The board owns clocks, pending-source arbitration and acknowledgement. Native

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "cpu12/core.hpp"
+#include "observed_core.hpp"
 #include "reference.hpp"
 
 #include <array>
@@ -19,7 +20,7 @@ void require(const bool condition, const std::string_view message) {
   if (!condition) { throw std::runtime_error(std::string(message)); }
 }
 
-void arithmetic_case(cpu12::Core &core, const Input input) {
+void arithmetic_case(cpu12::test::ObservedCore &core, const Input input) {
   const bool b = (input.opcode & 0x40U) != 0;
   const auto d = b ? other_a | input.left : (input.left * values) | other_b;
   auto before = seed;
@@ -43,7 +44,7 @@ void arithmetic_case(cpu12::Core &core, const Input input) {
   ++cases;
 }
 
-void arithmetic(cpu12::Core &core) {
+void arithmetic(cpu12::test::ObservedCore &core) {
   constexpr std::array<unsigned, 16> opcodes{0x86,
                                              0xc6,
                                              0x8b,
@@ -104,7 +105,7 @@ bool take_branch(const BranchInput input) {
   }
 }
 
-void branches(cpu12::Core &core) {
+void branches(cpu12::test::ObservedCore &core) {
   constexpr std::array<int, 5> displacements{-128, -1, 0, 1, 127};
   for (unsigned condition = 0; condition < 16; ++condition) {
     for (const auto displacement : displacements) {
@@ -127,7 +128,7 @@ void branches(cpu12::Core &core) {
   }
 }
 
-void refusal(cpu12::Core &core) {
+void refusal(cpu12::test::ObservedCore &core) {
   const auto state = core.registers();
   const auto count = core.statistics().native_instructions;
   constexpr std::array<std::uint8_t, 1> unsupported{0};
@@ -153,9 +154,9 @@ void refusal(cpu12::Core &core) {
 
 int main() {
   try {
-    require(cpu12::Core::native_supported(),
+    require(cpu12::test::ObservedCore::native_supported(),
             "Native x86-64/Linux execution is required by this directed test");
-    cpu12::Core core;
+    cpu12::test::ObservedCore core;
     arithmetic(core);
     branches(core);
     refusal(core);

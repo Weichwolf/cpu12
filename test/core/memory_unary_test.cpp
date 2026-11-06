@@ -3,12 +3,15 @@
 #include "cpu12/memory.hpp"
 #include "indexed_model.hpp"
 #include "memory_unary_model.hpp"
+#include "observed_core.hpp"
 
 #include <array>
 #include <cstdint>
 #include <exception>
 #include <iostream>
 #include <span>
+
+using cpu12::test::ObservedCore;
 
 namespace {
 using namespace cpu12;
@@ -23,7 +26,7 @@ struct Point {
   unsigned data;
 };
 
-void one(Core &core,
+void one(ObservedCore &core,
          const std::span<Byte> ram,
          const std::span<const Byte> code,
          const Point point) {
@@ -41,7 +44,7 @@ void one(Core &core,
           "Unary memory operation accesses only its actual byte and preserves adjacent data");
 }
 
-void complete_matrix(Core &core, const std::span<Byte> ram, const std::uint16_t address) {
+void complete_matrix(ObservedCore &core, const std::span<Byte> ram, const std::uint16_t address) {
   for (const auto operation : operations) {
     const std::array code{
         operation.extended, static_cast<Byte>(address >> byte_bits), static_cast<Byte>(address)};
@@ -62,7 +65,7 @@ void complete_matrix(Core &core, const std::span<Byte> ram, const std::uint16_t 
   }
 }
 
-void indexed_cases(Core &core, const std::span<Byte> ram) {
+void indexed_cases(ObservedCore &core, const std::span<Byte> ram) {
   constexpr std::array<Registers, 3> states{
       {{.pc = 0xfffe, .d = 0x80ff, .x = 0, .y = 0x7fff, .sp = 0xffff, .ccr = 0xff},
        {.pc = 0, .d = 0x7f80, .x = 0xffff, .y = 0, .sp = 0x8000, .ccr = 0x20},
@@ -102,7 +105,7 @@ struct Auto {
   bool pre;
 };
 
-void auto_case(Core &core, const std::span<Byte> ram, const Auto point) {
+void auto_case(ObservedCore &core, const std::span<Byte> ram, const Auto point) {
   constexpr std::array<indexed::Field, 3> fields{&Registers::x, &Registers::y, &Registers::sp};
   constexpr unsigned auto_mode = 0x20;
   constexpr unsigned post = 0x10;
@@ -133,7 +136,7 @@ void auto_case(Core &core, const std::span<Byte> ram, const Auto point) {
   }
 }
 
-void auto_cases(Core &core, const std::span<Byte> ram) {
+void auto_cases(ObservedCore &core, const std::span<Byte> ram) {
   for (unsigned base = 0; base < 3; ++base) {
     for (int delta = -8; delta <= 8; ++delta) {
       if (delta == 0) { continue; }
@@ -146,7 +149,7 @@ void auto_cases(Core &core, const std::span<Byte> ram) {
 
 void native_matrix() {
   std::array<Byte, memory_bytes> ram{};
-  Core core(Memory::unified(ram));
+  ObservedCore core(Memory::unified(ram));
   constexpr std::uint16_t address = 0xffff;
   const auto start = checked;
   complete_matrix(core, ram, address);
@@ -162,7 +165,7 @@ void partial_native_matrix() {
   constexpr std::uint16_t first = 0x2000;
   constexpr std::uint16_t size = 0x100;
   constexpr std::uint16_t last = first + size - 1U;
-  Core core(Memory::window({.first = first, .bytes = std::span(ram).subspan(first, size)}));
+  ObservedCore core(Memory::window({.first = first, .bytes = std::span(ram).subspan(first, size)}));
   complete_matrix(core, ram, last);
   for (const auto operation : operations) {
     for (const auto address : {first, last}) {
@@ -187,7 +190,7 @@ void partial_native_matrix() {
 }
 
 void refusals() {
-  Core core;
+  ObservedCore core;
   core.set_registers(seed);
   constexpr std::array<std::array<Byte, 4>, 3> invalid{
       {{0x60, 0xe3, 0, 0}, {0x70, 0x20, 0, 0}, {0xf7, 0x20, 0, 0}}};

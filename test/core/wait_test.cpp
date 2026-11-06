@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
+#include "observed_core.hpp"
 #include "wait_model.hpp"
 
 #include <array>
@@ -9,13 +10,15 @@
 #include <iostream>
 #include <limits>
 
+using cpu12::test::ObservedCore;
+
 namespace {
 using namespace cpu12;
 using namespace cpu12::test::waits;
 
 void domains() {
   Image image{};
-  Core core(Memory::unified(image));
+  ObservedCore core(Memory::unified(image));
   constexpr unsigned maximum = 0xffff;
   for (const auto form : forms) {
     for (unsigned position = 0; position <= maximum; ++position) {
@@ -41,7 +44,7 @@ void domains() {
 
 void flags() {
   Image image{};
-  Core core(Memory::unified(image));
+  ObservedCore core(Memory::unified(image));
   constexpr unsigned maximum = 0xff;
   constexpr unsigned disabled = 0x80;
   for (const auto form : forms) {
@@ -68,7 +71,7 @@ void flags() {
 void idle_boundaries() {
   Image image{};
   for (const auto form : forms) {
-    Core core(Memory::unified(image));
+    ObservedCore core(Memory::unified(image));
     core.set_registers(seed);
     enter(core, image, seed, form);
     const auto before = core.registers();
@@ -109,7 +112,7 @@ void connected_program() {
     image[vector + 1U] = 0;
     image[handler] = 8;
     image[handler + 1U] = rti[0];
-    Core core(Memory::unified(image));
+    ObservedCore core(Memory::unified(image));
     core.set_registers(seed);
     require(core.reset(reset_vector).accepted,
             "Authored program begins with an actual reset vector");
@@ -140,7 +143,7 @@ void connected_program() {
 void cache_modes() {
   Image image{};
   image[vector] = 4;
-  Core core(Memory::unified(image));
+  ObservedCore core(Memory::unified(image));
   core.set_registers(seed);
   require(core.interrupt({.vector = vector}).accepted &&
               core.registers().sp == static_cast<Address>(seed.sp + address_bytes - 9U) &&
@@ -157,7 +160,7 @@ void cache_modes() {
 
 void masked_stop_wake() {
   Image image{};
-  Core core(Memory::unified(image));
+  ObservedCore core(Memory::unified(image));
   constexpr unsigned x = 0x40;
   for (unsigned ccr = 0; ccr < x * 2; ++ccr) {
     auto before = seed;
@@ -182,7 +185,7 @@ void wake_masks() {
   Image image{};
   image[vector] = 4;
   for (const auto form : forms) {
-    Core core(Memory::unified(image));
+    ObservedCore core(Memory::unified(image));
     auto before = seed;
     constexpr Byte masked = 0x70;
     before.ccr = masked;

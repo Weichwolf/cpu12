@@ -2,6 +2,7 @@
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
 #include "interrupt_model.hpp"
+#include "observed_core.hpp"
 
 #include <array>
 #include <span>
@@ -16,7 +17,7 @@ struct Read {
 
 struct Bus {
   Image image{};
-  Core *core = nullptr;
+  ObservedCore *core = nullptr;
   unsigned calls = 0, failure = 5, writes = 0;
   bool unchanged = true;
   std::array<Read, 16> trace{};
@@ -61,7 +62,7 @@ void all_external() {
     Bus bus{.failure = phase};
     put(bus.image, seed.sp, literal);
     Io io{.owner = &bus, .read = Bus::byte, .write = Bus::write, .read_word = Bus::word};
-    Core core(Memory::external(), &io);
+    ObservedCore core(Memory::external(), &io);
     bus.core = &core;
     core.set_registers(seed);
     if (phase == sequence.size()) {
@@ -98,7 +99,7 @@ void missing_word() {
   Bus bus;
   put(bus.image, seed.sp, literal);
   Io io{.owner = &bus, .read = Bus::byte};
-  Core core(Memory::external(), &io);
+  ObservedCore core(Memory::external(), &io);
   bus.core = &core;
   core.set_registers(seed);
   const auto result = core.run_instruction(rti);
@@ -112,7 +113,7 @@ void partial_window() {
   Bus bus;
   put(bus.image, seed.sp, literal);
   Io io{.owner = &bus, .read = Bus::byte, .read_word = Bus::word};
-  Core core(Memory::unified(std::span(bus.image).first(8)), &io);
+  ObservedCore core(Memory::unified(std::span(bus.image).first(8)), &io);
   bus.core = &core;
   core.set_registers(seed);
   accept(core, seed, expected(seed, restored));

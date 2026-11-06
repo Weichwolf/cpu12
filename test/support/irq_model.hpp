@@ -2,6 +2,7 @@
 #pragma once
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
+#include "observed_core.hpp"
 
 #include <array>
 #include <cstdint>
@@ -54,8 +55,10 @@ inline void prepare_vector(Image &image, const Address at) {
   image[static_cast<Address>(at + 1U)] = 0;
 }
 
-inline void
-accept(Core &core, const Registers before, const InterruptRequest request, const Image &image) {
+inline void accept(ObservedCore &core,
+                   const Registers before,
+                   const InterruptRequest request,
+                   const Image &image) {
   const auto result = core.interrupt(request);
   require(
       result.accepted && result.fault == Fault::none && result.pc == before.pc &&

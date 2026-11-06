@@ -2,6 +2,7 @@
 #pragma once
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
+#include "observed_core.hpp"
 
 #include <array>
 #include <cstddef>
@@ -88,7 +89,7 @@ inline Code absolute(const Point point, const bool direct) {
   return code;
 }
 
-inline void retired(Core &core, const Code &code, const Point point) {
+inline void retired(ObservedCore &core, const Code &code, const Point point) {
   core.set_registers(point.before);
   const auto result = core.run_instruction(code.view());
   require(result.retired == 1 && result.fault == Fault::none && result.pc == point.before.pc &&

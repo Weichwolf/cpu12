@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
+#include "observed_core.hpp"
 
 #include <array>
 #include <cstdint>
@@ -10,6 +11,8 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+
+using cpu12::test::ObservedCore;
 
 namespace {
 using namespace cpu12;
@@ -94,7 +97,7 @@ Registers expected(const Registers before, const unsigned postbyte) {
   return wanted;
 }
 
-void retired(Core &core,
+void retired(ObservedCore &core,
              const std::span<const Byte> code,
              const Registers before,
              const Registers wanted) {
@@ -117,7 +120,7 @@ struct Domain {
   bool destination;
 };
 
-void domain(Core &core, const Domain point) {
+void domain(ObservedCore &core, const Domain point) {
   const auto selector = point.destination ? point.postbyte % 8U : (point.postbyte / 16U) % 8U;
   const bool word = selector >= 4;
   const auto values = word ? word_values : byte_values;
@@ -137,7 +140,7 @@ void domain(Core &core, const Domain point) {
   }
 }
 
-void matrices(Core &core) {
+void matrices(ObservedCore &core) {
   constexpr unsigned factory = 3;
   for (unsigned postbyte = 0; postbyte < byte_values; ++postbyte) {
     const auto source = (postbyte / 16U) % 8U;
@@ -153,7 +156,7 @@ void matrices(Core &core) {
           "Each legal raw postbyte, including its ignored bit3, has its own correct cache entry");
 }
 
-void literal_overlaps(Core &core) {
+void literal_overlaps(ObservedCore &core) {
   struct Case {
     Byte postbyte;
     std::uint16_t d;
@@ -181,7 +184,7 @@ void literal_overlaps(Core &core) {
   }
 }
 
-void flagged_accumulator_transfers(Core &core) {
+void flagged_accumulator_transfers(ObservedCore &core) {
   constexpr Byte prefix = 0x18;
   constexpr Byte tab = 0x0e;
   constexpr Byte tba = 0x0f;
@@ -206,7 +209,7 @@ void flagged_accumulator_transfers(Core &core) {
   }
 }
 
-void refusals(Core &core) {
+void refusals(ObservedCore &core) {
   const auto before = core.registers();
   const auto count = core.statistics();
   unsigned factory_cases = 0;
@@ -240,7 +243,7 @@ void refusals(Core &core) {
 
 int main() {
   try {
-    Core core;
+    ObservedCore core;
     matrices(core);
     literal_overlaps(core);
     flagged_accumulator_transfers(core);

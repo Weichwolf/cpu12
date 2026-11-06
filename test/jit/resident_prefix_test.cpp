@@ -2,6 +2,7 @@
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
 #include "isa.hpp"
+#include "observed_core.hpp"
 
 #include <array>
 #include <cstddef>
@@ -10,6 +11,8 @@
 #include <iostream>
 #include <span>
 #include <stdexcept>
+
+using cpu12::test::ObservedCore;
 
 namespace {
 using namespace cpu12;
@@ -151,7 +154,7 @@ Trace predict(const Registers initial, const Form form) {
 }
 
 struct Port {
-  Core *core = nullptr;
+  ObservedCore *core = nullptr;
   Bytes *bytes = nullptr;
   Registers expected{};
   Bytes expected_bytes{};
@@ -173,7 +176,7 @@ struct Device {
   Port port{.bytes = &bytes};
   Io io{.owner = &port, .read_word = Port::read};
   std::array<Ram, 3> regions;
-  Core core;
+  ObservedCore core;
 
   explicit Device(const std::span<Byte> code)
       : regions{Ram{.first = entry, .bytes = code, .writable = false},

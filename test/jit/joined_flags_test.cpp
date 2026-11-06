@@ -2,6 +2,7 @@
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
 #include "isa.hpp"
+#include "observed_core.hpp"
 
 #include <algorithm>
 #include <array>
@@ -10,6 +11,8 @@
 #include <iostream>
 #include <span>
 #include <stdexcept>
+
+using cpu12::test::ObservedCore;
 
 namespace {
 using namespace cpu12;
@@ -113,7 +116,7 @@ Trace predict(const Registers initial) {
 }
 
 struct Port {
-  const Core *core = nullptr;
+  const ObservedCore *core = nullptr;
   Registers expected;
   bool accept = false, observed = true, mapped = false;
   unsigned reads = 0;
@@ -141,7 +144,7 @@ void frame(Image &ram, const Registers state) {
   std::ranges::copy(bytes, ram.begin() + stack - frame_size);
 }
 
-void check(Core &core, Port &port, Image &ram, const Trace &trace, const unsigned grant) {
+void check(ObservedCore &core, Port &port, Image &ram, const Trace &trace, const unsigned grant) {
   constexpr unsigned before_port = 6;
   const bool failed = !port.accept && !port.mapped && grant > before_port;
   const auto completed = failed ? before_port : grant;
@@ -186,7 +189,7 @@ void exercise() {
       Ram{.first = port_address + 2, .bytes = std::span(ram).subspan(port_address + 2)}};
   Port port;
   Io io{.owner = &port, .read_word = Port::read};
-  Core core(Memory::mapped(regions), &io);
+  ObservedCore core(Memory::mapped(regions), &io);
   port.core = &core;
   // Compile while the port bytes are known, then make them unknown without
   // rebinding or recompiling. Its future owner/fault boundary remains exact.

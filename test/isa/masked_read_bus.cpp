@@ -2,6 +2,7 @@
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
 #include "masked_read_model.hpp"
+#include "observed_core.hpp"
 
 #include <array>
 
@@ -15,7 +16,7 @@ constexpr Byte fallback_input = 0x85;
 void refused() {
   Bus bus{.value = mixed_input, .reject_selected = true};
   Io io{.owner = &bus, .read = Bus::read, .read_masked = Bus::masked};
-  Core core(Memory::external(), &io);
+  ObservedCore core(Memory::external(), &io);
   core.set_registers(seed);
   const auto result = core.run_instruction(branch);
   require(result.retired == 0 && result.fault == Fault::memory_read && result.pc == seed.pc &&
@@ -51,7 +52,7 @@ void refused() {
 void fault_masks() {
   Bus bus{.reject_selected = true};
   Io io{.owner = &bus, .read = Bus::read, .read_masked = Bus::masked};
-  Core core(Memory::external(), &io);
+  ObservedCore core(Memory::external(), &io);
   constexpr unsigned maximum = 0xff;
   constexpr Byte rejected_value = 0xa5;
   for (unsigned mask = 0; mask <= maximum; ++mask) {
@@ -72,7 +73,7 @@ void fault_masks() {
 void ordinary_fallback() {
   Bus bus{.value = fallback_input};
   Io io{.owner = &bus, .read = Bus::read};
-  Core core(Memory::external(), &io);
+  ObservedCore core(Memory::external(), &io);
   core.set_registers(seed);
   auto wanted = seed;
   wanted.pc = static_cast<Address>(seed.pc + branch.size());
@@ -82,7 +83,7 @@ void ordinary_fallback() {
               core.statistics().read_callbacks == 1,
           "Absent selected interface uses one actual qualified full-byte read before masking");
   ++checked;
-  Core missing;
+  ObservedCore missing;
   missing.set_registers(seed);
   const auto failure = missing.run_instruction(branch);
   require(failure.retired == 0 && failure.fault == Fault::memory_read &&
@@ -94,7 +95,7 @@ void ordinary_fallback() {
 void partial_knowledge() {
   Bus bus{.value = mixed_input, .known = 0x0f};
   Io io{.owner = &bus, .read = Bus::read, .read_masked = Bus::masked};
-  Core core(Memory::external(), &io);
+  ObservedCore core(Memory::external(), &io);
   core.set_registers(seed);
   auto wanted = seed;
   wanted.pc = static_cast<Address>(seed.pc + branch.size());
@@ -121,7 +122,7 @@ void read_modify_write() {
   for (const auto scene : cases) {
     Bus bus{.value = mixed_input};
     Io io{.owner = &bus, .read = Bus::read, .write = Bus::write, .read_masked = Bus::masked};
-    Core core(Memory::external(), &io);
+    ObservedCore core(Memory::external(), &io);
     const std::array<Byte, 4> code{scene[0], 0xab, 0xcd, scene[1]};
     auto before = seed;
     constexpr Byte all_flags = 0xff;
@@ -146,7 +147,7 @@ void known_ram() {
   image[port] = data;
   Bus bus{.allowed = false};
   Io io{.owner = &bus, .read = Bus::read, .read_masked = Bus::masked};
-  Core core(Memory::unified(image), &io);
+  ObservedCore core(Memory::unified(image), &io);
   core.set_registers(seed);
   constexpr std::array<Byte, 5> code{0x1f, 0xab, 0xcd, 0x0f, 2};
   auto wanted = seed;

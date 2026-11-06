@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #pragma once
 #include "cpu12/core.hpp"
+#include "observed_core.hpp"
 #include "unary_model.hpp"
 
 #include <array>
@@ -57,7 +58,7 @@ inline Registers expected(const Registers before,
   return updated;
 }
 
-inline void retired(Core &core,
+inline void retired(ObservedCore &core,
                     const std::span<const Byte> code,
                     const Registers before,
                     const Registers wanted) {

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "cpu12/core.hpp"
+#include "observed_core.hpp"
 
 #include <array>
 #include <cstdint>
@@ -9,6 +10,8 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+
+using cpu12::test::ObservedCore;
 
 namespace {
 using namespace cpu12;
@@ -87,7 +90,7 @@ struct State {
   unsigned value;
 };
 
-void one(Core &core, const Case point, const State state) {
+void one(ObservedCore &core, const Case point, const State state) {
   const auto before = counter(state.registers, point.target.reg, state.value);
   const auto value = static_cast<unsigned>(static_cast<int>(state.value) + point.operation.change +
                                            static_cast<int>(point.target.mask + 1U)) &
@@ -105,7 +108,7 @@ void one(Core &core, const Case point, const State state) {
   ++checked;
 }
 
-void value_domain(Core &core, const Case point) {
+void value_domain(ObservedCore &core, const Case point) {
   constexpr std::array<unsigned, 4> flags{0, byte_mask, 0xa5, 0x5a};
   for (unsigned value = 0; value <= point.target.mask; ++value) {
     if (point.target.mask == byte_mask) {
@@ -125,7 +128,7 @@ void value_domain(Core &core, const Case point) {
 }
 
 void counter_domains() {
-  Core core;
+  ObservedCore core;
   for (const auto target : targets) {
     for (const auto operation : operations) {
       for (const bool alias : {false, true}) {
@@ -141,7 +144,7 @@ void counter_domains() {
       "Every counter/operation and ignored-bit encoding caches separately with no memory helpers");
 }
 
-void displacement_domain(Core &core, const Case point) {
+void displacement_domain(ObservedCore &core, const Case point) {
   constexpr std::array<unsigned, 6> values{0, 1, 2, 0x7f, 0x80, word_mask};
   constexpr std::array<std::uint16_t, 5> pcs{0, 1, 0x7fff, 0xfffd, 0xffff};
   for (const auto pc : pcs) {
@@ -154,7 +157,7 @@ void displacement_domain(Core &core, const Case point) {
 }
 
 void all_displacements() {
-  Core core;
+  ObservedCore core;
   constexpr int first = -256;
   constexpr int last = 255;
   for (const auto target : targets) {
@@ -175,7 +178,7 @@ void all_displacements() {
 }
 
 void all_flags() {
-  Core core;
+  ObservedCore core;
   constexpr int positive_limit = 255;
   for (const auto target : targets) {
     for (const auto operation : operations) {
@@ -196,7 +199,7 @@ void all_flags() {
 }
 
 void postbytes_and_refusals() {
-  Core core;
+  ObservedCore core;
   for (unsigned postbyte = 0; postbyte <= byte_mask; ++postbyte) {
     const unsigned operation = postbyte / 64U;
     const unsigned selector = postbyte % 8U;
@@ -224,7 +227,7 @@ void postbytes_and_refusals() {
 }
 
 void repeated_loop() {
-  Core core;
+  ObservedCore core;
   auto before = seed;
   constexpr std::uint16_t loop_pc = 0x1000;
   before.pc = loop_pc;

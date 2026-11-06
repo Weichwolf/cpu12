@@ -2,6 +2,7 @@
 #include "accumulator_model.hpp"
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
+#include "observed_core.hpp"
 
 #include <array>
 #include <cstdint>
@@ -115,7 +116,7 @@ unsigned actual_input(const Registers before) {
          ((before.ccr & half_flag) != 0 ? half_index : 0U);
 }
 
-void unsupported(Core &core, const Registers before) {
+void unsupported(ObservedCore &core, const Registers before) {
   const auto native = core.statistics().native_instructions;
   const auto result = core.run_instruction(decimal_code);
   require(result.retired == 0 && result.fault == Fault::unsupported_state &&
@@ -128,7 +129,7 @@ void unsupported(Core &core, const Registers before) {
   ++unqualified;
 }
 
-void table_domain(Core &core) {
+void table_domain(ObservedCore &core) {
   const auto accepted = checked;
   const auto refused = unqualified;
   constexpr unsigned preserved_b = 0x5a;
@@ -162,7 +163,7 @@ unsigned packed_decimal(const unsigned value) {
   return ((value / 10U) * 16U) + (value % 10U);
 }
 
-void bcd_sum(Core &core, const unsigned left, const unsigned right, const unsigned carry) {
+void bcd_sum(ObservedCore &core, const unsigned left, const unsigned right, const unsigned carry) {
   constexpr unsigned decimal_range = 100;
   constexpr unsigned preserved_b = 0x5a;
   auto before = seed;
@@ -181,7 +182,7 @@ void bcd_sum(Core &core, const unsigned left, const unsigned right, const unsign
   retired(core, decimal_code, raw, wanted, qualified_flags);
 }
 
-void aba_sum(Core &core, const unsigned left, const unsigned right) {
+void aba_sum(ObservedCore &core, const unsigned left, const unsigned right) {
   constexpr unsigned decimal_range = 100;
   auto before = seed;
   before.d =
@@ -199,7 +200,7 @@ void aba_sum(Core &core, const unsigned left, const unsigned right) {
           qualified_flags);
 }
 
-void decimal_sums(Core &core) {
+void decimal_sums(ObservedCore &core) {
   constexpr unsigned maximum = 99;
   for (unsigned left = 0; left <= maximum; ++left) {
     for (unsigned right = 0; right <= maximum; ++right) {
@@ -225,7 +226,7 @@ struct Read {
 void fault_boundary() {
   Read read;
   Io io{.owner = &read, .read = Read::refused};
-  Core core(Memory::external(), &io);
+  ObservedCore core(Memory::external(), &io);
   core.set_registers(seed);
   constexpr std::array<Byte, 3> old_read{0xb6, 0x12, 0x34};
   const auto old = core.run_instruction(old_read);
@@ -264,7 +265,7 @@ void fault_boundary() {
 }
 }
 
-void decimal_cases(Core &core) {
+void decimal_cases(ObservedCore &core) {
   table_domain(core);
   decimal_sums(core);
   fault_boundary();

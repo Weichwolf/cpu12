@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
+#include "observed_core.hpp"
 #include "wait_model.hpp"
 
 #include <array>
@@ -11,7 +12,7 @@ namespace {
 void deferred_irq() {
   Image image{};
   image[vector] = 4;
-  Core core(Memory::unified(image));
+  ObservedCore core(Memory::unified(image));
   auto before = seed;
   constexpr Byte masked = 0x10;
   before.ccr = masked;
@@ -32,7 +33,7 @@ void deferred_irq() {
 void reset_boundaries() {
   Image image{};
   image[vector] = 4;
-  Core core(Memory::unified(image));
+  ObservedCore core(Memory::unified(image));
   for (const auto form : forms) {
     core.set_registers(seed);
     enter(core, image, seed, form);
@@ -61,7 +62,7 @@ void diagnostic_snapshot() {
           value = diagnostic;
           return false;
         }};
-  Core core(Memory::external(), &io);
+  ObservedCore core(Memory::external(), &io);
   core.set_registers(seed);
   constexpr std::array<Byte, 5> branch{0x1e, 0xab, 0xcd, 0x0f, 0};
   const auto result = core.run_instruction(branch);

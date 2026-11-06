@@ -2,6 +2,7 @@
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
 #include "indexed_model.hpp"
+#include "observed_core.hpp"
 #include "stack_model.hpp"
 
 #include <array>
@@ -17,7 +18,7 @@ constexpr Byte indexed_jsr = 0x15;
 constexpr Byte extended_jsr = 0x16;
 constexpr Byte direct_jsr = 0x17;
 
-void relative_calls(Core &core, const std::span<Byte> ram) {
+void relative_calls(ObservedCore &core, const std::span<Byte> ram) {
   constexpr Byte bsr = 7;
   for (int delta = -128; delta < 128; ++delta) {
     const std::array<Byte, 2> code{bsr, static_cast<Byte>(delta)};
@@ -34,7 +35,7 @@ void relative_calls(Core &core, const std::span<Byte> ram) {
   }
 }
 
-void fixed_case(Core &core,
+void fixed_case(ObservedCore &core,
                 const std::span<Byte> ram,
                 const std::span<const Byte> code,
                 const std::uint16_t target) {
@@ -53,7 +54,7 @@ void fixed_case(Core &core,
   }
 }
 
-void fixed_calls(Core &core, const std::span<Byte> ram) {
+void fixed_calls(ObservedCore &core, const std::span<Byte> ram) {
   for (unsigned target = 0; target <= byte_mask; ++target) {
     const std::array<Byte, 2> code{direct_jsr, static_cast<Byte>(target)};
     fixed_case(core, ram, code, static_cast<std::uint16_t>(target));
@@ -65,7 +66,7 @@ void fixed_calls(Core &core, const std::span<Byte> ram) {
   }
 }
 
-void indexed_calls(Core &core, const std::span<Byte> ram) {
+void indexed_calls(ObservedCore &core, const std::span<Byte> ram) {
   constexpr std::uint16_t indirect_target = 0x4321;
   for (const auto form : indexed::forms()) {
     const auto code = indexed::encode(form, indexed_jsr);
@@ -92,7 +93,7 @@ struct Auto {
   bool pre;
 };
 
-void auto_case(Core &core, const std::span<Byte> ram, const Auto point) {
+void auto_case(ObservedCore &core, const std::span<Byte> ram, const Auto point) {
   constexpr std::array<indexed::Field, 3> fields{&Registers::x, &Registers::y, &Registers::sp};
   constexpr unsigned auto_mode = 0x20;
   constexpr unsigned post_mode = 0x10;
@@ -115,7 +116,7 @@ void auto_case(Core &core, const std::span<Byte> ram, const Auto point) {
   }
 }
 
-void auto_calls(Core &core, const std::span<Byte> ram) {
+void auto_calls(ObservedCore &core, const std::span<Byte> ram) {
   for (unsigned base = 0; base < 3; ++base) {
     for (int delta = -8; delta <= 8; ++delta) {
       if (delta == 0) { continue; }
@@ -126,7 +127,7 @@ void auto_calls(Core &core, const std::span<Byte> ram) {
   }
 }
 
-void overlapping_pointers(Core &core, const std::span<Byte> ram) {
+void overlapping_pointers(ObservedCore &core, const std::span<Byte> ram) {
   constexpr std::uint16_t target = 0x1234;
   constexpr std::array<std::array<Byte, 4>, 2> codes{
       {{indexed_jsr, 0xf3, 0xff, 0xfe}, {indexed_jsr, 0xe3, 0, 0}}};
@@ -146,7 +147,7 @@ void overlapping_pointers(Core &core, const std::span<Byte> ram) {
 
 void calls() {
   std::array<Byte, memory_bytes> ram{};
-  Core core(Memory::unified(ram));
+  ObservedCore core(Memory::unified(ram));
   const auto start = checked;
   relative_calls(core, ram);
   fixed_calls(core, ram);

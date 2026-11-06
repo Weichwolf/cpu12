@@ -2,6 +2,7 @@
 #pragma once
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
+#include "observed_core.hpp"
 
 #include <array>
 #include <cstdint>
@@ -38,7 +39,8 @@ inline Registers restored(const Registers before, const Byte stacked = literal[0
   return result;
 }
 
-inline void restore_frame(Core &core, const Registers before, const Byte stacked = literal[0]) {
+inline void
+restore_frame(ObservedCore &core, const Registers before, const Byte stacked = literal[0]) {
   core.set_registers(before);
   const auto result = core.run_instruction(rti);
   require(result.retired == 1 && result.fault == Fault::none && result.pc == before.pc &&
@@ -48,7 +50,8 @@ inline void restore_frame(Core &core, const Registers before, const Byte stacked
           "boundary");
 }
 
-inline void accept(Core &core, const InterruptRequest request, const Address destination = target) {
+inline void
+accept(ObservedCore &core, const InterruptRequest request, const Address destination = target) {
   const auto before = core.registers();
   const auto retired = core.statistics().native_instructions;
   require(core.interrupt_frame_available() && core.interrupt_ready(request.kind),

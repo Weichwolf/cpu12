@@ -2,6 +2,7 @@
 #pragma once
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
+#include "observed_core.hpp"
 
 #include <array>
 #include <cstdint>
@@ -51,7 +52,7 @@ inline void put(Image &image, const Address sp, const std::array<Byte, 9> frame)
   }
 }
 
-inline void accept(Core &core, const Registers before, const Registers wanted) {
+inline void accept(ObservedCore &core, const Registers before, const Registers wanted) {
   const auto result = core.run_instruction(rti);
   require(result.retired == 1 && result.fault == Fault::none && result.pc == before.pc &&
               result.opcode == rti[0] && core.registers() == wanted,

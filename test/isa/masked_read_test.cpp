@@ -2,11 +2,14 @@
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
 #include "masked_read_model.hpp"
+#include "observed_core.hpp"
 
 #include <array>
 #include <exception>
 #include <iostream>
 #include <span>
+
+using cpu12::test::ObservedCore;
 
 namespace {
 using namespace cpu12;
@@ -57,7 +60,7 @@ bool taken(const Observation input) {
 void matrix() {
   Bus bus;
   Io io{.owner = &bus, .read = Bus::read, .read_masked = Bus::masked};
-  Core core(Memory::external(), &io);
+  ObservedCore core(Memory::external(), &io);
   constexpr unsigned maximum = 0xff;
   for (const auto &form : forms) {
     for (unsigned condition = 0; condition < 2; ++condition) {

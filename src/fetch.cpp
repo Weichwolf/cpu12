@@ -61,7 +61,6 @@ bool byte(Capture &capture, const Memory &ram, NativeContext &context, const Add
   } else {
     bool accepted = false;
     if (context.io.fetch != nullptr) {
-      ++context.fetch_callbacks;
       accepted = context.io.fetch(context.io.owner, address, value);
     }
     if (!accepted) {

@@ -2,6 +2,7 @@
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
 #include "isa.hpp"
+#include "observed_core.hpp"
 
 #include <array>
 #include <cstddef>
@@ -9,6 +10,8 @@
 #include <iostream>
 #include <span>
 #include <stdexcept>
+
+using cpu12::test::ObservedCore;
 
 namespace {
 using namespace cpu12;
@@ -47,7 +50,7 @@ void check(const Input input) {
     regions[1] = {.first = frame + 4, .bytes = storage.subspan(4)};
   }
   const auto memory = input.split ? Memory::mapped(regions) : Memory::window(regions[0]);
-  Core core(memory);
+  ObservedCore core(memory);
   core.set_registers(seed);
   const auto result = core.run_instruction(isa::stop);
   auto registers = seed;
@@ -99,7 +102,7 @@ void readonly_code() {
                                .bytes = std::span(ram).subspan(seed.pc, isa::stop.size()),
                                .writable = false},
                            Ram{.first = after, .bytes = std::span(ram).subspan(after)}};
-  Core core(Memory::mapped(regions));
+  ObservedCore core(Memory::mapped(regions));
   core.set_registers(seed);
   const auto result = core.run(1);
   auto registers = seed;

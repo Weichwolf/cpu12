@@ -2,12 +2,15 @@
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
 #include "move_model.hpp"
+#include "observed_core.hpp"
 
 #include <array>
 #include <cstdint>
 #include <exception>
 #include <iostream>
 #include <span>
+
+using cpu12::test::ObservedCore;
 
 namespace {
 using namespace cpu12;
@@ -21,7 +24,7 @@ constexpr Operand y{.mode = Mode::indexed, .index = {.base = &Registers::y, .pos
 constexpr Operand source_extended{.mode = Mode::extended, .address = 0xffff};
 constexpr Operand destination_extended{.mode = Mode::extended, .address = 0};
 
-void one(Core &core, const std::span<Byte> ram, const Point point) {
+void one(ObservedCore &core, const std::span<Byte> ram, const Point point) {
   const auto wanted = plan(point);
   const unsigned width = point.word ? 2 : 1;
   const auto low_source = static_cast<std::uint16_t>(wanted.source + 1U);
@@ -56,7 +59,7 @@ void one(Core &core, const std::span<Byte> ram, const Point point) {
   }
 }
 
-void data_domain(Core &core, const std::span<Byte> ram, Point point) {
+void data_domain(ObservedCore &core, const std::span<Byte> ram, Point point) {
   const unsigned limit = point.word ? word_mask : byte_mask;
   constexpr std::array<unsigned, 4> flags{0, byte_mask, 0xa5, 0x5a};
   for (unsigned data = 0; data <= limit; ++data) {
@@ -77,7 +80,7 @@ void data_domain(Core &core, const std::span<Byte> ram, Point point) {
 
 void value_domains() {
   std::array<Byte, address_bytes> ram{};
-  Core core(Memory::unified(ram));
+  ObservedCore core(Memory::unified(ram));
   const auto start = checked;
   for (const bool word : {false, true}) {
     for (const auto source : {Operand{}, source_extended, x}) {
@@ -99,7 +102,7 @@ void value_domains() {
 
 void indexed_pairs() {
   std::array<Byte, address_bytes> ram{};
-  Core core(Memory::unified(ram));
+  ObservedCore core(Memory::unified(ram));
   const auto forms = indexes();
   constexpr unsigned count = 236;
   constexpr unsigned data = 0xa55a;
@@ -127,7 +130,7 @@ void indexed_pairs() {
 
 void single_indexed() {
   std::array<Byte, address_bytes> ram{};
-  Core core(Memory::unified(ram));
+  ObservedCore core(Memory::unified(ram));
   constexpr unsigned data = 0x1234;
   for (const auto index : indexes()) {
     for (const bool word : {false, true}) {
@@ -157,7 +160,7 @@ void partial_ram() {
   constexpr std::uint16_t first = 0x2000;
   constexpr unsigned size = 0x100;
   constexpr std::uint16_t last_word = first + size - 2U;
-  Core core(Memory::window({.first = first, .bytes = std::span(ram).subspan(first, size)}));
+  ObservedCore core(Memory::window({.first = first, .bytes = std::span(ram).subspan(first, size)}));
   auto before = seed;
   before.x = first;
   before.y = last_word;
@@ -197,7 +200,7 @@ void block_copy() {
     ram[source + (i * 2U)] = static_cast<Byte>(data >> byte_bits);
     ram[source + (i * 2U) + 1U] = static_cast<Byte>(data);
   }
-  Core core(Memory::unified(ram));
+  ObservedCore core(Memory::unified(ram));
   auto initial = seed;
   initial.pc = entry;
   initial.y = source;
@@ -239,7 +242,7 @@ void block_copy() {
 }
 
 void refusals() {
-  Core core;
+  ObservedCore core;
   std::array<bool, byte_mask + 1U> valid{};
   for (const auto index : indexes()) { valid[index.postbyte] = true; }
   constexpr Byte prefix = 0x18;

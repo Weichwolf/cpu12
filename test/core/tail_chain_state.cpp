@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
+#include "observed_core.hpp"
 #include "tail_chain_model.hpp"
 
 #include <array>
@@ -11,7 +12,7 @@ namespace {
 void cached_modes() {
   Image image{};
   image[vector] = 4;
-  Core core(Memory::unified(image));
+  ObservedCore core(Memory::unified(image));
   core.set_registers(initial);
   require(!core.interrupt_frame_available() && core.interrupt({.vector = vector}).accepted &&
               core.run_instruction(rti).retired == 1 && core.registers() == initial,
@@ -49,7 +50,7 @@ void consecutive_returns() {
   constexpr Address destination = 0x1357;
   image[second + 7U] = high;
   image[second + 8U] = low;
-  Core core(Memory::unified(image));
+  ObservedCore core(Memory::unified(image));
   restore_frame(core, initial);
   require(core.run_instruction(rti).retired == 1 && core.registers().pc == destination &&
               core.registers().sp == second + 9U && core.interrupt_frame_available(),
@@ -63,7 +64,7 @@ void consecutive_returns() {
 void consumed_boundaries() {
   Image image{};
   image[vector] = 4;
-  Core core(Memory::unified(image));
+  ObservedCore core(Memory::unified(image));
   constexpr std::array<std::array<Byte, 2>, 3> instructions{
       {{0xa7, 0}, {0x86, 0x7f}, {0x10, 0xef}}};
   constexpr Address loaded_d = 0x7f34;
@@ -91,7 +92,7 @@ void fresh_boundaries() {
   Image image{};
   image[vector] = 4;
   put_frame(image, initial.sp);
-  Core core(Memory::unified(image));
+  ObservedCore core(Memory::unified(image));
   restore_frame(core, initial);
   core.set_registers(core.registers());
   require(!core.interrupt_frame_available() && !core.state().returned_frame,
@@ -107,7 +108,7 @@ void irq_deferral() {
   image[vector] = 4;
   constexpr Byte masked = 0x30;
   put_frame(image, initial.sp, masked);
-  Core core(Memory::unified(image));
+  ObservedCore core(Memory::unified(image));
   restore_frame(core, initial, masked);
   constexpr std::array<Byte, 2> cli{0x10, 0xef};
   require(core.run_instruction(cli).retired == 1 && !core.interrupt_frame_available() &&
@@ -127,7 +128,7 @@ void clocked_boundary() {
   Image image{};
   image[vector] = 4;
   put_frame(image, initial.sp);
-  Core core(Memory::unified(image));
+  ObservedCore core(Memory::unified(image));
   restore_frame(core, initial);
   auto expected = core.state();
   expected.returned_frame = false;

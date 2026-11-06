@@ -3,6 +3,7 @@
 #include "cpu12/memory.hpp"
 #include "isa.hpp"
 #include "multiply_divide_model.hpp"
+#include "observed_core.hpp"
 #include "resident_fixture.hpp"
 
 #include <array>
@@ -10,6 +11,8 @@
 #include <exception>
 #include <iostream>
 #include <span>
+
+using cpu12::test::ObservedCore;
 
 namespace {
 using namespace cpu12;
@@ -221,7 +224,7 @@ template <std::size_t size> struct SquareDevice {
   std::array<Byte, size> rom;
   SquareBytes bytes{};
   std::array<Ram, 3> regions;
-  Core core;
+  ObservedCore core;
 
   explicit SquareDevice(const std::array<Byte, size> program)
       : rom(program),

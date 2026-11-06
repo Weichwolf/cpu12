@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "accumulator_model.hpp"
 #include "cpu12/core.hpp"
+#include "observed_core.hpp"
 
 #include <array>
 #include <cstdint>
@@ -8,11 +9,13 @@
 #include <iostream>
 #include <span>
 
+using cpu12::test::ObservedCore;
+
 namespace {
 using namespace cpu12;
 using namespace cpu12::test::accumulator;
 
-void full_domain(Core &core, const Operation operation) {
+void full_domain(ObservedCore &core, const Operation operation) {
   const auto code = encode(operation);
   for (unsigned data = 0; data <= word_mask; ++data) {
     for (unsigned ccr = 0; ccr <= byte_mask; ++ccr) {
@@ -27,7 +30,7 @@ void full_domain(Core &core, const Operation operation) {
   }
 }
 
-void pc_wrap(Core &core) {
+void pc_wrap(ObservedCore &core) {
   constexpr std::array<std::uint16_t, 4> pcs{0, 1, 0xfffe, 0xffff};
   constexpr std::array<Operation, 3> operations{
       Operation::add, Operation::subtract, Operation::compare};
@@ -47,7 +50,7 @@ void pc_wrap(Core &core) {
   }
 }
 
-void aliases(Core &core) {
+void aliases(ObservedCore &core) {
   constexpr std::array<std::uint16_t, 8> bases{0, 1, 0xff, 0x100, 0x7fff, 0x8000, 0xfffe, 0xffff};
   constexpr std::array<unsigned, 4> flags{0, 0xff, 0xa5, 0x5a};
   constexpr std::array<std::array<std::uint8_t, 2>, 2> instructions{{{0x1a, 0xe5}, {0x19, 0xed}}};
@@ -73,7 +76,7 @@ void aliases(Core &core) {
 }
 
 void refusals() {
-  Core core;
+  ObservedCore core;
   constexpr std::array<std::array<std::uint8_t, 3>, 4> padded{
       {{0x18, 6, 0}, {0x18, 7, 0}, {0x18, 0x16, 0}, {0x18, 0x17, 0}}};
   for (const auto code : padded) {
@@ -91,7 +94,7 @@ void refusals() {
 
 int main() {
   try {
-    Core core;
+    ObservedCore core;
     full_domain(core, Operation::add);
     full_domain(core, Operation::subtract);
     full_domain(core, Operation::compare);

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #pragma once
 #include "cpu12/core.hpp"
+#include "observed_core.hpp"
 
 #include <array>
 #include <cstdint>
@@ -68,7 +69,7 @@ inline std::array<Byte, 2> encode(const Operation operation) {
   return {prefix, instructions.at(static_cast<unsigned>(operation))};
 }
 
-inline void retired(Core &core,
+inline void retired(ObservedCore &core,
                     const std::span<const Byte> code,
                     const Registers before,
                     const Registers wanted,
@@ -88,5 +89,5 @@ inline void retired(Core &core,
   ++checked;
 }
 
-void decimal_cases(Core &core);
+void decimal_cases(ObservedCore &core);
 }

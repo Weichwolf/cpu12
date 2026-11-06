@@ -2,6 +2,7 @@
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
 #include "move_model.hpp"
+#include "observed_core.hpp"
 
 #include <array>
 #include <cstdint>
@@ -19,7 +20,7 @@ struct Event {
 };
 
 struct Port {
-  Core *core = nullptr;
+  ObservedCore *core = nullptr;
   Registers before{};
   std::array<Byte, address_bytes> ram{};
   std::array<Event, 2> events{};
@@ -101,8 +102,11 @@ struct Contract {
   bool read, write, failed_read, failed_write;
 };
 
-void fault(
-    Core &core, const Point point, const Plan &wanted, const Contract access, const Port &port) {
+void fault(ObservedCore &core,
+           const Point point,
+           const Plan &wanted,
+           const Contract access,
+           const Port &port) {
   core.set_registers(point.before);
   const auto result = core.run_instruction(wanted.code.view());
   const auto kind = access.failed_read ? Fault::memory_read : Fault::memory_write;
@@ -157,7 +161,7 @@ void one(const Point point, const Acceptance accept) {
       accept.partial ? Memory::window({.first = ram_first,
                                        .bytes = std::span(port.ram).subspan(ram_first, ram_size)})
                      : Memory::external();
-  Core core(memory, &io);
+  ObservedCore core(memory, &io);
   port.core = &core;
   if (access.failed_read || access.failed_write) {
     fault(core, point, wanted, access, port);

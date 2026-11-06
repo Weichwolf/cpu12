@@ -1,12 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "cpu12/core.hpp"
 #include "multiply_divide_model.hpp"
+#include "observed_core.hpp"
 
 #include <array>
 #include <cstdint>
 #include <exception>
 #include <iostream>
 #include <span>
+
+using cpu12::test::ObservedCore;
 
 namespace {
 using namespace cpu12;
@@ -15,7 +18,7 @@ constexpr std::array<unsigned, 14> anchors{
     0, 1, 2, 3, 7, 0x7f, 0x80, 0xff, 0x100, 0x7fff, 0x8000, 0x8001, 0xfffe, 0xffff};
 constexpr std::array<unsigned, 4> flags{0, byte_mask, 0xa5, 0x5a};
 
-void byte_domain(Core &core) {
+void byte_domain(ObservedCore &core) {
   for (unsigned data = 0; data <= word_mask; ++data) {
     for (unsigned ccr = 0; ccr <= byte_mask; ++ccr) {
       auto before = seed;
@@ -27,7 +30,7 @@ void byte_domain(Core &core) {
   }
 }
 
-void word_domain(Core &core, const Operation operation) {
+void word_domain(ObservedCore &core, const Operation operation) {
   for (const auto anchor : anchors) {
     for (unsigned data = 0; data <= word_mask; ++data) {
       for (const auto ccr : flags) {
@@ -47,7 +50,7 @@ void word_domain(Core &core, const Operation operation) {
   }
 }
 
-void directed_flags(Core &core) {
+void directed_flags(ObservedCore &core) {
   constexpr std::array<std::uint16_t, 4> pcs{0, 1, 0xfffe, 0xffff};
   constexpr std::array<Operation, 3> operations{Operation::mul, Operation::emul, Operation::emuls};
   for (const auto operation : operations) {
@@ -67,7 +70,7 @@ void directed_flags(Core &core) {
   }
 }
 
-void literal_rounding(Core &core) {
+void literal_rounding(ObservedCore &core) {
   auto before = seed;
   constexpr std::uint16_t operands = 0x0fff;
   constexpr std::uint16_t product = 0x0ef1;
@@ -86,7 +89,7 @@ void literal_rounding(Core &core) {
 }
 
 void refusals() {
-  Core core;
+  ObservedCore core;
   constexpr std::array<std::array<std::uint8_t, 3>, 3> malformed{
       {{0x12, 0, 0}, {0x18, 0x10, 0}, {0x18, 0x13, 0}}};
   for (const auto code : malformed) {
@@ -104,7 +107,7 @@ void refusals() {
 
 int main() {
   try {
-    Core core;
+    ObservedCore core;
     byte_domain(core);
     word_domain(core, Operation::emul);
     word_domain(core, Operation::emuls);

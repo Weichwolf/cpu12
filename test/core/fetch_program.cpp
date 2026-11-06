@@ -3,6 +3,7 @@
 #include "cpu12/memory.hpp"
 #include "fetch_model.hpp"
 #include "isa.hpp"
+#include "observed_core.hpp"
 
 #include <algorithm>
 #include <array>
@@ -25,7 +26,7 @@ void default_run() {
   Storage storage{};
   std::ranges::copy(program, storage.begin() + start);
   auto expected_memory = storage;
-  Core core(Memory::unified(storage));
+  ObservedCore core(Memory::unified(storage));
   auto before = seed;
   before.ccr = 0;
   core.set_registers(before);
@@ -56,7 +57,7 @@ void loop() {
   for (const auto budget : budgets) {
     Storage storage{};
     std::ranges::copy(program, storage.begin() + start);
-    Core core(Memory::unified(storage));
+    ObservedCore core(Memory::unified(storage));
     core.set_registers(seed);
     const auto prefix = core.run(budget);
     require(prefix.retired == budget && prefix.fault == Fault::none,
@@ -86,7 +87,7 @@ void partial_budget_failure() {
   Storage storage{};
   constexpr std::array<Byte, 6> program{0x86, 0x7f, 0x8b, 1, 0xa7, 0};
   std::ranges::copy(program, storage.begin() + start);
-  Core core(Memory::unified(storage));
+  ObservedCore core(Memory::unified(storage));
   core.set_registers(seed);
   const auto result = core.run(10);
   constexpr Registers expected{
@@ -107,7 +108,7 @@ void calls() {
   constexpr Address target = 0x220;
   std::ranges::copy(caller, storage.begin() + start);
   std::ranges::copy(callee, storage.begin() + target);
-  Core core(Memory::unified(storage));
+  ObservedCore core(Memory::unified(storage));
   core.set_registers(seed);
   constexpr Registers expected{
       .pc = start + caller.size(), .d = 0x7daa, .y = seed.y, .sp = 0x8000, .ccr = 0xa1};
@@ -122,7 +123,7 @@ void changed_code() {
   Storage storage{};
   constexpr std::array<Byte, 7> program{0x86, 0x86, 0x7a, 2, 5, 0xa7, 0x35};
   std::ranges::copy(program, storage.begin() + start);
-  Core core(Memory::unified(storage));
+  ObservedCore core(Memory::unified(storage));
   auto before = seed;
   before.pc = start + 5;
   core.set_registers(before);
@@ -174,7 +175,7 @@ struct Bank {
 void bank_change() {
   Bank bank;
   Io io{.owner = &bank, .write = Bank::write, .fetch = Bank::fetch};
-  Core core(Memory::external(), &io);
+  ObservedCore core(Memory::external(), &io);
   auto before = seed;
   before.pc = start + 5;
   core.set_registers(before);

@@ -2,6 +2,7 @@
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
 #include "isa.hpp"
+#include "observed_core.hpp"
 
 #include <algorithm>
 #include <array>
@@ -9,6 +10,8 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+
+using cpu12::test::ObservedCore;
 
 namespace {
 using namespace cpu12;
@@ -46,15 +49,18 @@ Registers loaded(const Byte value) {
   return expected; // Both literal operands are positive/nonzero; LDAA clears N/Z/V.
 }
 
-void warm(Core &core) {
+void warm(ObservedCore &core) {
   core.set_registers(seed);
   const auto result = core.run(1);
   require(result.retired == 1 && result.fault == Fault::none &&
               core.registers() == loaded(original),
-          "Initial Core::run executes and warms the original target");
+          "Initial ObservedCore::run executes and warms the original target");
 }
 
-void check_replacement(Core &core, const unsigned budget, const char *scope, const Byte &operand) {
+void check_replacement(ObservedCore &core,
+                       const unsigned budget,
+                       const char *scope,
+                       const Byte &operand) {
   const auto result = core.run(budget);
   if (result.retired != budget || result.fault != Fault::none ||
       core.registers() != loaded(replacement)) {
@@ -69,7 +75,7 @@ void check_replacement(Core &core, const unsigned budget, const char *scope, con
 void host_change() {
   std::array<Byte, address_bytes> ram{};
   std::ranges::copy(target, ram.begin() + target_pc);
-  Core core(Memory::unified(ram));
+  ObservedCore core(Memory::unified(ram));
   warm(core);
   ram[target_pc + 1] = replacement;
   const auto expected_memory = ram;
@@ -85,7 +91,7 @@ void guest_change() {
   std::ranges::copy(target, ram.begin() + target_pc);
   auto expected_memory = ram;
   expected_memory[target_pc + 1] = replacement;
-  Core core(Memory::unified(ram));
+  ObservedCore core(Memory::unified(ram));
   warm(core);
   auto start = seed;
   start.pc = writer_pc;
@@ -102,7 +108,7 @@ void physical_alias(const bool readonly_code) {
       {{.first = writer_pc, .bytes = program},
        {.first = target_pc, .bytes = executable, .writable = !readonly_code},
        {.first = alias_pc, .bytes = executable}}};
-  Core core(Memory::mapped(regions));
+  ObservedCore core(Memory::mapped(regions));
   warm(core);
   auto start = seed;
   start.pc = writer_pc;
@@ -138,6 +144,7 @@ int main() {
     std::cerr << "Failed code-coherence cases=" << failed << '\n';
     return 1;
   }
-  std::cout << "Warm Core::run fetches current code after host/guest/physical-alias writes\n";
+  std::cout
+      << "Warm ObservedCore::run fetches current code after host/guest/physical-alias writes\n";
   return 0;
 }

@@ -2,6 +2,7 @@
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
 #include "memory_unary_model.hpp"
+#include "observed_core.hpp"
 
 #include <array>
 #include <cstdint>
@@ -21,7 +22,7 @@ struct Acceptance {
 };
 
 struct Port {
-  Core *core = nullptr;
+  ObservedCore *core = nullptr;
   Registers before{};
   std::array<Byte, memory_bytes> ram{};
   std::array<Event, 4> events{};
@@ -173,7 +174,7 @@ Contract contract(const Port &port, const Case point, const Values data) {
   return wanted;
 }
 
-void check_failure(Core &core,
+void check_failure(ObservedCore &core,
                    const std::span<const Byte> code,
                    const Port &port,
                    const Contract wanted) {
@@ -212,7 +213,7 @@ void one(const Case point) {
       point.partial ? Memory::window({.first = ram_start,
                                       .bytes = std::span(port.ram).subspan(ram_start, ram_size)})
                     : Memory::external();
-  Core core(memory, &io);
+  ObservedCore core(memory, &io);
   port.core = &core;
   core.set_registers(port.before);
   const auto code = std::span(captured.code).first(captured.length);

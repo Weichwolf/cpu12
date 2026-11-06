@@ -2,16 +2,19 @@
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
 #include "irq_model.hpp"
+#include "observed_core.hpp"
 
 #include <array>
 #include <exception>
 #include <iostream>
 
+using cpu12::test::ObservedCore;
+
 namespace {
 using namespace cpu12;
 using namespace cpu12::test::irqs;
 
-void masks(Core &core, Image &image) {
+void masks(ObservedCore &core, Image &image) {
   constexpr unsigned maximum = 0xff;
   for (const auto kind : {InterruptKind::maskable, InterruptKind::xirq}) {
     const InterruptRequest request{
@@ -38,7 +41,7 @@ void masks(Core &core, Image &image) {
   }
 }
 
-void stack_positions(Core &core, Image &image) {
+void stack_positions(ObservedCore &core, Image &image) {
   constexpr unsigned maximum = 0xffff;
   for (unsigned sp = 0; sp <= maximum; ++sp) {
     auto before = seed;
@@ -63,7 +66,7 @@ void return_path() {
   constexpr Byte nop = 0xa7;
   image[handler] = rti;
   image[seed.pc] = nop;
-  Core core(Memory::unified(image));
+  ObservedCore core(Memory::unified(image));
   core.set_registers(seed);
   accept(core, seed, {.vector = vector}, image);
   auto wanted = seed;
@@ -77,7 +80,7 @@ void return_path() {
 void deferral() {
   Image image{};
   prepare_vector(image, vector);
-  Core core(Memory::unified(image));
+  ObservedCore core(Memory::unified(image));
   auto before = seed;
   constexpr Byte old_mask = 0x10;
   before.ccr = old_mask;
@@ -122,7 +125,7 @@ void deferral() {
 int main() {
   try {
     Image image{};
-    Core core(Memory::unified(image));
+    ObservedCore core(Memory::unified(image));
     masks(core, image);
     stack_positions(core, image);
     require(core.statistics().native_instructions == 0 && core.statistics().read_callbacks == 0 &&

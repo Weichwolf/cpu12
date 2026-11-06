@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "cpu12/core.hpp"
 #include "multiply_divide_model.hpp"
+#include "observed_core.hpp"
 
 #include <array>
 #include <cstdint>
@@ -107,14 +108,14 @@ Expected finite(const Input point) {
   return {.registers = wanted, .defined_ccr = overflow ? defined_overflow : byte_mask};
 }
 
-void one(Core &core, const Input point) {
+void one(ObservedCore &core, const Input point) {
   auto expected = point.before.x == 0 ? zero(point) : finite(point);
   expected.registers.pc =
       static_cast<std::uint16_t>(point.before.pc + encode(point.operation).length);
   retired(core, point, expected);
 }
 
-void sixteen_bit(Core &core, const Operation operation) {
+void sixteen_bit(ObservedCore &core, const Operation operation) {
   constexpr std::uint16_t unchanged_y = 0x5aa5;
   for (const auto divisor : anchors) {
     for (unsigned data = 0; data <= word_mask; ++data) {
@@ -134,7 +135,7 @@ struct Scene {
   std::uint16_t high, divisor;
 };
 
-void lower_domain(Core &core, const Operation operation) {
+void lower_domain(ObservedCore &core, const Operation operation) {
   constexpr std::array<Scene, 14> scenes{{{.high = 0, .divisor = 1},
                                           {.high = 0, .divisor = 0x8000},
                                           {.high = 0, .divisor = 0xffff},
@@ -163,7 +164,7 @@ void lower_domain(Core &core, const Operation operation) {
   }
 }
 
-void upper_domain(Core &core, const Operation operation) {
+void upper_domain(ObservedCore &core, const Operation operation) {
   constexpr std::array<unsigned, 4> words{0, 0x7fff, 0x8000, 0xffff};
   constexpr std::array<unsigned, 4> divisors{1, 0x7fff, 0x8000, 0xffff};
   for (unsigned high = 0; high <= word_mask; ++high) {
@@ -179,7 +180,7 @@ void upper_domain(Core &core, const Operation operation) {
   }
 }
 
-void divisor_domain(Core &core, const Operation operation) {
+void divisor_domain(ObservedCore &core, const Operation operation) {
   constexpr std::array<std::uint32_t, 14> dividends{0,
                                                     1,
                                                     0x7fff,
@@ -205,7 +206,7 @@ void divisor_domain(Core &core, const Operation operation) {
   }
 }
 
-void directed_flags(Core &core) {
+void directed_flags(ObservedCore &core) {
   constexpr std::array<Registers, 8> cases{{{.pc = 0xffff, .d = 0, .x = 0, .y = 0},
                                             {.pc = 0, .d = 0xffff, .x = 0, .y = 0x8000},
                                             {.pc = 0xfffe, .d = 0x8000, .x = 0xffff, .y = 0xffff},
@@ -225,7 +226,7 @@ void directed_flags(Core &core) {
 }
 }
 
-void divisions(Core &core) {
+void divisions(ObservedCore &core) {
   sixteen_bit(core, Operation::idiv);
   sixteen_bit(core, Operation::idivs);
   sixteen_bit(core, Operation::fdiv);

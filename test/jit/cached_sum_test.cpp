@@ -2,6 +2,7 @@
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
 #include "isa.hpp"
+#include "observed_core.hpp"
 
 #include <algorithm>
 #include <array>
@@ -13,6 +14,8 @@
 #include <span>
 #include <stdexcept>
 #include <vector>
+
+using cpu12::test::ObservedCore;
 
 namespace {
 using namespace cpu12;
@@ -167,7 +170,7 @@ struct Device {
   Program code;
   Storage ram;
   std::array<Ram, 5> regions;
-  Core core;
+  ObservedCore core;
 
   Device(const Form form, const bool counted, const bool alias)
       : code(program(form, counted)),
