@@ -6,6 +6,7 @@
 #include "jit/code.hpp"
 #include "jit/resident.hpp"
 
+#include <algorithm>
 #include <array>
 #include <bit>
 #include <cstddef>
@@ -81,9 +82,12 @@ void rex(Code &code, const std::uint8_t reg) {
 
 void preserve(Code &code, const ResidentPlan &plan, const bool restore, const LoopMode mode) {
   constexpr std::array<std::uint8_t, 5> registers{3, 5, 12, 13, 15};
+  const bool operand_cache = std::ranges::any_of(plan.operations, [](const auto &operation) {
+    return operation.cached_operand || operation.cache_store;
+  });
   const std::array needed{(plan.used_words & (1U << registers[0])) != 0,
                           (plan.used_words & (1U << registers[1])) != 0,
-                          plan.changed != 0,
+                          operand_cache,
                           mode == LoopMode::bounded,
                           plan.base != nullptr};
   constexpr std::uint8_t push = 0x50;
@@ -529,40 +533,45 @@ void copy_snapshot(Code &code, const FlagValue flag) {
   }
 }
 
+void merge_flag_group(Code &code, const FlagValue flag, const unsigned mask, const int shift) {
+  copy_snapshot(code, flag);
+  const auto distance = flag.boolean ? std::countr_zero(mask) : shift;
+  if (!flag.boolean) {
+    code.byte(and_eax);
+    code.u32(distance < 0 ? mask << static_cast<unsigned>(-distance)
+                          : mask >> static_cast<unsigned>(distance));
+  }
+  if (distance != 0) {
+    code.byte(shift_immediate);
+    code.byte(distance > 0 ? shift_left_eax : shift_right_eax);
+    code.byte(static_cast<std::uint8_t>(distance > 0 ? distance : -distance));
+  }
+  constexpr std::array<std::uint8_t, 2> merge{0x09, 0xc1};
+  code.raw(merge);
+}
+
 void publish_flags(Code &code, const ResidentPlan &plan, const EmissionState &state) {
   constexpr auto ccr = static_cast<std::uint8_t>(offsetof(Registers, ccr));
-  constexpr std::array<std::uint8_t, 4> load{0x44, 0x0f, 0xb6, 0x67};
+  // Guest words are already published; ECX is free and is never a flag snapshot.
+  constexpr std::array<std::uint8_t, 3> load{0x0f, 0xb6, 0x4f};
   code.raw(load);
   code.byte(ccr);
-  constexpr std::array<std::uint8_t, 3> retain{0x41, 0x81, 0xe4};
+  constexpr std::array<std::uint8_t, 2> retain{0x81, 0xe1};
   code.raw(retain);
   constexpr unsigned byte_mask = 0xff;
   code.u32(byte_mask & ~plan.changed);
-  constexpr std::array<unsigned, 5> bits{flag_c, flag_v, flag_z, flag_n, flag_h};
+  constexpr std::array<unsigned, 4> groups{flag_c, flag_v, flag_z | flag_n, flag_h};
+  constexpr std::array<int, 4> byte_shifts{0, 1, -4, 1};
+  constexpr std::array<int, 4> packed_shifts{-8, 1, -12, -7};
   for (const auto flag : state.flags) {
-    for (const auto &bit : bits) {
-      if ((flag.mask & bit) == 0) { continue; }
-      copy_snapshot(code, flag);
-      constexpr std::array<unsigned, 5> byte_sources{1, 1, 0x40, 0x80, 0x10};
-      constexpr std::array<unsigned, 5> packed_sources{0x100, 1, 0x4000, 0x8000, 0x1000};
-      unsigned source = 1;
-      if (!flag.boolean) {
-        const auto index = static_cast<std::size_t>(&bit - bits.data());
-        source = flag.packed ? packed_sources[index] : byte_sources[index];
-      }
-      code.byte(and_eax);
-      code.u32(source);
-      const auto distance = std::countr_zero(bit) - std::countr_zero(source);
-      if (distance != 0) {
-        code.byte(shift_immediate);
-        code.byte(distance > 0 ? shift_left_eax : shift_right_eax);
-        code.byte(static_cast<std::uint8_t>(distance > 0 ? distance : -distance));
-      }
-      constexpr std::array<std::uint8_t, 3> merge{0x41, 0x09, 0xc4};
-      code.raw(merge);
+    const auto &shifts = flag.packed ? packed_shifts : byte_shifts;
+    for (std::size_t index = 0; index < groups.size(); ++index) {
+      const auto mask = flag.mask & groups[index];
+      if (mask == 0) { continue; }
+      merge_flag_group(code, flag, mask, shifts[index]);
     }
   }
-  constexpr std::array<std::uint8_t, 3> store{0x44, 0x88, 0x67};
+  constexpr std::array<std::uint8_t, 2> store{0x88, 0x4f};
   code.raw(store);
   code.byte(ccr);
 }

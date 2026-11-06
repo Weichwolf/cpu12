@@ -190,7 +190,7 @@ RunResult Core::step() {
   return result;
 }
 
-RunResult Core::run(const std::uint32_t instruction_budget) {
+[[gnu::always_inline]] RunResult Core::run(const std::uint32_t instruction_budget) {
   RunResult result{.state = impl_->context.cpu.execution, .pc = impl_->context.cpu.registers.pc};
   if (impl_->active) {
     result.fault = Fault::reentrant;
