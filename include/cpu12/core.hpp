@@ -106,7 +106,6 @@ public:
   ~Core();
   Core(const Core &) = delete;
   Core &operator=(const Core &) = delete;
-  [[nodiscard]] static bool native_supported() noexcept;
   [[nodiscard]] Registers registers() const noexcept;
   // A live read-only view, valid for this Core lifetime; inspect on the execution owner.
   [[nodiscard]] const State &state() const noexcept;

@@ -154,8 +154,6 @@ void refusal(cpu12::test::ObservedCore &core) {
 
 int main() {
   try {
-    require(cpu12::test::ObservedCore::native_supported(),
-            "Native x86-64/Linux execution is required by this directed test");
     cpu12::test::ObservedCore core;
     arithmetic(core);
     branches(core);

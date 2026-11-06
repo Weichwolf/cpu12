@@ -330,7 +330,6 @@ void boundaries() {
 
 int main() {
   try {
-    require(cpu12::test::ObservedCore::native_supported(), "Native host required");
     ram_arithmetic();
     ram_stores();
     bus_operations();

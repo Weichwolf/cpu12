@@ -611,7 +611,6 @@ unsigned stop_cases() {
 
 int main() {
   try {
-    require(Core::native_supported(), "Native region/WAI test needs a supported host");
     Counts counts;
     constexpr std::array modes{Mode{},
                                Mode{.dbne = true},

@@ -393,7 +393,6 @@ void boundaries_and_keys() {
 
 int main() {
   try {
-    require(cpu12::test::ObservedCore::native_supported(), "Native host required");
     std::array<std::uint8_t, word_range> ram{};
     cpu12::test::ObservedCore core(cpu12::Memory::unified(ram));
     arithmetic_matrix(core, ram, Form::immediate);

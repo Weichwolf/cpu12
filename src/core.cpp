@@ -20,6 +20,21 @@
 
 namespace cpu12 {
 namespace {
+bool native_supported() noexcept {
+#if defined(__x86_64__) && defined(__linux__)
+  if (std::endian::native != std::endian::little) { return false; }
+  constexpr unsigned extended_features = 0x80000001;
+  constexpr unsigned lahf_lm = 1;
+  unsigned eax = 0;
+  unsigned ebx = 0;
+  unsigned ecx = 0;
+  unsigned edx = 0;
+  return __get_cpuid(extended_features, &eax, &ebx, &ecx, &edx) != 0 && (ecx & lahf_lm) != 0;
+#else
+  return false;
+#endif
+}
+
 std::uint32_t
 reset_vector(const Memory &ram, detail::NativeContext &context, const Address vector) noexcept {
   const auto *high = detail::known_byte(ram, vector);
@@ -34,7 +49,7 @@ class Core::Impl {
 public:
   Impl(const Memory &memory, const Io io) : context{.io = io}, jit(memory) {}
 
-  const bool supported = Core::native_supported();
+  const bool supported = native_supported();
   detail::NativeContext context;
   detail::Jit jit;
   bool active = false;
@@ -99,21 +114,6 @@ Core::Core(const Memory memory, Io *const io)
     : impl_(std::make_unique<Impl>(memory, io != nullptr ? *io : Io{})) {}
 
 Core::~Core() = default;
-
-bool Core::native_supported() noexcept {
-#if defined(__x86_64__) && defined(__linux__)
-  if (std::endian::native != std::endian::little) { return false; }
-  constexpr unsigned extended_features = 0x80000001;
-  constexpr unsigned lahf_lm = 1;
-  unsigned eax = 0;
-  unsigned ebx = 0;
-  unsigned ecx = 0;
-  unsigned edx = 0;
-  return __get_cpuid(extended_features, &eax, &ebx, &ecx, &edx) != 0 && (ecx & lahf_lm) != 0;
-#else
-  return false;
-#endif
-}
 
 Registers Core::registers() const noexcept {
   return impl_->context.cpu.registers;
