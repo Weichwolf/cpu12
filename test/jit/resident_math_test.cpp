@@ -6,6 +6,7 @@
 #include "resident_fixture.hpp"
 
 #include <array>
+#include <cstddef>
 #include <exception>
 #include <iostream>
 #include <span>
@@ -209,6 +210,129 @@ void nonlinear_loop() {
     }
   }
 }
+
+enum class Square : Byte { same, overlap, live_flags };
+constexpr Address square_data = 0x4000, square_alias = 0x5000;
+constexpr Address square_d = 0x1357, square_y = 0x2468;
+constexpr Byte square_guard = 0xa5;
+using SquareBytes = std::array<Byte, 8>;
+
+template <std::size_t size> struct SquareDevice {
+  std::array<Byte, size> rom;
+  SquareBytes bytes{};
+  std::array<Ram, 3> regions;
+  Core core;
+
+  explicit SquareDevice(const std::array<Byte, size> program)
+      : rom(program),
+        regions{Ram{.first = entry, .bytes = rom, .writable = false},
+                Ram{.first = square_data, .bytes = bytes},
+                Ram{.first = square_alias, .bytes = bytes}},
+        core(Memory::mapped(regions)) {}
+};
+
+struct SquarePoint {
+  Address value;
+  Byte flags;
+};
+
+Registers transfer(Registers state, const Address value) {
+  constexpr unsigned keep = 0xf1;
+  state.ccr = static_cast<Byte>((state.ccr & keep) | nz(value));
+  state.pc += 3;
+  return state;
+}
+
+template <isa::Opcode opcode, Square form> struct SquareCase {
+  static constexpr std::array<Byte, 2> source{0x40, 0}, high{0x40, 4}, low{0x40, 6};
+  static constexpr std::array<Byte, 2> alias{0x50, form == Square::overlap ? 1 : 0};
+  static constexpr auto program = [] {
+    constexpr auto inputs = isa::program(isa::opcode<isa::Opcode::ldd_extended>(),
+                                         source,
+                                         isa::opcode<isa::Opcode::ldy_extended>(),
+                                         alias,
+                                         isa::opcode<opcode>());
+    if constexpr (form == Square::live_flags) {
+      return isa::program(inputs, isa::nop, isa::nop, isa::nop);
+    } else {
+      return isa::program(inputs,
+                          isa::opcode<isa::Opcode::sty_extended>(),
+                          high,
+                          isa::opcode<isa::Opcode::std_extended>(),
+                          low,
+                          isa::nop);
+    }
+  }();
+  std::array<Registers, 7> trace{};
+  std::array<SquareBytes, 7> images{};
+
+  explicit SquareCase(const SquarePoint point) {
+    images[0].fill(square_guard);
+    images[0][0] = static_cast<Byte>(point.value >> 8U);
+    images[0][1] = static_cast<Byte>(point.value & byte_mask);
+    images.fill(images[0]);
+    trace[0] = {
+        .pc = entry, .d = square_d, .x = marker_x, .y = square_y, .sp = stack, .ccr = point.flags};
+    trace[1] = transfer(trace[0], point.value);
+    trace[1].d = point.value;
+    const auto y = form == Square::overlap
+                       ? static_cast<Address>((unsigned{images[0][1]} << 8U) | images[0][2])
+                       : point.value;
+    trace[2] = transfer(trace[1], y);
+    trace[2].y = y;
+    constexpr auto operation =
+        opcode == isa::Opcode::emuls ? math::Operation::emuls : math::Operation::emul;
+    trace[3] = math::multiply({.operation = operation, .before = trace[2]}).registers;
+    for (unsigned index = 3; index < 6; ++index) {
+      trace[index + 1] = trace[index];
+      images[index + 1] = images[index];
+      if (form == Square::live_flags || index == 5) {
+        ++trace[index + 1].pc;
+      } else {
+        const auto value = index == 3 ? trace[index].y : trace[index].d;
+        const unsigned offset = index == 3 ? 4 : 6;
+        trace[index + 1] = transfer(trace[index], value);
+        images[index + 1][offset] = static_cast<Byte>(value >> 8U);
+        images[index + 1][offset + 1] = static_cast<Byte>(value & byte_mask);
+      }
+    }
+  }
+};
+
+template <isa::Opcode opcode, Square form>
+void square_case(SquareDevice<SquareCase<opcode, form>::program.size()> &device,
+                 const SquarePoint point,
+                 const bool full_only) {
+  const SquareCase<opcode, form> expected(point);
+  for (unsigned grant = full_only ? 6U : 1U; grant <= 6; ++grant) {
+    device.bytes = expected.images[0];
+    device.core.set_registers(expected.trace[0]);
+    const auto actual = device.core.run(grant);
+    const auto at = expected.trace[grant - 1].pc;
+    const State state{.registers = expected.trace[grant], .failure = {}};
+    require(actual ==
+                    RunResult{.retired = grant, .pc = at, .opcode = expected.program[at - entry]} &&
+                device.core.state() == state && device.bytes == expected.images[grant] &&
+                device.rom == expected.program,
+            "Native squares lost operand identity, live flags, exact grants or original stores");
+    ++checked;
+  }
+}
+
+template <isa::Opcode opcode, Square form> void squares() {
+  SquareDevice device(SquareCase<opcode, form>::program);
+  for (unsigned flags = 0; flags <= byte_mask; ++flags) {
+    for (const auto value : values) {
+      square_case<opcode, form>(device, {.value = value, .flags = static_cast<Byte>(flags)}, false);
+    }
+  }
+  if constexpr (form == Square::same) {
+    for (unsigned value = 0; value <= mask; ++value) {
+      square_case<opcode, form>(
+          device, {.value = static_cast<Address>(value), .flags = byte_mask}, true);
+    }
+  }
+}
 }
 
 int main() {
@@ -225,6 +349,12 @@ int main() {
     branches<isa::Opcode::bne_relative>();
     standalone_shift();
     nonlinear_loop();
+    squares<isa::Opcode::emul, Square::same>();
+    squares<isa::Opcode::emuls, Square::same>();
+    squares<isa::Opcode::emul, Square::overlap>();
+    squares<isa::Opcode::emuls, Square::overlap>();
+    squares<isa::Opcode::emul, Square::live_flags>();
+    squares<isa::Opcode::emuls, Square::live_flags>();
     std::cout << checked << " independent resident multiply/shift/branch boundaries passed\n";
     return 0;
   } catch (const std::exception &error) {

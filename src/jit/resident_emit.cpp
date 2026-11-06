@@ -379,16 +379,23 @@ void immediate_operation(Code &code,
   if (instruction.kind == Kind::load && needed_flags) { test_value(code, instruction, plan); }
 }
 
-void multiply(Code &code, const ResidentOperation &operation, EmissionState &state) {
+void multiply(Code &code,
+              const ResidentOperation &operation,
+              EmissionState &state,
+              const bool same_operand = false) {
   constexpr std::array<std::uint8_t, 3> signed_d{0x0f, 0xbf, 0xdb};
   constexpr std::array<std::uint8_t, 3> signed_y{0x0f, 0xbf, 0xd2};
   constexpr std::array<std::uint8_t, 3> unsigned_d{0x0f, 0xb7, 0xdb};
   constexpr std::array<std::uint8_t, 3> unsigned_y{0x0f, 0xb7, 0xd2};
   const bool signed_product = operation.instruction.math == MathOp::multiply_signed;
   code.raw(signed_product ? signed_d : unsigned_d);
-  code.raw(signed_product ? signed_y : unsigned_y);
-  constexpr std::array<std::uint8_t, 8> product{0x0f, 0xaf, 0xda, 0x89, 0xda, 0xc1, 0xea, 0x10};
-  code.raw(product); // IMUL EBX,EDX; retain the full product in EBX and high Y in DX.
+  if (!same_operand) { code.raw(signed_product ? signed_y : unsigned_y); }
+  constexpr std::array<std::uint8_t, 2> imul{0x0f, 0xaf};
+  code.raw(imul);
+  code.byte(static_cast<std::uint8_t>(register_operand | (3U << 3U) |
+                                      (same_operand ? 3U : 2U))); // IMUL EBX,EBX or EBX,EDX.
+  constexpr std::array<std::uint8_t, 5> halves{0x89, 0xda, 0xc1, 0xea, 0x10};
+  code.raw(halves); // Retain the full product in EBX and high Y in DX.
   if (operation.flags == 0) { return; }
   constexpr std::array<std::uint8_t, 6> snapshot{0x85, 0xdb, 0x9f, 0x0f, 0xb6, 0xc4};
   code.raw(snapshot); // LAHF N/Z from the full product, independently of word D.
@@ -529,20 +536,38 @@ struct BodyOptions {
   const ResidentOperation *sum = nullptr;
 };
 
+bool square_input(const ResidentPlan &plan, const std::size_t index) {
+  if (index + 1 >= plan.operations.size()) { return false; }
+  const auto &load = plan.operations[index];
+  const auto &instruction = load.instruction;
+  return instruction.kind == Kind::load && instruction.word &&
+         instruction.target == WordTarget::y && load.forwarded_word == word_registers[0] &&
+         load.forwarded_shift == 0 && load.flags == 0 && !load.branch_flags && !load.fill_value &&
+         plan.operations[index + 1].instruction.kind == Kind::multiply_divide;
+}
+
+bool needs_flags(const ResidentOperation &operation) {
+  return (!operation.deferred && operation.flags != 0) || operation.branch_flags;
+}
+
 void body(Code &code,
           const ResidentPlan &plan,
           EmissionState &state,
           const BodyOptions options = {}) {
   bool sum_live = false;
-  for (const auto &operation : plan.operations) {
+  for (std::size_t index = 0; index < plan.operations.size(); ++index) {
+    const auto &operation = plan.operations[index];
     const auto &instruction = operation.instruction;
+    if (square_input(plan, index)) {
+      multiply(code, plan.operations[++index], state, true);
+      continue;
+    }
     if (operation.initial_load) {
       fill_value(code, operation, native_word(instruction));
       continue;
     }
     if (instruction.kind == Kind::nop || instruction.kind == Kind::branch) { continue; }
-    const bool needed_flags =
-        (!operation.deferred && operation.flags != 0) || operation.branch_flags;
+    const bool needed_flags = needs_flags(operation);
     if ((instruction.kind == Kind::compare || instruction.kind == Kind::bit_test) &&
         !needed_flags) {
       continue;
