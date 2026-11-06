@@ -13,6 +13,7 @@
 #include <limits>
 #include <optional>
 #include <span>
+#include <stdexcept>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -255,6 +256,61 @@ void forward_operand(ResidentPlan &plan) {
   }
 }
 
+template <class Value> class PhysicalValues {
+  std::uintptr_t first_ = 0;
+  std::vector<Value> dense_;
+  std::unordered_map<std::uintptr_t, Value> sparse_;
+  Value empty_;
+
+public:
+  PhysicalValues(const ResidentPlan &plan, const Value empty) : empty_(empty) {
+    auto low = std::numeric_limits<std::uintptr_t>::max();
+    std::uintptr_t high = 0;
+    for (const auto &operation : plan.operations) {
+      if (operation.pointer == nullptr) { continue; }
+      const auto address = reinterpret_cast<std::uintptr_t>(operation.pointer);
+      low = std::min(low, address);
+      high = std::max(high, address);
+    }
+    // Compact physical ranges use direct indexing; disjoint ranges retain
+    // exact physical keys in the hash table.
+    if (low > high || high - low > plan.operations.size() * 2U) { return; }
+    first_ = low;
+    dense_.assign(static_cast<std::size_t>(high - low) + 2, empty_);
+  }
+
+  Value get(const std::uintptr_t address) const {
+    if (!dense_.empty()) {
+      if (address < first_ || address - first_ >= dense_.size()) { return empty_; }
+      return dense_[static_cast<std::size_t>(address - first_)];
+    }
+    const auto found = sparse_.find(address);
+    return found == sparse_.end() ? empty_ : found->second;
+  }
+
+  void set(const std::uintptr_t address, const Value value) {
+    if (!dense_.empty()) {
+      if (address < first_) {
+        throw std::logic_error("Physical metadata address precedes its window");
+      }
+      dense_.at(static_cast<std::size_t>(address - first_)) = value;
+    } else {
+      sparse_[address] = value;
+    }
+  }
+
+  void clear(const std::uintptr_t address) {
+    if (!dense_.empty()) {
+      if (address >= first_ && address - first_ < dense_.size()) {
+        dense_[static_cast<std::size_t>(address - first_)] = empty_;
+      }
+    } else {
+      const auto found = sparse_.find(address);
+      if (found != sparse_.end()) { found->second = empty_; }
+    }
+  }
+};
+
 struct StoredByte {
   unsigned reg = 0, version = 0, shift = 0;
 };
@@ -262,17 +318,17 @@ struct StoredByte {
 struct StoredValues {
   static constexpr unsigned registers = 6;
   static constexpr unsigned byte_bits = 8;
-  std::unordered_map<std::uintptr_t, StoredByte> bytes;
+  PhysicalValues<StoredByte> bytes;
   std::array<unsigned, registers> versions{};
   std::array<StoredByte, registers> origins{};
 
+  explicit StoredValues(const ResidentPlan &plan) : bytes(plan, {}) {}
+
   void load(ResidentOperation &operation) const {
     const auto address = reinterpret_cast<std::uintptr_t>(operation.pointer);
-    const auto high = bytes.find(address);
-    const auto low = bytes.find(address + 1);
-    if (high == bytes.end() || low == bytes.end()) { return; }
-    const auto left = high->second;
-    const auto right = low->second;
+    const auto left = bytes.get(address);
+    const auto right = bytes.get(address + 1);
+    if (left.reg == 0 || right.reg == 0) { return; }
     if (left.reg == right.reg && left.version == right.version &&
         left.version == versions.at(left.reg) && left.shift == right.shift + byte_bits) {
       operation.forwarded_word = left.reg;
@@ -289,13 +345,13 @@ struct StoredValues {
       value = {.reg = reg, .version = versions.at(reg)};
     }
     if (instruction.word) {
-      bytes[address] = {
-          .reg = value.reg, .version = value.version, .shift = value.shift + byte_bits};
-      bytes[address + 1] = value;
+      bytes.set(address,
+                {.reg = value.reg, .version = value.version, .shift = value.shift + byte_bits});
+      bytes.set(address + 1, value);
     } else {
       const bool high = swapped_d ? instruction.accumulator_b : !instruction.accumulator_b;
       value.shift += high ? byte_bits : 0U;
-      bytes[address] = value;
+      bytes.set(address, value);
     }
   }
 
@@ -321,7 +377,7 @@ struct StoredValues {
 void forward_stores(ResidentPlan &plan) {
   // Each byte names a still-resident value, not a guessed RAM value. Physical
   // addresses cover aliases; every intervening store replaces the affected tags.
-  StoredValues values;
+  StoredValues values(plan);
   for (auto &operation : plan.operations) {
     const auto &instruction = operation.instruction;
     if (operation.pointer != nullptr) {
@@ -346,19 +402,18 @@ bool reads_word(const ResidentOperation &operation) {
 std::vector<std::size_t> next_reads(const ResidentPlan &plan) {
   const auto end = plan.operations.size();
   std::vector<std::size_t> result(end, end);
-  std::unordered_map<std::uintptr_t, std::size_t> reads;
+  PhysicalValues<std::size_t> reads(plan, end);
   for (auto index = end; index != 0; --index) {
     const auto &operation = plan.operations[index - 1];
     if (operation.pointer == nullptr) { continue; }
     const auto address = reinterpret_cast<std::uintptr_t>(operation.pointer);
-    const auto next = reads.find(address);
-    if (next != reads.end()) { result[index - 1] = next->second; }
+    result[index - 1] = reads.get(address);
     if (operation.instruction.kind == Kind::store) {
-      reads.erase(address - 1);
-      reads.erase(address);
-      if (operation.instruction.word) { reads.erase(address + 1); }
+      reads.clear(address - 1);
+      reads.clear(address);
+      if (operation.instruction.word) { reads.clear(address + 1); }
     } else if (reads_word(operation) && operation.forwarded_word == 0) {
-      reads[address] = index - 1;
+      reads.set(address, index - 1);
     }
   }
   return result;
@@ -512,9 +567,11 @@ std::optional<ResidentPlan> resident_plan(const std::span<const BlockInstruction
   ResidentPlan plan;
   plan.operations.reserve(instructions.size());
   for (const auto &operation : instructions) {
-    auto instruction = operation.instruction;
+    if (!supported(operation.instruction)) { return std::nullopt; }
+    auto &resident = plan.operations.emplace_back();
+    resident.instruction = operation.instruction;
+    auto &instruction = resident.instruction;
     if (instruction.kind == Kind::multiply_divide) { instruction.word = true; }
-    if (!supported(instruction)) { return std::nullopt; }
     const Byte *data = nullptr;
     const bool access = instruction.addressing == Addressing::direct ||
                         instruction.addressing == Addressing::extended;
@@ -523,7 +580,8 @@ std::optional<ResidentPlan> resident_plan(const std::span<const BlockInstruction
       if (data == nullptr) { return std::nullopt; }
     }
     if (plan.base == nullptr && data != nullptr) { plan.base = data; }
-    plan.operations.push_back({.instruction = instruction, .pc = operation.pc, .pointer = data});
+    resident.pc = operation.pc;
+    resident.pointer = data;
     if (instruction.word && instruction.target == WordTarget::d) { plan.swapped_d = true; }
   }
   // Byte-only regions put A in BL and B in BH; a word D region keeps native D order.

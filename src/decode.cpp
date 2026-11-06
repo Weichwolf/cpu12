@@ -348,13 +348,18 @@ std::optional<Instruction> decode(const std::span<const std::uint8_t> bytes) {
   constexpr unsigned extended_store = 0x20;
   if (bytes.empty()) { return {}; }
   const auto opcode = bytes[0];
-  if (const auto instruction = simple(bytes)) { return instruction; }
+  Instruction instruction{.opcode = opcode};
+  if (word_kind(instruction) || arithmetic_kind(instruction)) {
+    instruction.accumulator_b = (opcode & accumulator_b) != 0;
+    if (!arithmetic_operand(instruction, bytes)) { return {}; }
+    return instruction;
+  }
+  if (const auto decoded = simple(bytes)) { return decoded; }
   if ((opcode >= first_branch && opcode <= last_branch) ||
       (opcode >= first_jump && opcode <= bsr) || (opcode >= first_call && opcode <= prefix)) {
     return control(bytes);
   }
   if (stack_opcode(opcode)) { return stack(bytes); }
-  Instruction instruction{.opcode = opcode};
   constexpr unsigned first_indexed_store = 0x6a;
   constexpr unsigned last_indexed_store = 0x6f;
   constexpr unsigned first_lea = 0x19;
@@ -375,9 +380,6 @@ std::optional<Instruction> decode(const std::span<const std::uint8_t> bytes) {
     if (!memory_operand(instruction, bytes)) { return {}; }
     return instruction;
   }
-  if (!word_kind(instruction) && !arithmetic_kind(instruction)) { return {}; }
-  instruction.accumulator_b = (opcode & accumulator_b) != 0;
-  if (!arithmetic_operand(instruction, bytes)) { return {}; }
-  return instruction;
+  return {};
 }
 }
