@@ -23,7 +23,7 @@ inline Address product_value(Image &ram, const Address left, const Address right
   return narrow(full >= 0 ? full / scale : -((-full + scale - 1) / scale));
 }
 
-inline Registers predict(Image &ram, const Byte ccr) {
+inline Registers predict_transform(Image &ram, Registers state) {
   bool borrow = false;
   // Derive stage pairs directly; do not consume the guest assembly schedule.
   for (unsigned stage = 1; stage <= stages; ++stage) {
@@ -60,13 +60,17 @@ inline Registers predict(Image &ram, const Byte ccr) {
       borrow = ui < ti;
     }
   }
-  auto state = initial(ccr);
-  state.pc = return_pc;
   state.d = word(ram, data + ((points - 1) * 4) + 2);
   state.y = word(ram, product);
-  state.sp = stack - frame_bytes;
-  state.ccr = static_cast<Byte>((ccr & retained_flags) | (borrow ? 1U : 0U) |
+  state.ccr = static_cast<Byte>((state.ccr & transform_retained_flags) | (borrow ? 1U : 0U) |
                                 (state.d == 0 ? 4U : 0U) | (state.d >= sign ? 8U : 0U));
+  return state;
+}
+
+inline Registers predict(Image &ram, const Byte ccr) {
+  auto state = predict_transform(ram, initial(static_cast<Byte>(ccr & retained_flags)));
+  state.pc = return_pc;
+  state.sp = stack - frame_bytes;
   frame(ram, state);
   return state;
 }

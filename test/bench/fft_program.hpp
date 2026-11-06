@@ -16,6 +16,7 @@ inline constexpr Address term = product + 8, previous = product + 10, stack = 0x
 inline constexpr unsigned scratch_bytes = 12, instructions_per_butterfly = 46;
 inline constexpr unsigned retired = (butterfly_count * instructions_per_butterfly) + 1;
 inline constexpr unsigned retained_flags = 0x70, frame_bytes = 9;
+inline constexpr unsigned transform_retained_flags = 0xf0;
 using Image = std::array<Byte, address_bytes>;
 using Samples = std::array<Address, std::size_t{points} * 2>;
 

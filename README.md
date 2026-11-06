@@ -68,7 +68,7 @@ cmake --build --preset release --target bench
 ```
 
 The command runs checked ALU/RAM/control-flow, indexed checksum, fixed-point
-Mandelbrot, FFT and continuous packet-checksum scenarios sequentially. Select
+Mandelbrot, FFT and continuous checksum/FFT packet scenarios sequentially. Select
 scenarios with `CPU12_BENCH_FILTER` (a CMake cache test-name regex).
 
 Each scenario reports `hardware_factor` (target >=1) and `jit_to_host_percent` (target
@@ -78,6 +78,9 @@ comparison uses handwritten x86-64 ASM with identical inputs and independent
 state/memory expectations. Equal throughput is 100%. Finite-kernel timings include
 setup and result checks on both sides; the percentage is `100 * host_time / jit_time`.
 Cold compilation time is separate; warm execution must reuse translations.
+Packet reports include actual CPU affinity and starting/ending CPUs. Use
+`taskset` for placement diagnostics; pinned results do not qualify unrestricted
+scheduling.
 
 The finite kernels diagnose computation and call overhead. Their cold factors
 compare one kernel to its ideal device execution time, not to an audio/MIDI packet
@@ -90,8 +93,17 @@ RAM: 7,499 big-endian words and 29,999 retired instructions per 1 ms packet, at
 1,000 packets per virtual second. It reports cold/warm deadlines and nine warm
 trials against host ASM; full state and memory checks run outside timing. Release
 enforces the 70% comparison and packet deadlines; sanitizer builds only report
-performance. This qualifies checksum processing only; sustained control-flow,
-fixed-point and mixed workloads remain necessary. Run its directed result cases
+performance. This covers checksum processing only; other workloads require
+their own sustained evidence. Run its directed result cases
 with `cpu12-continuous-checksum-bench --verify`.
+
+`packet-fft-stream` runs six 16-point Q8.8 FFTs per 48 kHz/16 processing packet:
+333.3 microseconds per packet and 27.702 million guest instructions per virtual
+second. Guest code advances a RAM word-ramp seed, fills bit-reversed input lanes,
+transforms them and jumps back without STOP or host restoration. Host ASM preserves
+all input, scratch and output stores. Independent state/memory cases include
+signed word wrap and every retained CCR bit. This synthetic six-stream load is
+not a Blofeld cycle model; cold compilation and warm processing must meet the
+same explicit deadline/throughput gates.
 
 [License](LICENSE)

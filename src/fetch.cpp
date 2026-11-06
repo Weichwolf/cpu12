@@ -39,18 +39,22 @@ Plan plan(const unsigned opcode, const bool page) noexcept {
   return {};
 }
 
-auto plans(const bool page) noexcept {
-  constexpr unsigned opcodes = 256;
-  std::array<Plan, opcodes> result{};
-  for (unsigned opcode = 0; opcode < opcodes; ++opcode) { result[opcode] = plan(opcode, page); }
-  return result;
-}
-
 const Plan &select_plan(const unsigned opcode, const bool page) {
-  // First use is safe even from another translation unit's global constructor.
-  static const auto primary = plans(false);
-  static const auto secondary = plans(true);
-  return page ? secondary[opcode] : primary[opcode];
+  struct Entry {
+    Plan value;
+    bool ready = false;
+  };
+
+  constexpr std::size_t opcodes = 256;
+  // Metadata depends only on the opcode. Populate the execution thread's table
+  // on demand instead of decoding both complete opcode pages on first fetch.
+  thread_local std::array<Entry, opcodes * 2> entries{};
+  auto &entry = entries[opcode + (page ? opcodes : 0U)];
+  if (!entry.ready) {
+    entry.value = plan(opcode, page);
+    entry.ready = true;
+  }
+  return entry.value;
 }
 
 bool byte(Capture &capture, const Memory &ram, NativeContext &context, const Address pc) {
