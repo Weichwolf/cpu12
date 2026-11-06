@@ -2,12 +2,14 @@
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
 #include "isa.hpp"
+#include "report.hpp"
 #include "word_checksum_host.hpp"
 
 #include <algorithm>
 #include <array>
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
 #include <exception>
 #include <iostream>
 #include <ratio>
@@ -130,7 +132,7 @@ void native(Image &ram, const Case point, const Registers expected) {
 
 template <class Operation> double median(Operation operation) {
   constexpr unsigned trials = 9;
-  constexpr unsigned repetitions = 64;
+  constexpr unsigned repetitions = 32768;
   std::array<double, trials> times{};
   for (auto &sample : times) {
     const auto begin = Clock::now();
@@ -188,12 +190,16 @@ void exercise() {
       core.statistics().compiled_entries != compiled_entries) {
     throw std::runtime_error("Warm checksum effects differ or execution translated new entries");
   }
-  std::cout << "indexed-word-checksum cases=" << counts.size() * seeds.size() * 8U
-            << " words=" << maximum_count
+  std::cout << "indexed-word-checksum";
+  test::bench::report((std::uint64_t{point.count} * 4) + 1,
+                      std::chrono::duration<double>(cold).count(),
+                      core_ns / test::bench::nanoseconds_per_second,
+                      host_ns / test::bench::nanoseconds_per_second);
+  std::cout << " cases=" << counts.size() * seeds.size() * 8U << " words=" << maximum_count
             << " cold_run_us=" << std::chrono::duration<double, std::micro>(cold).count()
             << " compiled_entries=" << compiled_entries
             << " warm_scope=reset+run+verify core_ns=" << core_ns << " host_asm_ns=" << host_ns
-            << " core_to_host_percent=" << 100.0 * host_ns / core_ns << '\n';
+            << '\n';
 }
 }
 

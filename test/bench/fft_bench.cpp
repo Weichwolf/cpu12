@@ -5,6 +5,7 @@
 #include "fft_oracle.hpp"
 #include "fft_program.hpp"
 #include "isa.hpp"
+#include "report.hpp"
 
 #include <algorithm>
 #include <array>
@@ -168,7 +169,7 @@ void validation() {
 
 template <class Operation> double median(Operation operation) {
   constexpr unsigned trials = 9;
-  constexpr unsigned repetitions = 32;
+  constexpr unsigned repetitions = 32768;
   std::array<double, trials> samples{};
   for (auto &sample : samples) {
     const auto start = Clock::now();
@@ -196,11 +197,15 @@ void measure(const std::string_view name, const Samples &input) {
   memory(host_ram, expected_ram);
   require(device.core.statistics().compiled_entries == compiled,
           "Warm FFT execution must retain its translation without recompilation");
-  std::cout << "fft_case=" << name << " points=" << points
+  std::cout << "fft_case=" << name;
+  test::bench::report(retired,
+                      std::chrono::duration<double>(cold).count(),
+                      core_ns / test::bench::nanoseconds_per_second,
+                      host_ns / test::bench::nanoseconds_per_second);
+  std::cout << " points=" << points
             << " cold_us=" << std::chrono::duration<double, std::micro>(cold).count()
             << " compiled_entries=" << compiled << " warm_scope=reset+run+verify"
-            << " core_ns=" << core_ns << " host_asm_ns=" << host_ns
-            << " core_to_host_percent=" << (host_ns / core_ns * 100.0) << '\n';
+            << " core_ns=" << core_ns << " host_asm_ns=" << host_ns << '\n';
 }
 }
 

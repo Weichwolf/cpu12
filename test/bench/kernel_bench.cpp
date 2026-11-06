@@ -5,6 +5,7 @@
 #include "jit/arena.hpp"
 #include "jit/block.hpp"
 #include "kernel_host.hpp"
+#include "report.hpp"
 #include "runtime.hpp"
 
 #include <algorithm>
@@ -24,7 +25,7 @@ namespace {
 using namespace cpu12;
 using Clock = std::chrono::steady_clock;
 constexpr Address entry = 0x0200, stack = 0x9000, data = 0x4000;
-constexpr unsigned iterations = 128, repetitions = 128, trials = 9;
+constexpr unsigned iterations = 128, repetitions = 32768, trials = 9;
 
 constexpr std::array<Byte, 2> add_operand{0, 3};
 constexpr std::array<Byte, 1> xor_value{0x5a}, alu_backedge{0xf6};
@@ -318,14 +319,17 @@ void measure(const Fixture &fixture) {
   constexpr double million = 1e6;
   constexpr double percent = 100;
   constexpr double nanoseconds_per_second = 1e9;
-  std::cout << fixture.name
-            << " cold_run_us=" << std::chrono::duration<double, std::micro>(cold).count()
+  std::cout << fixture.name;
+  test::bench::report(fixture.instructions,
+                      std::chrono::duration<double>(cold).count(),
+                      seconds / repetitions,
+                      host_seconds / repetitions);
+  std::cout << " cold_run_us=" << std::chrono::duration<double, std::micro>(cold).count()
             << " warm_median_ns_per_instruction="
             << (seconds * nanoseconds_per_second) / (fixture.instructions * repetitions)
             << " warm_mips=" << (fixture.instructions * repetitions) / seconds / million
             << " host_asm_ns_per_instruction="
             << (host_seconds * nanoseconds_per_second) / (fixture.instructions * repetitions)
-            << " jit_to_host_percent=" << (host_seconds / seconds) * percent
             << " native_entries_to_host_percent=" << (host_seconds / native_seconds) * percent
             << " native_entries_ns_per_instruction="
             << (native_seconds * nanoseconds_per_second) / (fixture.instructions * repetitions)

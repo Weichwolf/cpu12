@@ -6,6 +6,7 @@
 #include "jit/block.hpp"
 #include "mandelbrot_host.hpp"
 #include "mandelbrot_program.hpp"
+#include "report.hpp"
 #include "runtime.hpp"
 
 #include <algorithm>
@@ -26,7 +27,7 @@ using namespace cpu12;
 using namespace cpu12::test::mandelbrot;
 using Clock = std::chrono::steady_clock;
 constexpr unsigned preserved = 0x70, prefix_instructions = 17, tail_instructions = 15;
-constexpr unsigned trials = 9, repetitions = 32;
+constexpr unsigned trials = 9, repetitions = 32768;
 
 int signed_word(const Address value) {
   return value < sign ? int{value} : int{value} - int{word_mask + 1};
@@ -244,10 +245,14 @@ void measure(const std::string_view name, const Point point) {
   if (core.statistics().compiled_entries != compiled) {
     throw std::runtime_error("Warm Mandelbrot translated new entries");
   }
-  std::cout << name << " retired=" << expected.retired
+  std::cout << name;
+  test::bench::report(expected.retired,
+                      std::chrono::duration<double>(cold).count(),
+                      core_ns / test::bench::nanoseconds_per_second,
+                      host_ns / test::bench::nanoseconds_per_second);
+  std::cout << " retired=" << expected.retired
             << " cold_run_us=" << std::chrono::duration<double, std::micro>(cold).count()
             << " core_ns=" << core_ns << " host_asm_ns=" << host_ns
-            << " jit_to_host_percent=" << (100.0 * host_ns) / core_ns
             << " native_entries_to_host_percent=" << (100.0 * host_ns) / direct_ns
             << " native_code_bytes=" << direct.code_bytes() << '\n';
 }

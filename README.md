@@ -61,31 +61,29 @@ preserving CPU state and retaining previous native translations. Changed executa
 contents require a new grant `identity` at that transition. Boundary words
 may require an owner word callback. Cycle/event accounting remains incomplete.
 
-The `cpu12-kernel-bench` target checks ALU/flags, RAM read-modify-write and
-counted-branch and multi-block control-flow fixtures. Run `build/release/cpu12-kernel-bench` for cold-run and
-median warm throughput against a checked x86-64 ASM reference. Both paths include
-input reset, STOP frame writes and result verification. `jit_to_host_percent` is
-100 at equal throughput; it includes execution-code differences and Core overhead.
-The benchmark also enters the same production native dispatcher directly through
-private test interfaces, including its retained loop, branch and STOP translations. `native_entries_to_host_percent` measures that
-scope; `core_over_native_ns_per_run` reports its time difference from Core.run.
-Both scopes include input reset, native state publication, STOP and verification.
-`native_code_bytes` includes retained native paths for shorter execution grants.
-The performance gate applies to full Core.run across representative workloads.
+## Benchmarks
 
-`cpu12-word-checksum-bench` measures indexed big-endian word reads, accumulator
-writes and counted branches against scalar host ASM, with independent state and
-memory checks. It reports cold execution separately and checks translation reuse.
+```sh
+cmake --build --preset release --target bench
+```
 
-`cpu12-mandelbrot-bench` checks signed Q8.8 multiplication, big-endian product
-stores and a loop with both escape and iteration-limit exits. An independent
-integer-arithmetic oracle checks registers, flags, full RAM and the STOP frame.
-It reports each point's cold run, warm Core.run and direct native-entry throughput
-against handwritten host ASM, plus retained code size; warm runs must reuse code.
+The command runs checked ALU/RAM/control-flow, indexed checksum, fixed-point
+Mandelbrot and FFT scenarios sequentially. Select scenarios with the CMake cache
+variable `CPU12_BENCH_FILTER` (a test-name regex).
 
-`cpu12-fft-bench` measures a sixteen-point complex Q8.8 FFT against scalar host
-ASM. Independent fixed-point expectations check complete state and RAM; small
-inputs also pass a direct DFT comparison. Each warm case is reported separately
-from compilation, with checked translation reuse.
+Each row reports `hardware_factor` (target >=1) and `jit_to_host_percent` (target
+>=70). The hardware estimate conservatively assumes a 30 MHz CPU retiring one
+instruction per cycle; it is not a calibrated Blofeld timing model. The host
+comparison uses handwritten x86-64 ASM with identical inputs and independent
+state/memory expectations. Equal throughput is 100%; setup and result checks are
+included on both sides. The percentage is `100 * host_time / jit_time`.
+Cold compilation time is separate; warm execution must
+reuse translations.
+
+These finite kernels diagnose computation and call overhead. Their cold factors
+compare one kernel to its ideal device execution time, not to an audio/MIDI packet
+deadline. Short reset/run/check cases alone neither qualify sustained instrument
+performance nor establish freedom from live underruns. Sustained integration
+requires packet deadline measurements, including first-use compilation.
 
 [License](LICENSE)
