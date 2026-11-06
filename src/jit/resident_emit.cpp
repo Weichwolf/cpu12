@@ -597,9 +597,16 @@ void body(Code &code,
   }
 }
 
-void deferred_flags(Code &code, const ResidentPlan &plan, EmissionState &state) {
-  for (const auto &operation : plan.operations) {
-    if (!operation.deferred) { continue; }
+void deferred_flags(Code &code,
+                    const ResidentPlan &plan,
+                    EmissionState &state,
+                    const unsigned known = 0,
+                    const ResidentOperation *const live = nullptr) {
+  for (const auto &original : plan.operations) {
+    if (!original.deferred || &original == live) { continue; }
+    auto operation = original;
+    operation.flags &= ~known;
+    if (operation.flags == 0) { continue; }
     auto instruction = operation.instruction;
     if (instruction.kind == Kind::add || instruction.kind == Kind::subtract) {
       // Reconstruct the producer's input modulo its width, then recreate its flags.
@@ -658,7 +665,33 @@ void merge_flag_group(Code &code, const FlagValue flag, const unsigned mask, con
   code.raw(merge);
 }
 
-void publish_flags(Code &code, const ResidentPlan &plan, const EmissionState &state) {
+struct KnownFlags {
+  unsigned mask = 0, value = 0;
+};
+
+KnownFlags branch_flags(const unsigned condition, const bool taken) {
+  constexpr unsigned carry_clear = 4;
+  constexpr unsigned carry_set = 5;
+  constexpr unsigned not_equal = 6;
+  constexpr unsigned equal = 7;
+  if (condition < carry_clear || condition > equal) { return {}; }
+  const auto mask = condition < not_equal ? flag_c : flag_z;
+  const bool set = taken == (condition == carry_set || condition == equal);
+  return {.mask = mask, .value = set ? mask : 0U};
+}
+
+KnownFlags full_loop_flags(const ResidentPlan &plan, const LoopMode mode) {
+  const auto &last = plan.operations.back().instruction;
+  if (mode == LoopMode::full && plan.loop && last.kind == Kind::branch) {
+    return branch_flags(last.condition, false);
+  }
+  return {}; // DBNE tests its counter without changing the guest CCR.
+}
+
+void publish_flags(Code &code,
+                   const ResidentPlan &plan,
+                   const EmissionState &state,
+                   const KnownFlags known = {}) {
   constexpr auto ccr = static_cast<std::uint8_t>(offsetof(Registers, ccr));
   // Guest words are already published; ECX is free and is never a flag snapshot.
   constexpr std::array<std::uint8_t, 3> load{0x0f, 0xb6, 0x4f};
@@ -667,17 +700,23 @@ void publish_flags(Code &code, const ResidentPlan &plan, const EmissionState &st
   constexpr std::array<std::uint8_t, 2> retain{0x81, 0xe1};
   code.raw(retain);
   constexpr unsigned byte_mask = 0xff;
-  code.u32(byte_mask & ~plan.changed);
+  code.u32(byte_mask & ~(plan.changed | known.mask));
   constexpr std::array<unsigned, 4> groups{flag_c, flag_v, flag_z | flag_n, flag_h};
   constexpr std::array<int, 4> byte_shifts{0, 1, -4, 1};
   constexpr std::array<int, 4> packed_shifts{-8, 1, -12, -7};
-  for (const auto flag : state.flags) {
+  for (auto flag : state.flags) {
+    flag.mask &= ~known.mask;
     const auto &shifts = flag.packed ? packed_shifts : byte_shifts;
     for (std::size_t index = 0; index < groups.size(); ++index) {
       const auto mask = flag.mask & groups[index];
       if (mask == 0) { continue; }
       merge_flag_group(code, flag, mask, shifts[index]);
     }
+  }
+  if (known.value != 0) {
+    constexpr std::array<std::uint8_t, 2> set{0x83, 0xc9}; // OR ECX,imm8.
+    code.raw(set);
+    code.byte(static_cast<std::uint8_t>(known.value));
   }
   constexpr std::array<std::uint8_t, 2> store{0x88, 0x4f};
   code.raw(store);
@@ -904,12 +943,13 @@ std::vector<std::uint8_t> emit_variant(const ResidentPlan &plan,
     constexpr std::array<std::uint8_t, 4> restore_d{0x41, 0x0f, 0xb7, 0xdc}; // MOVZX EBX,R12W.
     code.raw(restore_d);
   }
-  deferred_flags(code, plan, state);
+  const auto known = full_loop_flags(plan, mode);
+  deferred_flags(code, plan, state, known.mask);
   if (plan.swapped_d && (plan.dirty_words & (1U << word_registers[0])) != 0) {
     swap_word(code, word_registers[0]);
   }
   registers(code, plan, true);
-  if (plan.changed != 0) { publish_flags(code, plan, state); }
+  if (plan.changed != 0) { publish_flags(code, plan, state, known); }
   if (carry_branch(plan)) { finish_branch(code, plan, loop, mode); }
   constexpr std::uint8_t pop_rax = 0x58;
   code.byte(pop_rax);
@@ -933,6 +973,9 @@ struct RegionExit {
   Address pc;
   std::uint32_t completed;
   ExitLocation location;
+  KnownFlags known;
+  // A branch exit retains the producer's host flags; a budget subtraction does not.
+  bool native_flags_live = false;
 };
 
 struct RegionTerminal {
@@ -956,12 +999,19 @@ void region_exit(Code &code,
                  const std::uint32_t reserved,
                  RegionExit exit,
                  RegionTerminal &terminal) {
-  deferred_flags(code, exit.phase, exit.state);
+  const auto *const live =
+      exit.native_flags_live ? &exit.phase.operations[exit.phase.operations.size() - 2] : nullptr;
+  if (live != nullptr) {
+    auto producer = *live;
+    producer.flags &= ~exit.known.mask;
+    capture(code, producer, exit.state);
+  }
+  deferred_flags(code, exit.phase, exit.state, exit.known.mask, live);
   if (combined.swapped_d && (combined.dirty_words & (1U << word_registers[0])) != 0) {
     swap_word(code, word_registers[0]);
   }
   registers(code, combined, true);
-  publish_flags(code, exit.phase, exit.state);
+  publish_flags(code, exit.phase, exit.state, exit.known);
   pc(code, exit.pc);
   constexpr std::array<std::uint8_t, 6> progress{0x44, 0x89, 0xf0, 0x44, 0x29, 0xe8};
   code.raw(progress); // EAX = original grant - remaining reserved-iteration grant.
@@ -1108,7 +1158,8 @@ std::vector<std::uint8_t> emit_resident_region(const ResidentRegion &region,
                .state = tail_state,
                .pc = head.operations.front().pc,
                .completed = 0,
-               .location = tail_location},
+               .location = tail_location,
+               .known = branch_flags(last_tail.instruction.condition, true)},
               terminal);
   if (tail_exit) {
     code.bind(*tail_exit);
@@ -1119,7 +1170,9 @@ std::vector<std::uint8_t> emit_resident_region(const ResidentRegion &region,
                  .state = tail_state,
                  .pc = exit_pc,
                  .completed = count,
-                 .location = tail_location},
+                 .location = tail_location,
+                 .known = branch_flags(last_tail.instruction.condition, false),
+                 .native_flags_live = true},
                 terminal);
   }
   code.bind(head_exit);
@@ -1130,7 +1183,9 @@ std::vector<std::uint8_t> emit_resident_region(const ResidentRegion &region,
                .state = head_state,
                .pc = exit_pc,
                .completed = head_count,
-               .location = {.pc = last_head.pc, .opcode = last_head.instruction.opcode}},
+               .location = {.pc = last_head.pc, .opcode = last_head.instruction.opcode},
+               .known = branch_flags(last_head.instruction.condition, true),
+               .native_flags_live = true},
               terminal);
   emit_terminal(code, combined, terminal);
   code.bind(refused);

@@ -38,6 +38,7 @@ struct Program {
   std::vector<Byte> code;
   Address clobber_pc = 0, byte_pc = 0, stack_pc = 0, tail_guard_pc = 0, back_pc = 0, exit_pc = 0;
   Opcode guard;
+  bool equal_backedge = false;
   bool stop = false;
 };
 
@@ -662,6 +663,137 @@ unsigned readonly_d_cases() {
   }
   return checked;
 }
+
+Program byte_program(const Opcode guard, const bool equal_backedge) {
+  constexpr std::array<Byte, 1> one{1};
+  constexpr std::array<Byte, 1> threshold{128};
+  constexpr std::array<Byte, 1> forward{7};
+  constexpr std::array<Byte, 1> back{256 - 13};
+  constexpr auto bytes = isa::program(isa::opcode<Opcode::adda_immediate>(),
+                                      one,
+                                      isa::opcode<Opcode::cmpa_immediate>(),
+                                      threshold,
+                                      isa::opcode<Opcode::beq_relative>(),
+                                      forward,
+                                      isa::opcode<Opcode::addb_immediate>(),
+                                      one,
+                                      isa::opcode<Opcode::cmpb_immediate>(),
+                                      threshold,
+                                      isa::dex,
+                                      isa::opcode<Opcode::bne_relative>(),
+                                      back,
+                                      isa::wai);
+  Program code{.code = {bytes.begin(), bytes.end()},
+               .exit_pc = entry + bytes.size() - isa::wai.size(),
+               .guard = guard,
+               .equal_backedge = equal_backedge};
+  code.code[4] = static_cast<Byte>(guard);
+  if (equal_backedge) { code.code[11] = static_cast<Byte>(Opcode::beq_relative); }
+  return code;
+}
+
+void byte_arithmetic(Registers &state, const bool b, const bool compare) {
+  constexpr unsigned byte_sign = 128;
+  constexpr unsigned retained = 0xd0;
+  constexpr unsigned compare_retained = 0xf0;
+  constexpr unsigned half = 0x20;
+  const auto old = b ? state.d & byte_mask : state.d >> byte_bits;
+  if (compare) {
+    // Subtracting -128 overflows exactly for nonnegative input bytes.
+    const auto result = (old + byte_sign) & byte_mask;
+    state.ccr = static_cast<Byte>((state.ccr & compare_retained) | (old < byte_sign ? 3U : 0U) |
+                                  (result == 0 ? 4U : 0U) | (result >= byte_sign ? 8U : 0U));
+  } else {
+    const auto result = (old + 1U) & byte_mask;
+    state.d = static_cast<Address>(b ? (state.d & ~byte_mask) | result
+                                     : (state.d & byte_mask) | (result << byte_bits));
+    state.ccr = static_cast<Byte>((state.ccr & retained) | (old == byte_mask ? 1U : 0U) |
+                                  (old == byte_sign - 1U ? 2U : 0U) | (result == 0 ? 4U : 0U) |
+                                  (result >= byte_sign ? 8U : 0U) | (old % 16U == 15U ? half : 0U));
+  }
+  state.pc += 2;
+}
+
+RunResult advance_bytes(Snapshot &snapshot, const Program &code, const unsigned grant) {
+  auto &state = snapshot.registers;
+  RunResult result{.state = snapshot.execution, .pc = state.pc};
+  while (result.retired < grant && snapshot.execution == ExecutionState::running) {
+    result.pc = state.pc;
+    result.opcode = code.code[state.pc - entry];
+    if (state.pc == code.exit_pc) {
+      wait_frame(snapshot);
+    } else if (state.pc == entry + 4) {
+      state.pc = taken(code.guard, state.ccr) ? code.exit_pc : entry + 6;
+    } else if (state.pc == entry + 10) {
+      state.x = static_cast<Address>((unsigned{state.x} + word_mask) & word_mask);
+      state.ccr = static_cast<Byte>((state.ccr & ~4U) | (state.x == 0 ? 4U : 0U));
+      ++state.pc;
+    } else if (state.pc == entry + 11) {
+      const bool repeat = code.equal_backedge ? state.x == 0 : state.x != 0;
+      state.pc = repeat ? entry : code.exit_pc;
+    } else {
+      const bool b = state.pc >= entry + 6;
+      const bool compare = state.pc == entry + 2 || state.pc == entry + 8;
+      byte_arithmetic(state, b, compare);
+    }
+    ++result.retired;
+  }
+  result.state = snapshot.execution;
+  return result;
+}
+
+unsigned byte_case(Device &device, const Program &code, const Point point, const bool owner) {
+  auto before = initial({}, point);
+  before.registers.d = point.value;
+  auto complete = before;
+  constexpr unsigned maximum = 40;
+  const auto full = advance_bytes(complete, code, maximum);
+  require(complete.execution == ExecutionState::waiting, "The byte region must have a finite exit");
+  auto sleep = before;
+  static_cast<void>(advance_bytes(sleep, code, full.retired - 1U));
+  constexpr std::array<unsigned, 8> grants{0, 1, 3, 5, 7, 8, 14, maximum};
+  for (const auto grant : grants) {
+    device.reset(before);
+    device.port.prepare(0, sleep.registers, 1);
+    auto expected = before;
+    const auto wanted = advance_bytes(expected, code, grant);
+    const auto actual = device.core.run(grant);
+    device.check(expected, actual);
+    require(actual == wanted && device.port.observed &&
+                device.port.calls ==
+                    (owner && expected.execution == ExecutionState::waiting ? 5U : 0U),
+            "Live branch flags and deferred H must survive native, bounded and real owner exits");
+  }
+  return grants.size();
+}
+
+struct ByteForm {
+  Opcode guard;
+  bool owner = false, equal_backedge = false;
+};
+
+unsigned byte_cases(const ByteForm form) {
+  auto code = byte_program(form.guard, form.equal_backedge);
+  Device device(code, form.owner);
+  constexpr std::array<unsigned, 8> a_values{0, 1, 14, 15, 126, 127, 254, 255};
+  constexpr std::array<unsigned, 6> b_values{0, 15, 126, 127, 254, 255};
+  unsigned checked = 0;
+  for (unsigned flags = 0; flags <= byte_mask; ++flags) {
+    for (const auto a : a_values) {
+      for (const auto b : b_values) {
+        for (const Address count : {Address{1}, Address{2}}) {
+          checked += byte_case(device,
+                               code,
+                               {.flags = static_cast<Byte>(flags),
+                                .value = static_cast<Address>((a << byte_bits) | b),
+                                .count = count},
+                               form.owner);
+        }
+      }
+    }
+  }
+  return checked;
+}
 }
 
 int main() {
@@ -682,6 +814,14 @@ int main() {
     constexpr std::array guards{
         Opcode::bcc_relative, Opcode::bcs_relative, Opcode::bne_relative, Opcode::beq_relative};
     unsigned checked = 0;
+    unsigned bytes = 0;
+    for (const auto guard : guards) {
+      for (const bool owner : {false, true}) {
+        for (const bool equal : {false, true}) {
+          bytes += byte_cases({.guard = guard, .owner = owner, .equal_backedge = equal});
+        }
+      }
+    }
     for (const auto form : forms) {
       for (const auto guard : guards) { checked += cases(form, guard); }
     }
@@ -694,7 +834,8 @@ int main() {
     }
     std::cout << checked << " connected region cases and " << owners
               << " real STOP/WAI owner/frame/fault cases and " << readonly
-              << " read-only D frame cases passed\n";
+              << " read-only D frame cases and " << bytes
+              << " live/deferred byte flag cases passed\n";
     return 0;
   } catch (const std::exception &error) {
     std::cerr << error.what() << '\n';
