@@ -68,22 +68,30 @@ cmake --build --preset release --target bench
 ```
 
 The command runs checked ALU/RAM/control-flow, indexed checksum, fixed-point
-Mandelbrot and FFT scenarios sequentially. Select scenarios with the CMake cache
-variable `CPU12_BENCH_FILTER` (a test-name regex).
+Mandelbrot, FFT and continuous packet-checksum scenarios sequentially. Select
+scenarios with `CPU12_BENCH_FILTER` (a CMake cache test-name regex).
 
-Each row reports `hardware_factor` (target >=1) and `jit_to_host_percent` (target
+Each scenario reports `hardware_factor` (target >=1) and `jit_to_host_percent` (target
 >=70). The hardware estimate conservatively assumes a 30 MHz CPU retiring one
 instruction per cycle; it is not a calibrated Blofeld timing model. The host
 comparison uses handwritten x86-64 ASM with identical inputs and independent
-state/memory expectations. Equal throughput is 100%; setup and result checks are
-included on both sides. The percentage is `100 * host_time / jit_time`.
-Cold compilation time is separate; warm execution must
-reuse translations.
+state/memory expectations. Equal throughput is 100%. Finite-kernel timings include
+setup and result checks on both sides; the percentage is `100 * host_time / jit_time`.
+Cold compilation time is separate; warm execution must reuse translations.
 
-These finite kernels diagnose computation and call overhead. Their cold factors
+The finite kernels diagnose computation and call overhead. Their cold factors
 compare one kernel to its ideal device execution time, not to an audio/MIDI packet
 deadline. Short reset/run/check cases alone neither qualify sustained instrument
 performance nor establish freedom from live underruns. Sustained integration
 requires packet deadline measurements, including first-use compilation.
+
+`packet-word-checksum` runs a continuous guest loop with persistent registers and
+RAM: 7,499 big-endian words and 29,999 retired instructions per 1 ms packet, at
+1,000 packets per virtual second. It reports cold/warm deadlines and nine warm
+trials against host ASM; full state and memory checks run outside timing. Release
+enforces the 70% comparison and packet deadlines; sanitizer builds only report
+performance. This qualifies checksum processing only; sustained control-flow,
+fixed-point and mixed workloads remain necessary. Run its directed result cases
+with `cpu12-continuous-checksum-bench --verify`.
 
 [License](LICENSE)

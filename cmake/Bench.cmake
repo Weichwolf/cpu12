@@ -8,6 +8,13 @@ foreach(name kernel word-checksum mandelbrot fft)
     "add_test([==[${name}]==] [==[$<TARGET_FILE:cpu12-${name}-bench>]==])\n"
     "set_tests_properties([==[${name}]==] PROPERTIES TIMEOUT 30)\n")
 endforeach()
+set(packet_policy report)
+if(CPU12_SANITIZER STREQUAL "none")
+  set(packet_policy enforce)
+endif()
+string(APPEND bench_tests
+  "add_test([==[packet-word-checksum]==] [==[$<TARGET_FILE:cpu12-continuous-checksum-bench>]==] [==[${packet_policy}]==])\n"
+  "set_tests_properties([==[packet-word-checksum]==] PROPERTIES TIMEOUT 30)\n")
 file(GENERATE OUTPUT "${bench_directory}/CTestTestfile.cmake" CONTENT "${bench_tests}")
 set(bench_selection)
 if(NOT CPU12_BENCH_FILTER STREQUAL "")
@@ -17,5 +24,6 @@ add_custom_target(bench
   COMMAND "${CMAKE_CTEST_COMMAND}" --test-dir "${bench_directory}"
     --parallel 1 --no-tests=error --verbose ${bench_selection}
   DEPENDS cpu12-kernel-bench cpu12-word-checksum-bench cpu12-mandelbrot-bench cpu12-fft-bench
+    cpu12-continuous-checksum-bench
   USES_TERMINAL
   VERBATIM)

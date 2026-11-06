@@ -174,10 +174,12 @@ void indexed_operation(Code &code,
                        const ResidentOperation &operation,
                        const ResidentPlan &plan,
                        const bool needed_flags) {
-  // Admission proves that ECX stays in range until the final increment.
-  constexpr std::array<std::uint8_t, 5> load{0x41, 0x0f, 0xb7, 0x9c, 0x0f}; // EBX,[R15+RCX+disp].
+  // RAM-only loops have no SIMD value-cache slots. XMM0 retains the admitted
+  // indexed origin independently of the static-operand base in R15.
+  constexpr std::array<std::uint8_t, 5> origin{0x66, 0x48, 0x0f, 0x7e, 0xc0}; // MOVQ RAX,XMM0.
+  code.raw(origin);
+  constexpr std::array<std::uint8_t, 4> load{0x0f, 0xb7, 0x1c, 0x08}; // MOVZX EBX,[RAX+RCX].
   code.raw(load);
-  code.u32(std::bit_cast<std::uint32_t>(-static_cast<std::int32_t>(plan.indexed_region.first)));
   swap_word(code, 3);
   constexpr std::array<std::uint8_t, 3> advance{0x8d, 0x49, 0x02}; // LEA ECX,[RCX+2].
   code.raw(advance);
@@ -805,20 +807,19 @@ void finish_branch(Code &code,
   }
 }
 
-std::vector<std::size_t> indexed_admission(Code &code, const ResidentPlan &plan) {
-  if (plan.indexed_region.bytes.empty()) { return {}; }
+std::vector<std::size_t> indexed_window(Code &code, const Ram region) {
   std::vector<std::size_t> exits;
   constexpr std::array<std::uint8_t, 4> load{0x0f, 0xb7, 0x47, 0x04}; // Initial X.
   constexpr std::array<std::uint8_t, 2> below{0x0f, 0x82};
   code.raw(load);
   constexpr std::uint8_t subtract_eax = 0x2d;
   code.byte(subtract_eax);
-  code.u32(plan.indexed_region.first);
+  code.u32(region.first);
   code.raw(below);
   exits.push_back(code.relative32());
   constexpr std::array<std::uint8_t, 2> capacity{0x41, 0xb8};
   code.raw(capacity);
-  code.u32(static_cast<std::uint32_t>(plan.indexed_region.bytes.size()));
+  code.u32(static_cast<std::uint32_t>(region.bytes.size()));
   constexpr std::array<std::uint8_t, 3> remaining{0x41, 0x29, 0xc0};
   code.raw(remaining);
   code.raw(below);
@@ -828,7 +829,31 @@ std::vector<std::size_t> indexed_admission(Code &code, const ResidentPlan &plan)
   code.raw(extent);
   code.raw(below);
   exits.push_back(code.relative32());
+  constexpr std::array<std::uint8_t, 2> origin{0x49, 0xb8}; // MOV R8,physical origin.
+  code.raw(origin);
+  code.u64(reinterpret_cast<std::uintptr_t>(region.bytes.data()));
+  constexpr std::array<std::uint8_t, 3> adjust{0x49, 0x81, 0xe8}; // SUB R8,logical start.
+  code.raw(adjust);
+  code.u32(region.first);
   return exits;
+}
+
+std::vector<std::size_t> indexed_admission(Code &code, const ResidentPlan &plan) {
+  if (plan.indexed_regions.empty()) { return {}; }
+  std::vector<std::size_t> accepted;
+  constexpr std::uint8_t jump = 0xe9;
+  for (const auto &region : plan.indexed_regions) {
+    const auto next = indexed_window(code, region);
+    code.byte(jump);
+    accepted.push_back(code.relative32());
+    for (const auto exit : next) { code.bind(exit); }
+  }
+  code.byte(jump);
+  const auto refused = code.relative32();
+  for (const auto entry : accepted) { code.bind(entry); }
+  constexpr std::array<std::uint8_t, 5> preserve_origin{0x66, 0x49, 0x0f, 0x6e, 0xc0};
+  code.raw(preserve_origin); // MOVQ XMM0,R8; all architectural state is still untouched.
+  return {refused};
 }
 
 void trip_count(Code &code, const ResidentPlan &plan) {

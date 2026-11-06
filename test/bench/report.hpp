@@ -25,6 +25,7 @@ inline void report(const std::uint64_t instructions,
             << " hardware_status=" << (device_seconds >= warm_seconds ? "PASS" : "FAIL")
             << " jit_to_host_percent=" << 100.0 * host_seconds / warm_seconds << " jit_target_70="
             << (host_seconds >= target_fraction * warm_seconds ? "PASS" : "FAIL")
-            << " cold_scope=single-kernel-not-processing-packet";
+            << " cold_scope=single-kernel-not-processing-packet"
+            << " qualification_scope=reset-run-diagnostic sustained_gate=NOT-ESTABLISHED";
 }
 }

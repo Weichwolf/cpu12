@@ -53,12 +53,11 @@ bool indexed_memory(ResidentPlan &plan, const Memory &memory) {
   }
   if (accesses != 1 || !plan.loop) { return false; }
   for (const auto &region : memory.regions()) {
-    if (region.known.empty() && region.bytes.size() > plan.indexed_region.bytes.size()) {
-      plan.indexed_region = region;
+    if (region.known.empty() && region.bytes.size() >= 2) {
+      plan.indexed_regions.push_back(region);
     }
   }
-  if (plan.indexed_region.bytes.empty()) { return false; }
-  plan.base = plan.indexed_region.bytes.data();
+  if (plan.indexed_regions.empty()) { return false; }
   plan.used_words |= 1U << 1U;
   plan.dirty_words |= 1U << 1U;
   return true;
@@ -408,8 +407,8 @@ struct ValueCache {
 };
 
 void cache_values(ResidentPlan &plan) {
-  // XMM0..15 are caller-saved, unused by scalar resident lowering, and hold
-  // semantic words without memory round trips. All allocation happens here.
+  // Non-loop scalar regions use caller-saved XMM0..15 for semantic words
+  // without memory round trips. Indexed loops reserve XMM0 for their origin.
   ValueCache cache{.end = plan.operations.size()};
   const auto next = next_reads(plan);
   for (std::size_t index = 0; index < plan.operations.size(); ++index) {
@@ -624,7 +623,7 @@ resident_region_plan(const std::span<const BlockInstruction> instructions, const
   auto head_plan = resident_plan(instructions, memory);
   auto tail_plan = resident_plan(tail, memory);
   if (!head_plan || !tail_plan || head_plan->loop || tail_plan->loop ||
-      !head_plan->indexed_region.bytes.empty() || !tail_plan->indexed_region.bytes.empty() ||
+      !head_plan->indexed_regions.empty() || !tail_plan->indexed_regions.empty() ||
       head_plan->changed != tail_plan->changed || head_plan->swapped_d != tail_plan->swapped_d) {
     return std::nullopt;
   }
