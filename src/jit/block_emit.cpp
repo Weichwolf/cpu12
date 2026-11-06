@@ -6,6 +6,7 @@
 #include "jit/code.hpp"
 #include "jit/emission.hpp"
 #include "jit/emitter.hpp"
+#include "jit/interrupt.hpp"
 #include "jit/resident.hpp"
 #include "runtime.hpp"
 
@@ -294,7 +295,26 @@ std::vector<std::uint8_t> emit_block(const std::span<const BlockInstruction> ins
   auto general = std::move(code).take();
   if (resident) { general = emit_resident(*resident, general); }
   if (const auto region = resident_region_plan(instructions, memory)) {
-    return emit_resident_region(*region, general);
+    const auto &tail = region->tail.operations.back();
+    const auto next = static_cast<Address>(tail.pc + tail.instruction.length);
+    const auto following = parse_block(memory, next);
+    Emission terminal;
+    ExitLocation terminal_location;
+    if (following.size() == 1 && (following[0].instruction.kind == Kind::wait ||
+                                  following[0].instruction.kind == Kind::stop)) {
+      terminal = emit_resident_wait(
+          following[0].instruction,
+          memory,
+          // Changed words have been published in canonical order. An unchanged,
+          // byte-only D may still have A/B swapped in BX; read its original state.
+          {.pc = following[0].pc, .words = region->head.dirty_words | region->tail.dirty_words});
+      terminal_location = {.pc = following[0].pc, .opcode = following[0].instruction.opcode};
+    }
+    return emit_resident_region(*region,
+                                {.general = general,
+                                 .terminal = terminal.bytes,
+                                 .terminal_exits = terminal.exits,
+                                 .terminal_location = terminal_location});
   }
   return general;
 }

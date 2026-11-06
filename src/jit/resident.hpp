@@ -3,6 +3,7 @@
 #include "cpu12/memory.hpp"
 #include "instruction.hpp"
 #include "jit/block.hpp"
+#include "jit/emission.hpp"
 
 #include <cstdint>
 #include <optional>
@@ -43,6 +44,12 @@ struct ResidentRegion {
   ResidentPlan head, tail;
 };
 
+struct RegionCode {
+  std::span<const std::uint8_t> general, terminal;
+  std::span<const ExitFixup> terminal_exits;
+  ExitLocation terminal_location;
+};
+
 [[nodiscard]] std::optional<ResidentPlan>
 resident_plan(std::span<const BlockInstruction> instructions, const Memory &memory);
 [[nodiscard]] std::optional<ResidentPlan>
@@ -55,5 +62,5 @@ resident_region_plan(std::span<const BlockInstruction> instructions, const Memor
 [[nodiscard]] std::vector<std::uint8_t> emit_resident(const ResidentPlan &plan,
                                                       std::span<const std::uint8_t> general);
 [[nodiscard]] std::vector<std::uint8_t> emit_resident_region(const ResidentRegion &region,
-                                                             std::span<const std::uint8_t> general);
+                                                             RegionCode machine);
 }

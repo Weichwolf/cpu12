@@ -14,6 +14,16 @@ void return_interrupt(Code &code, const Memory &ram);
 void defer_interrupt(Code &code, bool accumulator);
 void stack_context(Code &code, const Memory &ram, std::uint8_t next_pc = 0);
 void wait_instruction(Code &code, const Instruction &instruction, const Memory &ram);
+
+// At a connected exit, D/BX, Y/DX, SP/BP and CCR/CL may feed a proven RAM frame.
+// The original bus path still reads published CPU state across real callbacks.
+struct WaitValues {
+  Address pc;
+  unsigned words;
+};
+
+[[nodiscard]] Emission
+emit_resident_wait(const Instruction &instruction, const Memory &ram, WaitValues values);
 [[nodiscard]] std::vector<std::uint8_t> emit_interrupt(InterruptRequest request,
                                                        const Memory &ram,
                                                        InterruptFrame frame,

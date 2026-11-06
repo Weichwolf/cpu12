@@ -4,6 +4,7 @@
 #include "instruction.hpp"
 #include "jit/block.hpp"
 #include "jit/code.hpp"
+#include "jit/emission.hpp"
 #include "jit/resident.hpp"
 
 #include <algorithm>
@@ -80,7 +81,7 @@ void rex(Code &code, const std::uint8_t reg) {
   if (reg >= legacy_count) { code.byte(rex_b); }
 }
 
-void preserve(Code &code, const ResidentPlan &plan, const bool restore, const LoopMode mode) {
+unsigned preserve(Code &code, const ResidentPlan &plan, const bool restore, const LoopMode mode) {
   constexpr std::array<std::uint8_t, 5> registers{3, 5, 12, 13, 15};
   const bool operand_cache = std::ranges::any_of(plan.operations, [](const auto &operation) {
     return operation.cached_operand || operation.cache_store;
@@ -92,12 +93,15 @@ void preserve(Code &code, const ResidentPlan &plan, const bool restore, const Lo
                           plan.base != nullptr};
   constexpr std::uint8_t push = 0x50;
   constexpr std::uint8_t pop = 0x58;
+  unsigned saved = 0;
   for (std::size_t offset = 0; offset < registers.size(); ++offset) {
     const auto index = restore ? registers.size() - 1 - offset : offset;
     if (!needed[index]) { continue; }
     rex(code, registers[index]);
     code.byte(static_cast<std::uint8_t>((restore ? pop : push) + (registers[index] & 7U)));
+    ++saved;
   }
+  return saved;
 }
 
 void set_flag(Code &code, const FlagValue flag) {
@@ -906,10 +910,27 @@ struct RegionExit {
   ExitLocation location;
 };
 
+struct RegionTerminal {
+  const RegionCode &machine;
+  bool pad;
+  std::vector<std::size_t> entries;
+};
+
+void join_terminal(Code &code, RegionTerminal &terminal) {
+  constexpr std::array<std::uint8_t, 5> empty{0x44, 0x39, 0xf0, 0x0f, 0x83};
+  code.raw(empty); // Unsigned progress >= original grant leaves the terminal unexecuted.
+  const auto no_budget = code.relative32();
+  constexpr std::array<std::uint8_t, 4> enter{0x41, 0x89, 0xc6, 0xe9};
+  code.raw(enter); // R14D holds progress across the original instruction's real ABI callbacks.
+  terminal.entries.push_back(code.relative32());
+  code.bind(no_budget);
+}
+
 void region_exit(Code &code,
                  const ResidentPlan &combined,
                  const std::uint32_t reserved,
-                 RegionExit exit) {
+                 RegionExit exit,
+                 RegionTerminal &terminal) {
   deferred_flags(code, exit.phase, exit.state);
   if (combined.swapped_d && (combined.dirty_words & (1U << word_registers[0])) != 0) {
     swap_word(code, word_registers[0]);
@@ -924,12 +945,47 @@ void region_exit(Code &code,
     code.byte(subtract_eax);
     code.u32(reserved - exit.completed);
   }
+  if (!terminal.machine.terminal.empty()) {
+    constexpr std::uint8_t pop_context = 0x5e;
+    code.byte(pop_context); // Preserve live Y/DX while restoring the original context.
+  }
+  if (!terminal.machine.terminal.empty() && exit.pc == terminal.machine.terminal_location.pc) {
+    join_terminal(code, terminal);
+  }
   constexpr std::array<std::uint8_t, 2> pop_r14{0x41, 0x5e};
   code.raw(pop_r14);
   preserve(code, combined, true, LoopMode::bounded);
   describe_exit(code, exit.location);
   constexpr std::uint8_t ret = 0xc3;
   code.byte(ret);
+}
+
+void emit_terminal(Code &code, const ResidentPlan &combined, const RegionTerminal &terminal) {
+  for (const auto entry : terminal.entries) { code.bind(entry); }
+  if (terminal.entries.empty()) { return; }
+  constexpr std::array<std::uint8_t, 4> align{0x48, 0x83, 0xec, 0x08};
+  if (terminal.pad) { code.raw(align); }
+  const auto begin = code.size();
+  code.raw(terminal.machine.terminal);
+  const auto complete = code.size();
+  constexpr std::array<std::uint8_t, 6> completed{0x44, 0x89, 0xf0, 0xff, 0xc0, 0xe9};
+  code.raw(completed); // Count the terminal instruction only after a genuine complete exit.
+  const auto counted = code.relative32();
+  const auto failed = code.size();
+  constexpr std::array<std::uint8_t, 3> progress{0x44, 0x89, 0xf0};
+  code.raw(progress);
+  code.bind(counted);
+  describe_exit(code, terminal.machine.terminal_location, true);
+  constexpr std::array<std::uint8_t, 4> release{0x48, 0x83, 0xc4, 0x08};
+  if (terminal.pad) { code.raw(release); }
+  constexpr std::array<std::uint8_t, 2> pop_r14{0x41, 0x5e};
+  code.raw(pop_r14);
+  preserve(code, combined, true, LoopMode::bounded);
+  constexpr std::uint8_t ret = 0xc3;
+  code.byte(ret);
+  for (const auto exit : terminal.machine.terminal_exits) {
+    code.bind(begin + exit.displacement, exit.kind == NativeExit::complete ? complete : failed);
+  }
 }
 
 std::size_t region_branch(Code &code, const unsigned condition, const bool inverse = false) {
@@ -960,7 +1016,7 @@ std::vector<std::uint8_t> emit_resident(const ResidentPlan &plan,
 }
 
 std::vector<std::uint8_t> emit_resident_region(const ResidentRegion &region,
-                                               const std::span<const std::uint8_t> general) {
+                                               const RegionCode machine) {
   const auto combined = combined_registers(region);
   const auto &head = region.head;
   const auto &tail = region.tail;
@@ -973,9 +1029,13 @@ std::vector<std::uint8_t> emit_resident_region(const ResidentRegion &region,
   constexpr std::array<std::uint8_t, 2> below{0x0f, 0x82};
   code.raw(below);
   const auto refused = code.relative32();
-  preserve(code, combined, false, LoopMode::bounded);
+  const auto saved = preserve(code, combined, false, LoopMode::bounded);
   constexpr std::array<std::uint8_t, 8> grants{0x41, 0x56, 0x41, 0x89, 0xd5, 0x41, 0x89, 0xd6};
   code.raw(grants); // Preserve R14; R13D=remaining after reserving this iteration.
+  if (!machine.terminal.empty()) {
+    constexpr std::uint8_t push_context = 0x56;
+    code.byte(push_context);
+  }
   constexpr std::array<std::uint8_t, 3> reserve{0x41, 0x81, 0xed};
   code.raw(reserve);
   code.u32(count);
@@ -1014,6 +1074,7 @@ std::vector<std::uint8_t> emit_resident_region(const ResidentRegion &region,
   const auto &last_head = head.operations.back();
   const auto &last_tail = tail.operations.back();
   const auto exit_pc = static_cast<Address>(last_tail.pc + last_tail.instruction.length);
+  RegionTerminal terminal{.machine = machine, .pad = (saved + 1U) % 2U != 0, .entries = {}};
   const ExitLocation tail_location{.pc = last_tail.pc, .opcode = last_tail.instruction.opcode};
   region_exit(code,
               combined,
@@ -1022,7 +1083,8 @@ std::vector<std::uint8_t> emit_resident_region(const ResidentRegion &region,
                .state = tail_state,
                .pc = head.operations.front().pc,
                .completed = 0,
-               .location = tail_location});
+               .location = tail_location},
+              terminal);
   if (tail_exit) {
     code.bind(*tail_exit);
     region_exit(code,
@@ -1032,7 +1094,8 @@ std::vector<std::uint8_t> emit_resident_region(const ResidentRegion &region,
                  .state = tail_state,
                  .pc = exit_pc,
                  .completed = count,
-                 .location = tail_location});
+                 .location = tail_location},
+                terminal);
   }
   code.bind(head_exit);
   region_exit(code,
@@ -1042,9 +1105,11 @@ std::vector<std::uint8_t> emit_resident_region(const ResidentRegion &region,
                .state = head_state,
                .pc = exit_pc,
                .completed = head_count,
-               .location = {.pc = last_head.pc, .opcode = last_head.instruction.opcode}});
+               .location = {.pc = last_head.pc, .opcode = last_head.instruction.opcode}},
+              terminal);
+  emit_terminal(code, combined, terminal);
   code.bind(refused);
-  code.raw(general);
+  code.raw(machine.general);
   return std::move(code).take();
 }
 }
