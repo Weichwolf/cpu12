@@ -371,18 +371,17 @@ void immediate_operation(Code &code,
 }
 
 void multiply(Code &code, const ResidentOperation &operation, EmissionState &state) {
-  constexpr std::array<std::uint8_t, 3> signed_d{0x0f, 0xbf, 0xc3};
+  constexpr std::array<std::uint8_t, 3> signed_d{0x0f, 0xbf, 0xdb};
   constexpr std::array<std::uint8_t, 3> signed_y{0x0f, 0xbf, 0xd2};
-  constexpr std::array<std::uint8_t, 3> unsigned_d{0x0f, 0xb7, 0xc3};
+  constexpr std::array<std::uint8_t, 3> unsigned_d{0x0f, 0xb7, 0xdb};
   constexpr std::array<std::uint8_t, 3> unsigned_y{0x0f, 0xb7, 0xd2};
   const bool signed_product = operation.instruction.math == MathOp::multiply_signed;
   code.raw(signed_product ? signed_d : unsigned_d);
   code.raw(signed_product ? signed_y : unsigned_y);
-  constexpr std::array<std::uint8_t, 10> product{
-      0x0f, 0xaf, 0xc2, 0x89, 0xc3, 0x89, 0xc2, 0xc1, 0xea, 0x10};
-  code.raw(product); // IMUL EAX,EDX; retain low D in BX and high Y in DX.
+  constexpr std::array<std::uint8_t, 8> product{0x0f, 0xaf, 0xda, 0x89, 0xda, 0xc1, 0xea, 0x10};
+  code.raw(product); // IMUL EBX,EDX; retain the full product in EBX and high Y in DX.
   if (operation.flags == 0) { return; }
-  constexpr std::array<std::uint8_t, 6> snapshot{0x85, 0xc0, 0x9f, 0x0f, 0xb6, 0xc4};
+  constexpr std::array<std::uint8_t, 6> snapshot{0x85, 0xdb, 0x9f, 0x0f, 0xb6, 0xc4};
   code.raw(snapshot); // LAHF N/Z from the full product, independently of word D.
   const auto reg = snapshots[state.flags.size()];
   rex(code, reg);
@@ -773,7 +772,10 @@ struct RegionExit {
   ExitLocation location;
 };
 
-void region_exit(Code &code, const ResidentPlan &combined, RegionExit exit) {
+void region_exit(Code &code,
+                 const ResidentPlan &combined,
+                 const std::uint32_t reserved,
+                 RegionExit exit) {
   deferred_flags(code, exit.phase, exit.state);
   if (combined.swapped_d && (combined.dirty_words & (1U << word_registers[0])) != 0) {
     swap_word(code, word_registers[0]);
@@ -782,11 +784,11 @@ void region_exit(Code &code, const ResidentPlan &combined, RegionExit exit) {
   publish_flags(code, exit.phase, exit.state);
   pc(code, exit.pc);
   constexpr std::array<std::uint8_t, 6> progress{0x44, 0x89, 0xf0, 0x44, 0x29, 0xe8};
-  code.raw(progress); // EAX = original grant - remaining whole-iteration grant.
-  if (exit.completed != 0) {
-    constexpr std::uint8_t add_eax = 0x05;
-    code.byte(add_eax);
-    code.u32(exit.completed);
+  code.raw(progress); // EAX = original grant - remaining reserved-iteration grant.
+  if (exit.completed != reserved) {
+    constexpr std::uint8_t subtract_eax = 0x2d;
+    code.byte(subtract_eax);
+    code.u32(reserved - exit.completed);
   }
   constexpr std::array<std::uint8_t, 2> pop_r14{0x41, 0x5e};
   code.raw(pop_r14);
@@ -839,7 +841,10 @@ std::vector<std::uint8_t> emit_resident_region(const ResidentRegion &region,
   const auto refused = code.relative32();
   preserve(code, combined, false, LoopMode::bounded);
   constexpr std::array<std::uint8_t, 8> grants{0x41, 0x56, 0x41, 0x89, 0xd5, 0x41, 0x89, 0xd6};
-  code.raw(grants); // Preserve R14; R13D=remaining, R14D=original grant.
+  code.raw(grants); // Preserve R14; R13D=remaining after reserving this iteration.
+  constexpr std::array<std::uint8_t, 3> reserve{0x41, 0x81, 0xed};
+  code.raw(reserve);
+  code.u32(count);
   registers(code, combined, false);
   if (combined.base != nullptr) {
     constexpr std::array<std::uint8_t, 2> memory{0x49, 0xbf};
@@ -866,9 +871,8 @@ std::vector<std::uint8_t> emit_resident_region(const ResidentRegion &region,
   constexpr std::array<std::uint8_t, 3> subtract{0x41, 0x81, 0xed};
   code.raw(subtract);
   code.u32(count);
-  constexpr std::array<std::uint8_t, 3> compare{0x41, 0x81, 0xfd};
-  code.raw(compare);
-  code.u32(count);
+  // Reserve the next complete iteration using the subtraction's unsigned carry.
+  // A failed reservation wraps R13D; the exit deduction removes that reservation.
   constexpr std::array<std::uint8_t, 2> enough{0x0f, 0x83};
   code.raw(enough);
   const auto repeat = code.relative32();
@@ -879,6 +883,7 @@ std::vector<std::uint8_t> emit_resident_region(const ResidentRegion &region,
   const ExitLocation tail_location{.pc = last_tail.pc, .opcode = last_tail.instruction.opcode};
   region_exit(code,
               combined,
+              count,
               {.phase = tail,
                .state = tail_state,
                .pc = head.operations.front().pc,
@@ -888,6 +893,7 @@ std::vector<std::uint8_t> emit_resident_region(const ResidentRegion &region,
     code.bind(*tail_exit);
     region_exit(code,
                 combined,
+                count,
                 {.phase = tail,
                  .state = tail_state,
                  .pc = exit_pc,
@@ -897,6 +903,7 @@ std::vector<std::uint8_t> emit_resident_region(const ResidentRegion &region,
   code.bind(head_exit);
   region_exit(code,
               combined,
+              count,
               {.phase = head,
                .state = head_state,
                .pc = exit_pc,

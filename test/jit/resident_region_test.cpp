@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <exception>
 #include <iostream>
+#include <limits>
 #include <span>
 #include <stdexcept>
 #include <vector>
@@ -300,6 +301,41 @@ unsigned resumed_cases(Device &device, const Form form, const Program &code) {
   return checked;
 }
 
+void maximum_grant(Device &device, const Form form, const Program &code, const Snapshot &before) {
+  auto expected = before;
+  constexpr unsigned oracle_limit = 97;
+  const auto wanted = advance(expected, form, code, oracle_limit);
+  require(expected.execution == ExecutionState::waiting,
+          "The extreme-grant fixture must have an independently bounded exit");
+  device.reset(before);
+  const auto actual = device.core.run(std::numeric_limits<std::uint32_t>::max());
+  device.check(expected, actual);
+  require(actual == wanted, "An extreme grant must retain exact original progress and state");
+}
+
+unsigned extreme_grants(Device &device, const Form form, const Program &code) {
+  constexpr Address equal_input = 0x7ffd;
+  constexpr Byte flags = 0xff;
+  const bool low_exit = code.guard == Opcode::bcs_relative || code.guard == Opcode::bne_relative;
+  const auto count = static_cast<Address>(form.increment ? word_mask : 1);
+  maximum_grant(device,
+                form,
+                code,
+                initial(form,
+                        {.flags = flags,
+                         .value = static_cast<Address>(low_exit ? 0 : equal_input),
+                         .count = count}));
+  if (form.compare_tail || form.backedge != Opcode::bne_relative) { return 1; }
+  maximum_grant(device,
+                form,
+                code,
+                initial(form,
+                        {.flags = flags,
+                         .value = static_cast<Address>(low_exit ? equal_input : 0),
+                         .count = count}));
+  return 2;
+}
+
 unsigned cases(const Form form, const Opcode guard) {
   auto code = program(form, guard);
   Device device(code);
@@ -330,7 +366,7 @@ unsigned cases(const Form form, const Opcode guard) {
     if (flags == 0) { compiled = current; }
     require(current == compiled, "Warm regions must retain their code across flags and deadlines");
   }
-  return checked + resumed_cases(device, form, code);
+  return checked + resumed_cases(device, form, code) + extreme_grants(device, form, code);
 }
 }
 
