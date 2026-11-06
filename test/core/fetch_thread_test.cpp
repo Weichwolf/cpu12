@@ -2,6 +2,7 @@
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
 #include "fetch.hpp"
+#include "instruction.hpp"
 #include "runtime.hpp"
 
 #include <array>
@@ -9,6 +10,7 @@
 #include <cstddef>
 #include <exception>
 #include <iostream>
+#include <span>
 #include <stdexcept>
 #include <thread>
 
@@ -46,11 +48,14 @@ void worker(const std::size_t index) {
   for (unsigned repeat = 0; repeat < repetitions; ++repeat) {
     for (std::size_t offset = 0; offset < shapes.size(); ++offset) {
       Source source{.shape = shapes[(index + offset) % shapes.size()]};
+      const auto decoded =
+          detail::decode_first(std::span(source.shape.bytes).first(source.shape.length));
       detail::NativeContext context{.io = {.owner = &source, .fetch = Source::read}};
       const auto capture = detail::fetch(Memory::external(), context, start);
-      if (!capture.supported || context.fault != Fault::none ||
-          capture.size != source.shape.length || source.calls != source.shape.length ||
-          capture.bytes != source.shape.bytes) {
+      if (!decoded || decoded->length != source.shape.length ||
+          decoded->opcode != source.shape.bytes[0] || !capture.supported ||
+          context.fault != Fault::none || capture.size != source.shape.length ||
+          source.calls != source.shape.length || capture.bytes != source.shape.bytes) {
         throw std::runtime_error(
             "Concurrent first/hit fetch must retain opcode-page length and exact bytes");
       }

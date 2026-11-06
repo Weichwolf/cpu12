@@ -506,8 +506,11 @@ unsigned written_words(const Instruction &instruction) {
 
 std::optional<ResidentPlan> resident_plan(const std::span<const BlockInstruction> instructions,
                                           const Memory &memory) {
-  if (instructions.empty()) { return std::nullopt; }
+  // Unsupported terminals cannot form a resident plan. Reject before building
+  // a prefix that the complete-block emitter will analyze separately.
+  if (instructions.empty() || !supported(instructions.back().instruction)) { return std::nullopt; }
   ResidentPlan plan;
+  plan.operations.reserve(instructions.size());
   for (const auto &operation : instructions) {
     auto instruction = operation.instruction;
     if (instruction.kind == Kind::multiply_divide) { instruction.word = true; }

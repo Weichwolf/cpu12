@@ -10,6 +10,7 @@
 #include <array>
 #include <cstddef>
 #include <limits>
+#include <optional>
 #include <span>
 
 namespace cpu12::detail {
@@ -89,6 +90,21 @@ unsigned indexed_length(const Plan selected, const unsigned postbyte) {
   if (mode < 4) { return selected.length + 2; }
   return selected.length;
 }
+}
+
+std::optional<Instruction> decode_first(const std::span<const Byte> bytes) {
+  if (bytes.empty()) { return std::nullopt; }
+  const bool page = bytes[0] == prefix;
+  const auto header = page ? 2U : 1U;
+  if (bytes.size() < header) { return std::nullopt; }
+  const auto selected = select_plan(bytes[page ? 1U : 0U], page);
+  auto length = selected.length;
+  if (selected.indexed) {
+    if (bytes.size() <= header) { return std::nullopt; }
+    length = indexed_length(selected, bytes[header]);
+  }
+  if (length == 0 || length > bytes.size()) { return std::nullopt; }
+  return decode(bytes.first(length));
 }
 
 Capture fetch(const Memory &ram, NativeContext &context, const Address pc) {

@@ -247,12 +247,14 @@ std::vector<std::uint8_t> emit_block(const std::span<const BlockInstruction> ins
   const auto insufficient = code.relative32();
   std::vector<FailedExit> faults;
   std::uint32_t completed = 0;
-  const auto options = emission_options(instructions, memory);
   const auto prefix = resident ? std::nullopt : append_resident_prefix(code, instructions, memory);
   if (prefix) { completed = static_cast<std::uint32_t>(prefix->plan.operations.size()); }
+  const auto suffix = instructions.subspan(completed);
+  const auto options = emission_options(suffix, memory);
+  std::size_t policy_index = 0;
   bool pending_pc = false;
-  for (const auto &operation : instructions.subspan(completed)) {
-    const auto policy = options[completed];
+  for (const auto &operation : suffix) {
+    const auto policy = options[policy_index++];
     if (pending_pc && policy.advance_pc) { publish_pc(code, operation.pc); }
     // Proven pure operations preserve RDI and do not need the context in RSI.
     if (policy.advance_pc || !pending_pc) { code.raw(restore_arguments); }
