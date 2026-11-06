@@ -174,6 +174,38 @@ std::optional<ResidentPlan> complete_plan(const std::span<const BlockInstruction
   if (auto plan = resident_loop_plan(instructions, memory)) { return plan; }
   return resident_plan(instructions, memory);
 }
+
+std::vector<std::uint8_t> single_entry(const BlockInstruction &operation, const Memory &memory) {
+  Code code;
+  code.raw(endbr);
+  constexpr std::array<std::uint8_t, 4> grant{0x85, 0xd2, 0x0f, 0x84};
+  code.raw(grant); // TEST EDX,EDX; a complete original instruction requires one grant.
+  const auto empty = code.relative32();
+  const auto emitted = emit_joined(operation.instruction, memory);
+  const auto begin = code.size();
+  code.raw(emitted.bytes);
+  const auto complete = code.size();
+  constexpr std::uint8_t result = 0xb8; // MOV EAX,imm32.
+  code.byte(result);
+  code.u32(1);
+  const ExitLocation location{.pc = operation.pc, .opcode = operation.instruction.opcode};
+  describe_exit(code,
+                location,
+                operation.instruction.kind == Kind::wait ||
+                    operation.instruction.kind == Kind::stop);
+  constexpr std::uint8_t ret = 0xc3;
+  code.byte(ret);
+  const auto failed = code.size();
+  code.byte(result);
+  code.u32(0);
+  describe_exit(code, location, true);
+  code.byte(ret);
+  code.bind(empty, failed);
+  for (const auto exit : emitted.exits) {
+    code.bind(begin + exit.displacement, exit.kind == NativeExit::complete ? complete : failed);
+  }
+  return std::move(code).take();
+}
 }
 
 void describe_exit(Code &code, const ExitLocation location, const bool boundary) {
@@ -187,6 +219,9 @@ void describe_exit(Code &code, const ExitLocation location, const bool boundary)
 
 std::vector<std::uint8_t> emit_block(const std::span<const BlockInstruction> instructions,
                                      const Memory &memory) {
+  if (instructions.size() == 1 && !loops(instructions)) {
+    return single_entry(instructions.front(), memory);
+  }
   const auto resident = complete_plan(instructions, memory);
   Code code;
   code.raw(endbr);

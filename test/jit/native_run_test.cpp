@@ -191,6 +191,69 @@ void faults() {
               middle_failure.ram[failing_port] == 0,
           "A partial block fault retains earlier progress and cannot execute its successor");
 }
+
+State terminal_state(const Registers before,
+                     const std::span<const Byte> terminal,
+                     const unsigned grant,
+                     std::array<Byte, address_bytes> &ram) {
+  constexpr unsigned byte_bits = 8;
+  constexpr Byte disable_stop = 0x80;
+  State expected{};
+  expected.registers = before;
+  if (grant == 0) { return expected; }
+  expected.registers.pc = static_cast<Address>(third + terminal.size());
+  if (terminal[0] != isa::wai[0] && (before.ccr & disable_stop) != 0) { return expected; }
+  const auto next_pc = expected.registers.pc;
+  const std::array<Byte, 9> frame{before.ccr,
+                                  static_cast<Byte>(before.d),
+                                  static_cast<Byte>(before.d >> byte_bits),
+                                  static_cast<Byte>(before.x >> byte_bits),
+                                  static_cast<Byte>(before.x),
+                                  static_cast<Byte>(before.y >> byte_bits),
+                                  static_cast<Byte>(before.y),
+                                  static_cast<Byte>(next_pc >> byte_bits),
+                                  static_cast<Byte>(next_pc)};
+  expected.registers.sp = static_cast<Address>(before.sp - frame.size());
+  expected.execution =
+      terminal[0] == isa::wai[0] ? ExecutionState::waiting : ExecutionState::stopped;
+  std::ranges::copy(frame, ram.begin() + expected.registers.sp);
+  return expected;
+}
+
+unsigned terminal_grants() {
+  constexpr Address frame_seed = 0xa55a;
+  constexpr std::array<Address, 3> stacks{stack, stack + 1, 0xffff};
+  constexpr std::array<unsigned, 3> grants{0, 1, unlimited};
+  unsigned checked = 0;
+  for (const auto terminal : {std::span<const Byte>(isa::stop), std::span<const Byte>(isa::wai)}) {
+    Harness harness(false, terminal);
+    const auto original = harness.ram;
+    for (unsigned flags = 0; flags <= std::numeric_limits<Byte>::max(); ++flags) {
+      for (const auto sp : stacks) {
+        for (const auto grant : grants) {
+          harness.ram = original;
+          harness.context = {};
+          auto before = seed;
+          before.pc = third;
+          before.sp = sp;
+          before.d = frame_seed;
+          before.ccr = static_cast<Byte>(flags);
+          harness.context.cpu.registers = before;
+          auto expected_ram = original;
+          const auto expected = terminal_state(before, terminal, grant, expected_ram);
+          const auto result = detail::enter_block(
+              harness.pages.back()[0], harness.context.cpu.registers, harness.context, grant);
+          check(result, grant == 0 ? 0 : 1, {.pc = third, .opcode = terminal[0]});
+          require(harness.context.fault == Fault::none && harness.context.cpu == expected &&
+                      harness.ram == expected_ram,
+                  "Single STOP/WAI entries preserve exact grants, flags, stack bytes and state");
+          ++checked;
+        }
+      }
+    }
+  }
+  return checked;
+}
 }
 
 int main() {
@@ -199,7 +262,9 @@ int main() {
     boundaries();
     faults();
     sleep_boundaries();
-    std::cout << "Native block dispatch, budgets, cold targets and precise faults passed\n";
+    const auto terminals = terminal_grants();
+    std::cout << "Native block dispatch, budgets, cold targets, precise faults and " << terminals
+              << " independent single STOP/WAI cases passed\n";
     return 0;
   } catch (const std::exception &error) {
     std::cerr << error.what() << '\n';

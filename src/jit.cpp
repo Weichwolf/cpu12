@@ -90,6 +90,27 @@ public:
   std::vector<std::unique_ptr<Mapping>> mappings;
   Mapping *current = nullptr;
   Statistics statistics;
+
+  // Keep translation-only allocation and stack state off the retained-entry path.
+  [[nodiscard, gnu::cold, gnu::noinline]] std::optional<NativeResult>
+  run_cold(const std::uint32_t budget, Registers &registers, NativeContext &context) {
+    auto &mapping = *current;
+    const auto instructions = parse_block(mapping.memory, registers.pc);
+    if (instructions.empty()) { return std::nullopt; }
+    const auto *entry = arena.append(emit_block(instructions, mapping.memory));
+    const auto address = unsigned{registers.pc};
+    auto &page = mapping.native_regions[address >> native_page_shift];
+    if (page == nullptr) {
+      auto &owned = mapping.pages[address >> native_page_shift];
+      owned = std::make_unique<NativePage>();
+      page = owned->data();
+    }
+    (*mapping.pages[address >> native_page_shift])[address & page_mask] = entry;
+    ++statistics.compiled_entries;
+    const auto result = enter_blocks(entry, registers, context, budget, mapping.native_regions);
+    statistics.native_instructions += result.retired;
+    return result;
+  }
 };
 
 Jit::Jit(const Memory &ram) : impl_(std::make_unique<Impl>()) {
@@ -164,18 +185,7 @@ Jit::run_block(const std::uint32_t budget, Registers &registers, NativeContext &
   const auto address = unsigned{registers.pc};
   auto &page = mapping.native_regions[address >> native_page_shift];
   const auto *entry = page != nullptr ? page[address & page_mask] : nullptr;
-  if (entry == nullptr) {
-    const auto instructions = parse_block(mapping.memory, registers.pc);
-    if (instructions.empty()) { return std::nullopt; }
-    entry = impl_->arena.append(emit_block(instructions, mapping.memory));
-    if (page == nullptr) {
-      auto &owned = mapping.pages[address >> native_page_shift];
-      owned = std::make_unique<NativePage>();
-      page = owned->data();
-    }
-    (*mapping.pages[address >> native_page_shift])[address & page_mask] = entry;
-    ++impl_->statistics.compiled_entries;
-  }
+  if (entry == nullptr) { return impl_->run_cold(budget, registers, context); }
   const auto result = enter_blocks(entry, registers, context, budget, mapping.native_regions);
   impl_->statistics.native_instructions += result.retired;
   return result;

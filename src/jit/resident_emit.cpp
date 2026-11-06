@@ -11,6 +11,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <ranges>
 #include <span>
 #include <stdexcept>
 #include <utility>
@@ -416,7 +417,44 @@ void resident_unary(Code &code, const Instruction &instruction) {
   code.byte(static_cast<std::uint8_t>(register_operand | (group << 3U) | native_word(instruction)));
 }
 
-void body(Code &code, const ResidentPlan &plan, EmissionState &state) {
+bool preserves_carry(const ResidentOperation &operation) {
+  const auto &instruction = operation.instruction;
+  if (instruction.kind == Kind::nop || instruction.kind == Kind::branch ||
+      instruction.kind == Kind::loop) {
+    return true;
+  }
+  if (instruction.kind == Kind::register_operation &&
+      (instruction.operation == RegisterOp::index_increment ||
+       instruction.operation == RegisterOp::index_decrement)) {
+    return true;
+  }
+  if (instruction.kind != Kind::store || operation.pointer == nullptr || operation.branch_flags ||
+      (!operation.deferred && operation.flags != 0)) {
+    return false;
+  }
+#if !defined(__MOVBE__)
+  if (instruction.word) { return false; } // Scratch endian rotation changes host CF.
+#endif
+  return true;
+}
+
+const ResidentOperation *loop_carry(const ResidentPlan &plan) {
+  if (!plan.loop) { return nullptr; }
+  for (const auto &operation : std::views::reverse(plan.operations)) {
+    const auto kind = operation.instruction.kind;
+    if (!operation.deferred && operation.flags == flag_c &&
+        (kind == Kind::add || kind == Kind::subtract || kind == Kind::compare)) {
+      return &operation;
+    }
+    if (!preserves_carry(operation)) { return nullptr; }
+  }
+  return nullptr;
+}
+
+void body(Code &code,
+          const ResidentPlan &plan,
+          EmissionState &state,
+          const ResidentOperation *const delayed_carry = nullptr) {
   for (const auto &operation : plan.operations) {
     const auto &instruction = operation.instruction;
     if (operation.initial_load) {
@@ -443,7 +481,7 @@ void body(Code &code, const ResidentPlan &plan, EmissionState &state) {
     } else {
       immediate_operation(code, instruction, plan, needed_flags);
     }
-    if (!operation.deferred) { capture(code, operation, state); }
+    if (!operation.deferred && &operation != delayed_carry) { capture(code, operation, state); }
   }
 }
 
@@ -739,8 +777,11 @@ std::vector<std::uint8_t> emit_variant(const ResidentPlan &plan,
   }
   const auto loop = code.size();
   EmissionState state;
-  body(code, plan, state);
+  const auto *const delayed_carry = loop_carry(plan);
+  body(code, plan, state, delayed_carry);
   if (!carry_branch(plan)) { finish_branch(code, plan, loop, mode); }
+  // Counted backedges use DEC/JNZ and preserve the final arithmetic carry.
+  if (delayed_carry != nullptr) { capture(code, *delayed_carry, state); }
   deferred_flags(code, plan, state);
   if (plan.swapped_d && (plan.dirty_words & (1U << word_registers[0])) != 0) {
     swap_word(code, word_registers[0]);
