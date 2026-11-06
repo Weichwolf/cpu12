@@ -10,6 +10,7 @@
 #include <bit>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <stdexcept>
 #include <utility>
@@ -396,7 +397,7 @@ void multiply(Code &code, const ResidentOperation &operation, EmissionState &sta
     code.byte(static_cast<std::uint8_t>(register_operand | (reg & 7U)));
   }
   state.flags.push_back({.mask = operation.flags, .reg = reg});
-  if (operation.branch_zero) {
+  if (operation.branch_flags) {
     constexpr std::array<std::uint8_t, 2> test_product{0x85, 0xdb};
     code.raw(test_product); // EBX still holds the full product, not only guest word D.
   }
@@ -419,12 +420,13 @@ void resident_unary(Code &code, const Instruction &instruction) {
 void body(Code &code, const ResidentPlan &plan, EmissionState &state) {
   for (const auto &operation : plan.operations) {
     const auto &instruction = operation.instruction;
-    if (instruction.kind == Kind::nop || instruction.kind == Kind::branch ||
-        operation.initial_load) {
+    if (operation.initial_load) {
+      fill_value(code, operation, native_word(instruction));
       continue;
     }
+    if (instruction.kind == Kind::nop || instruction.kind == Kind::branch) { continue; }
     const bool needed_flags =
-        (!operation.deferred && operation.flags != 0) || operation.branch_zero;
+        (!operation.deferred && operation.flags != 0) || operation.branch_flags;
     if ((instruction.kind == Kind::compare || instruction.kind == Kind::bit_test) &&
         !needed_flags) {
       continue;
@@ -457,7 +459,15 @@ void deferred_flags(Code &code, const ResidentPlan &plan, EmissionState &state) 
       immediate_operation(code, inverse, plan);
       immediate_operation(code, instruction, plan);
     } else if (instruction.kind == Kind::compare || instruction.kind == Kind::bit_test) {
-      immediate_operation(code, instruction, plan);
+      if (operation.pointer != nullptr) {
+        auto current = operation;
+        current.value_slot = 0;
+        current.fill_value = false;
+        current.cached_operand = false;
+        memory_arithmetic(code, current, plan);
+      } else {
+        immediate_operation(code, instruction, plan);
+      }
     } else {
       if (instruction.kind == Kind::register_operation) { instruction.word = true; }
       test_value(code, instruction, plan);
@@ -754,6 +764,56 @@ std::vector<std::uint8_t> emit_variant(const ResidentPlan &plan,
   code.raw(general);
   return std::move(code).take();
 }
+
+struct RegionExit {
+  const ResidentPlan &phase;
+  EmissionState state;
+  Address pc;
+  std::uint32_t completed;
+  ExitLocation location;
+};
+
+void region_exit(Code &code, const ResidentPlan &combined, RegionExit exit) {
+  deferred_flags(code, exit.phase, exit.state);
+  if (combined.swapped_d && (combined.dirty_words & (1U << word_registers[0])) != 0) {
+    swap_word(code, word_registers[0]);
+  }
+  registers(code, combined, true);
+  publish_flags(code, exit.phase, exit.state);
+  pc(code, exit.pc);
+  constexpr std::array<std::uint8_t, 6> progress{0x44, 0x89, 0xf0, 0x44, 0x29, 0xe8};
+  code.raw(progress); // EAX = original grant - remaining whole-iteration grant.
+  if (exit.completed != 0) {
+    constexpr std::uint8_t add_eax = 0x05;
+    code.byte(add_eax);
+    code.u32(exit.completed);
+  }
+  constexpr std::array<std::uint8_t, 2> pop_r14{0x41, 0x5e};
+  code.raw(pop_r14);
+  preserve(code, combined, true, LoopMode::bounded);
+  describe_exit(code, exit.location);
+  constexpr std::uint8_t ret = 0xc3;
+  code.byte(ret);
+}
+
+std::size_t region_branch(Code &code, const unsigned condition, const bool inverse = false) {
+  constexpr std::array<std::uint8_t, 4> conditions{0x83, 0x82, 0x85, 0x84};
+  constexpr unsigned first_condition = 4;
+  code.byte(escape);
+  code.byte(
+      static_cast<std::uint8_t>(conditions.at(condition - first_condition) ^ (inverse ? 1U : 0U)));
+  return code.relative32();
+}
+
+ResidentPlan combined_registers(const ResidentRegion &region) {
+  ResidentPlan plan;
+  plan.base = region.head.base;
+  plan.changed = region.head.changed;
+  plan.used_words = region.head.used_words | region.tail.used_words;
+  plan.dirty_words = region.head.dirty_words | region.tail.dirty_words;
+  plan.swapped_d = region.head.swapped_d;
+  return plan;
+}
 }
 
 std::vector<std::uint8_t> emit_resident(const ResidentPlan &plan,
@@ -761,5 +821,89 @@ std::vector<std::uint8_t> emit_resident(const ResidentPlan &plan,
   if (!plan.loop) { return emit_variant(plan, general, LoopMode::full); }
   const auto bounded = emit_variant(plan, general, LoopMode::bounded);
   return emit_variant(plan, bounded, LoopMode::full);
+}
+
+std::vector<std::uint8_t> emit_resident_region(const ResidentRegion &region,
+                                               const std::span<const std::uint8_t> general) {
+  const auto combined = combined_registers(region);
+  const auto &head = region.head;
+  const auto &tail = region.tail;
+  const auto head_count = static_cast<std::uint32_t>(head.operations.size());
+  const auto count = head_count + static_cast<std::uint32_t>(tail.operations.size());
+  Code code;
+  constexpr std::array<std::uint8_t, 6> admission{0xf3, 0x0f, 0x1e, 0xfa, 0x81, 0xfa};
+  code.raw(admission); // CMP EDX, complete two-phase body size.
+  code.u32(count);
+  constexpr std::array<std::uint8_t, 2> below{0x0f, 0x82};
+  code.raw(below);
+  const auto refused = code.relative32();
+  preserve(code, combined, false, LoopMode::bounded);
+  constexpr std::array<std::uint8_t, 8> grants{0x41, 0x56, 0x41, 0x89, 0xd5, 0x41, 0x89, 0xd6};
+  code.raw(grants); // Preserve R14; R13D=remaining, R14D=original grant.
+  registers(code, combined, false);
+  if (combined.base != nullptr) {
+    constexpr std::array<std::uint8_t, 2> memory{0x49, 0xbf};
+    code.raw(memory);
+    code.u64(reinterpret_cast<std::uintptr_t>(combined.base));
+  }
+  for (auto operation : head.operations) {
+    if (operation.initial_load) {
+      operation.value_slot = 0;
+      operation.fill_value = false;
+      memory_operation(code, operation, head, false);
+    }
+  }
+  const auto loop = code.size();
+  EmissionState head_state;
+  body(code, head, head_state);
+  const auto head_exit = region_branch(code, head.operations.back().instruction.condition);
+  EmissionState tail_state;
+  body(code, tail, tail_state);
+  std::optional<std::size_t> tail_exit;
+  if (tail.operations.back().instruction.condition != 0) {
+    tail_exit = region_branch(code, tail.operations.back().instruction.condition, true);
+  }
+  constexpr std::array<std::uint8_t, 3> subtract{0x41, 0x81, 0xed};
+  code.raw(subtract);
+  code.u32(count);
+  constexpr std::array<std::uint8_t, 3> compare{0x41, 0x81, 0xfd};
+  code.raw(compare);
+  code.u32(count);
+  constexpr std::array<std::uint8_t, 2> enough{0x0f, 0x83};
+  code.raw(enough);
+  const auto repeat = code.relative32();
+  code.bind(repeat, loop);
+  const auto &last_head = head.operations.back();
+  const auto &last_tail = tail.operations.back();
+  const auto exit_pc = static_cast<Address>(last_tail.pc + last_tail.instruction.length);
+  const ExitLocation tail_location{.pc = last_tail.pc, .opcode = last_tail.instruction.opcode};
+  region_exit(code,
+              combined,
+              {.phase = tail,
+               .state = tail_state,
+               .pc = head.operations.front().pc,
+               .completed = 0,
+               .location = tail_location});
+  if (tail_exit) {
+    code.bind(*tail_exit);
+    region_exit(code,
+                combined,
+                {.phase = tail,
+                 .state = tail_state,
+                 .pc = exit_pc,
+                 .completed = count,
+                 .location = tail_location});
+  }
+  code.bind(head_exit);
+  region_exit(code,
+              combined,
+              {.phase = head,
+               .state = head_state,
+               .pc = exit_pc,
+               .completed = head_count,
+               .location = {.pc = last_head.pc, .opcode = last_head.instruction.opcode}});
+  code.bind(refused);
+  code.raw(general);
+  return std::move(code).take();
 }
 }

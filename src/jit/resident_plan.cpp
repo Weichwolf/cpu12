@@ -14,6 +14,7 @@
 #include <optional>
 #include <span>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace cpu12::detail {
@@ -337,7 +338,7 @@ void forward_stores(ResidentPlan &plan) {
 
 bool reads_word(const ResidentOperation &operation) {
   const auto &instruction = operation.instruction;
-  if (instruction.kind == Kind::compare && operation.flags == 0 && !operation.branch_zero) {
+  if (instruction.kind == Kind::compare && operation.flags == 0 && !operation.branch_flags) {
     return false;
   }
   return operation.pointer != nullptr && instruction.word && instruction.kind != Kind::store;
@@ -446,7 +447,7 @@ void analyze(ResidentPlan &plan) {
                            instruction.kind == Kind::store);
     position->deferred =
         stable_flags && position->flags != 0 && (value_lanes(instruction) & overwritten) == 0;
-    position->branch_zero = last_zero && (changed & flag_z) != 0;
+    position->branch_flags = last_zero && (changed & flag_z) != 0;
     if ((changed & flag_z) != 0) { last_zero = false; }
     if (writes != 0) {
       overwritten |= value_lanes(instruction) | (indexed_load(instruction) ? (1U << 1U) : 0U);
@@ -581,6 +582,79 @@ std::optional<ResidentPlan> resident_loop_plan(const std::span<const BlockInstru
   plan->backedge_instructions = 1;
   plan->backedge_exit = {.pc = next, .opcode = jump.opcode};
   return plan;
+}
+
+namespace {
+Address branch_target(const BlockInstruction &operation) {
+  return static_cast<Address>(int{operation.pc} + operation.instruction.length +
+                              std::bit_cast<std::int16_t>(operation.instruction.operand));
+}
+
+bool native_guard(const std::span<const BlockInstruction> instructions, const bool head) {
+  if (instructions.size() < 2 || instructions.back().instruction.kind != Kind::branch) {
+    return false;
+  }
+  const auto condition = instructions.back().instruction.condition;
+  if (!head && condition == 0) { return true; }
+  constexpr unsigned carry_clear = 4;
+  constexpr unsigned equal = 7;
+  constexpr unsigned not_equal = 6;
+  if (condition < carry_clear || condition > equal) { return false; }
+  const auto &producer = instructions[instructions.size() - 2].instruction;
+  if (producer.kind == Kind::compare) { return true; }
+  return !head && condition >= not_equal && producer.kind == Kind::register_operation &&
+         (producer.operation == RegisterOp::index_increment ||
+          producer.operation == RegisterOp::index_decrement);
+}
+}
+
+std::optional<ResidentRegion>
+resident_region_plan(const std::span<const BlockInstruction> instructions, const Memory &memory) {
+  if (!native_guard(instructions, true)) { return std::nullopt; }
+  const auto &branch = instructions.back();
+  const auto next = static_cast<Address>(branch.pc + branch.instruction.length);
+  const auto tail = parse_block(memory, next);
+  if (!native_guard(tail, false) || branch_target(tail.back()) != instructions.front().pc) {
+    return std::nullopt;
+  }
+  const auto &last = tail.back();
+  if (branch_target(branch) != static_cast<Address>(last.pc + last.instruction.length)) {
+    return std::nullopt;
+  }
+  auto head_plan = resident_plan(instructions, memory);
+  auto tail_plan = resident_plan(tail, memory);
+  if (!head_plan || !tail_plan || head_plan->loop || tail_plan->loop ||
+      !head_plan->indexed_region.bytes.empty() || !tail_plan->indexed_region.bytes.empty() ||
+      head_plan->changed != tail_plan->changed || head_plan->swapped_d != tail_plan->swapped_d) {
+    return std::nullopt;
+  }
+  // Both phases overwrite the same flags before each observable exit. No flag
+  // from a previous phase must be published or carried through guest RAM.
+  auto &guard = head_plan->operations[head_plan->operations.size() - 2];
+  guard.deferred = true;
+  guard.branch_flags = true;
+  if (tail.back().instruction.condition != 0) {
+    auto &backedge = tail_plan->operations[tail_plan->operations.size() - 2];
+    backedge.deferred = true;
+    backedge.branch_flags = true;
+  }
+  const auto *base = head_plan->base != nullptr ? head_plan->base : tail_plan->base;
+  head_plan->base = base;
+  tail_plan->base = base;
+  if (!prepare_memory(*head_plan, memory) || !prepare_memory(*tail_plan, memory)) {
+    return std::nullopt;
+  }
+  ResidentPlan flow;
+  flow.loop = true;
+  flow.swapped_d = head_plan->swapped_d;
+  flow.operations = head_plan->operations;
+  flow.operations.insert(
+      flow.operations.end(), tail_plan->operations.begin(), tail_plan->operations.end());
+  forward_load(flow);
+  for (std::size_t index = 0; index < head_plan->operations.size(); ++index) {
+    head_plan->operations[index].initial_load = flow.operations[index].initial_load;
+  }
+  return ResidentRegion{.head = std::move(*head_plan), .tail = std::move(*tail_plan)};
 }
 
 }

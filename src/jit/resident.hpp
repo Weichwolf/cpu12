@@ -21,7 +21,7 @@ struct ResidentOperation {
   unsigned forwarded_word = 0, forwarded_shift = 0;
   std::uint8_t value_slot = 0;
   bool fill_value = false;
-  bool deferred = false, branch_zero = false, initial_load = false;
+  bool deferred = false, branch_flags = false, initial_load = false;
   bool cached_operand = false, cache_store = false;
   const Byte *pointer = nullptr;
   std::int32_t displacement = 0;
@@ -39,13 +39,21 @@ struct ResidentPlan {
   bool swapped_d = false, loop = false, increment = false, host_zero = false;
 };
 
+struct ResidentRegion {
+  ResidentPlan head, tail;
+};
+
 [[nodiscard]] std::optional<ResidentPlan>
 resident_plan(std::span<const BlockInstruction> instructions, const Memory &memory);
 [[nodiscard]] std::optional<ResidentPlan>
 resident_loop_plan(std::span<const BlockInstruction> instructions, const Memory &memory);
+[[nodiscard]] std::optional<ResidentRegion>
+resident_region_plan(std::span<const BlockInstruction> instructions, const Memory &memory);
 [[nodiscard]] unsigned written_flags(const Instruction &instruction);
 [[nodiscard]] unsigned written_words(const Instruction &instruction);
 [[nodiscard]] unsigned native_word(const Instruction &instruction);
 [[nodiscard]] std::vector<std::uint8_t> emit_resident(const ResidentPlan &plan,
                                                       std::span<const std::uint8_t> general);
+[[nodiscard]] std::vector<std::uint8_t> emit_resident_region(const ResidentRegion &region,
+                                                             std::span<const std::uint8_t> general);
 }

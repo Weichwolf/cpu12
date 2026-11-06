@@ -257,7 +257,10 @@ std::vector<std::uint8_t> emit_block(const std::span<const BlockInstruction> ins
     code.raw(emit_resident(prefix->plan, {}));
   }
   auto general = std::move(code).take();
-  if (resident) { return emit_resident(*resident, general); }
+  if (resident) { general = emit_resident(*resident, general); }
+  if (const auto region = resident_region_plan(instructions, memory)) {
+    return emit_resident_region(*region, general);
+  }
   return general;
 }
 
