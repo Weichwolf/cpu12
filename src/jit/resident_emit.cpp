@@ -852,7 +852,7 @@ void trip_count(Code &code, const ResidentPlan &plan) {
   code.bind(finite);
 }
 
-std::size_t admission(Code &code, const ResidentPlan &plan) {
+std::size_t admission(Code &code, const ResidentPlan &plan, const bool terminal = false) {
   if (plan.loop) {
     trip_count(code, plan);
     constexpr std::array<std::uint8_t, 3> multiply{0x4d, 0x69, 0xda};
@@ -870,8 +870,10 @@ std::size_t admission(Code &code, const ResidentPlan &plan) {
   }
   constexpr std::array<std::uint8_t, 5> compare{0x89, 0xd0, 0x4c, 0x39, 0xd8};
   code.raw(compare);
-  constexpr std::array<std::uint8_t, 2> below{0x0f, 0x82};
-  code.raw(below);
+  constexpr std::uint8_t below = 0x82;
+  constexpr std::uint8_t below_equal = 0x86;
+  code.byte(escape);
+  code.byte(terminal ? below_equal : below);
   return code.relative32();
 }
 
@@ -904,19 +906,71 @@ std::vector<std::size_t> bounded_admission(Code &code, const ResidentPlan &plan)
   return refused;
 }
 
+struct RegionTerminal {
+  const RegionCode &machine;
+  bool pad;
+  LoopMode mode = LoopMode::bounded;
+  bool fallthrough = false;
+  std::vector<std::size_t> entries;
+};
+
+void join_terminal(Code &code, RegionTerminal &terminal) {
+  constexpr std::array<std::uint8_t, 5> empty{0x44, 0x39, 0xf0, 0x0f, 0x83};
+  code.raw(empty); // Unsigned progress >= original grant leaves the terminal unexecuted.
+  const auto no_budget = code.relative32();
+  constexpr std::array<std::uint8_t, 4> enter{0x41, 0x89, 0xc6, 0xe9};
+  code.raw(enter); // R14D holds progress across the original instruction's real ABI callbacks.
+  terminal.entries.push_back(code.relative32());
+  code.bind(no_budget);
+}
+
+void emit_terminal(Code &code, const ResidentPlan &combined, const RegionTerminal &terminal) {
+  for (const auto entry : terminal.entries) { code.bind(entry); }
+  if (terminal.entries.empty() && !terminal.fallthrough) { return; }
+  constexpr std::array<std::uint8_t, 4> align{0x48, 0x83, 0xec, 0x08};
+  if (terminal.pad) { code.raw(align); }
+  const auto begin = code.size();
+  code.raw(terminal.machine.terminal);
+  const auto complete = code.size();
+  constexpr std::array<std::uint8_t, 6> completed{0x44, 0x89, 0xf0, 0xff, 0xc0, 0xe9};
+  code.raw(completed); // Count the terminal instruction only after a genuine complete exit.
+  const auto counted = code.relative32();
+  const auto failed = code.size();
+  constexpr std::array<std::uint8_t, 3> progress{0x44, 0x89, 0xf0};
+  code.raw(progress);
+  code.bind(counted);
+  describe_exit(code, terminal.machine.terminal_location, true);
+  constexpr std::array<std::uint8_t, 4> release{0x48, 0x83, 0xc4, 0x08};
+  if (terminal.pad) { code.raw(release); }
+  constexpr std::array<std::uint8_t, 2> pop_r14{0x41, 0x5e};
+  code.raw(pop_r14);
+  preserve(code, combined, true, terminal.mode);
+  constexpr std::uint8_t ret = 0xc3;
+  code.byte(ret);
+  for (const auto exit : terminal.machine.terminal_exits) {
+    code.bind(begin + exit.displacement, exit.kind == NativeExit::complete ? complete : failed);
+  }
+}
+
 std::vector<std::uint8_t> emit_variant(const ResidentPlan &plan,
                                        const std::span<const std::uint8_t> general,
-                                       const LoopMode mode) {
+                                       const LoopMode mode,
+                                       const RegionCode *terminal = nullptr) {
   Code code;
   constexpr std::array<std::uint8_t, 4> endbr{0xf3, 0x0f, 0x1e, 0xfa};
   code.raw(endbr);
-  const auto refused = mode == LoopMode::bounded ? bounded_admission(code, plan)
-                                                 : std::vector<std::size_t>{admission(code, plan)};
+  const auto refused = mode == LoopMode::bounded
+                           ? bounded_admission(code, plan)
+                           : std::vector<std::size_t>{admission(code, plan, terminal != nullptr)};
   const auto outside_memory = indexed_admission(code, plan);
-  preserve(code, plan, false, mode);
+  const auto saved = preserve(code, plan, false, mode);
+  if (terminal != nullptr) {
+    constexpr std::array<std::uint8_t, 6> original{0x41, 0x56, 0x45, 0x89, 0xde, 0x56};
+    code.raw(original); // Save R14/context; retain the admitted progress in R14D.
+  }
   constexpr std::array<std::uint8_t, 2> retired{0x41,
                                                 0x53}; // PUSH R11: one total, outside the loop.
-  code.raw(retired);
+  if (terminal == nullptr) { code.raw(retired); }
   if (mode == LoopMode::bounded) {
     constexpr std::array<std::uint8_t, 3> counter{0x45, 0x89, 0xd5}; // MOV R13D,R10D.
     code.raw(counter);
@@ -949,18 +1003,29 @@ std::vector<std::uint8_t> emit_variant(const ResidentPlan &plan,
     swap_word(code, word_registers[0]);
   }
   registers(code, plan, true);
-  if (plan.changed != 0) { publish_flags(code, plan, state, known); }
+  if (plan.changed != 0 || terminal != nullptr) { publish_flags(code, plan, state, known); }
   if (carry_branch(plan)) { finish_branch(code, plan, loop, mode); }
-  constexpr std::uint8_t pop_rax = 0x58;
-  code.byte(pop_rax);
-  preserve(code, plan, true, mode);
-  const auto &last = plan.operations.back();
-  const auto location = mode == LoopMode::bounded && plan.backedge_instructions != 0
-                            ? plan.backedge_exit
-                            : ExitLocation{.pc = last.pc, .opcode = last.instruction.opcode};
-  describe_exit(code, location);
-  constexpr std::uint8_t ret = 0xc3;
-  code.byte(ret);
+  if (terminal != nullptr) {
+    constexpr std::uint8_t pop_context = 0x5e;
+    code.byte(pop_context);
+    const RegionTerminal joined{.machine = *terminal,
+                                .pad = (saved + 1U) % 2U != 0,
+                                .mode = mode,
+                                .fallthrough = true,
+                                .entries = {}};
+    emit_terminal(code, plan, joined);
+  } else {
+    constexpr std::uint8_t pop_rax = 0x58;
+    code.byte(pop_rax);
+    preserve(code, plan, true, mode);
+    const auto &last = plan.operations.back();
+    const auto location = mode == LoopMode::bounded && plan.backedge_instructions != 0
+                              ? plan.backedge_exit
+                              : ExitLocation{.pc = last.pc, .opcode = last.instruction.opcode};
+    describe_exit(code, location);
+    constexpr std::uint8_t ret = 0xc3;
+    code.byte(ret);
+  }
   for (const auto exit : refused) { code.bind(exit); }
   for (const auto exit : outside_memory) { code.bind(exit); }
   code.raw(general);
@@ -977,22 +1042,6 @@ struct RegionExit {
   // A branch exit retains the producer's host flags; a budget subtraction does not.
   bool native_flags_live = false;
 };
-
-struct RegionTerminal {
-  const RegionCode &machine;
-  bool pad;
-  std::vector<std::size_t> entries;
-};
-
-void join_terminal(Code &code, RegionTerminal &terminal) {
-  constexpr std::array<std::uint8_t, 5> empty{0x44, 0x39, 0xf0, 0x0f, 0x83};
-  code.raw(empty); // Unsigned progress >= original grant leaves the terminal unexecuted.
-  const auto no_budget = code.relative32();
-  constexpr std::array<std::uint8_t, 4> enter{0x41, 0x89, 0xc6, 0xe9};
-  code.raw(enter); // R14D holds progress across the original instruction's real ABI callbacks.
-  terminal.entries.push_back(code.relative32());
-  code.bind(no_budget);
-}
 
 void region_exit(Code &code,
                  const ResidentPlan &combined,
@@ -1035,34 +1084,6 @@ void region_exit(Code &code,
   code.byte(ret);
 }
 
-void emit_terminal(Code &code, const ResidentPlan &combined, const RegionTerminal &terminal) {
-  for (const auto entry : terminal.entries) { code.bind(entry); }
-  if (terminal.entries.empty()) { return; }
-  constexpr std::array<std::uint8_t, 4> align{0x48, 0x83, 0xec, 0x08};
-  if (terminal.pad) { code.raw(align); }
-  const auto begin = code.size();
-  code.raw(terminal.machine.terminal);
-  const auto complete = code.size();
-  constexpr std::array<std::uint8_t, 6> completed{0x44, 0x89, 0xf0, 0xff, 0xc0, 0xe9};
-  code.raw(completed); // Count the terminal instruction only after a genuine complete exit.
-  const auto counted = code.relative32();
-  const auto failed = code.size();
-  constexpr std::array<std::uint8_t, 3> progress{0x44, 0x89, 0xf0};
-  code.raw(progress);
-  code.bind(counted);
-  describe_exit(code, terminal.machine.terminal_location, true);
-  constexpr std::array<std::uint8_t, 4> release{0x48, 0x83, 0xc4, 0x08};
-  if (terminal.pad) { code.raw(release); }
-  constexpr std::array<std::uint8_t, 2> pop_r14{0x41, 0x5e};
-  code.raw(pop_r14);
-  preserve(code, combined, true, LoopMode::bounded);
-  constexpr std::uint8_t ret = 0xc3;
-  code.byte(ret);
-  for (const auto exit : terminal.machine.terminal_exits) {
-    code.bind(begin + exit.displacement, exit.kind == NativeExit::complete ? complete : failed);
-  }
-}
-
 std::size_t region_branch(Code &code, const unsigned condition, const bool inverse = false) {
   constexpr std::array<std::uint8_t, 4> conditions{0x83, 0x82, 0x85, 0x84};
   constexpr unsigned first_condition = 4;
@@ -1088,6 +1109,12 @@ std::vector<std::uint8_t> emit_resident(const ResidentPlan &plan,
   if (!plan.loop) { return emit_variant(plan, general, LoopMode::full); }
   const auto bounded = emit_variant(plan, general, LoopMode::bounded);
   return emit_variant(plan, bounded, LoopMode::full);
+}
+
+std::vector<std::uint8_t> emit_resident(const ResidentPlan &plan, const RegionCode machine) {
+  if (!plan.loop || machine.terminal.empty()) { return emit_resident(plan, machine.general); }
+  const auto original = emit_resident(plan, machine.general);
+  return emit_variant(plan, original, LoopMode::full, &machine);
 }
 
 std::vector<std::uint8_t> emit_resident_region(const ResidentRegion &region,

@@ -61,6 +61,7 @@ resident_region_plan(std::span<const BlockInstruction> instructions, const Memor
 [[nodiscard]] unsigned native_word(const Instruction &instruction);
 [[nodiscard]] std::vector<std::uint8_t> emit_resident(const ResidentPlan &plan,
                                                       std::span<const std::uint8_t> general);
+[[nodiscard]] std::vector<std::uint8_t> emit_resident(const ResidentPlan &plan, RegionCode machine);
 [[nodiscard]] std::vector<std::uint8_t> emit_resident_region(const ResidentRegion &region,
                                                              RegionCode machine);
 }

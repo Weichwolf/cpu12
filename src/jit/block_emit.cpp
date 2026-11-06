@@ -176,6 +176,16 @@ std::optional<ResidentPlan> complete_plan(const std::span<const BlockInstruction
   return resident_plan(instructions, memory);
 }
 
+std::pair<Emission, ExitLocation> terminal_at(const Memory &memory, const WaitValues values) {
+  const auto following = parse_block(memory, values.pc);
+  if (following.size() != 1 || (following[0].instruction.kind != Kind::wait &&
+                                following[0].instruction.kind != Kind::stop)) {
+    return {};
+  }
+  return {emit_resident_wait(following[0].instruction, memory, values),
+          {.pc = values.pc, .opcode = following[0].instruction.opcode}};
+}
+
 std::vector<std::uint8_t> single_entry(const BlockInstruction &operation, const Memory &memory) {
   Code code;
   code.raw(endbr);
@@ -290,26 +300,26 @@ std::vector<std::uint8_t> emit_block(const std::span<const BlockInstruction> ins
   }
   if (prefix) {
     code.bind(prefix->displacement);
-    code.raw(emit_resident(prefix->plan, {}));
+    code.raw(emit_resident(prefix->plan, std::span<const std::uint8_t>{}));
   }
   auto general = std::move(code).take();
-  if (resident) { general = emit_resident(*resident, general); }
+  if (resident) {
+    const auto &resident_last = resident->operations.back();
+    const auto next = static_cast<Address>(resident_last.pc + resident_last.instruction.length);
+    const auto [terminal, location] =
+        resident->loop ? terminal_at(memory, {.pc = next, .words = resident->dirty_words})
+                       : std::pair<Emission, ExitLocation>{};
+    general = emit_resident(*resident,
+                            RegionCode{.general = general,
+                                       .terminal = terminal.bytes,
+                                       .terminal_exits = terminal.exits,
+                                       .terminal_location = location});
+  }
   if (const auto region = resident_region_plan(instructions, memory)) {
     const auto &tail = region->tail.operations.back();
     const auto next = static_cast<Address>(tail.pc + tail.instruction.length);
-    const auto following = parse_block(memory, next);
-    Emission terminal;
-    ExitLocation terminal_location;
-    if (following.size() == 1 && (following[0].instruction.kind == Kind::wait ||
-                                  following[0].instruction.kind == Kind::stop)) {
-      terminal = emit_resident_wait(
-          following[0].instruction,
-          memory,
-          // Changed words have been published in canonical order. An unchanged,
-          // byte-only D may still have A/B swapped in BX; read its original state.
-          {.pc = following[0].pc, .words = region->head.dirty_words | region->tail.dirty_words});
-      terminal_location = {.pc = following[0].pc, .opcode = following[0].instruction.opcode};
-    }
+    const auto [terminal, terminal_location] = terminal_at(
+        memory, {.pc = next, .words = region->head.dirty_words | region->tail.dirty_words});
     return emit_resident_region(*region,
                                 {.general = general,
                                  .terminal = terminal.bytes,
