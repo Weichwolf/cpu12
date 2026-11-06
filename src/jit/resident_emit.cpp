@@ -455,10 +455,81 @@ const ResidentOperation *loop_carry(const ResidentPlan &plan) {
   return nullptr;
 }
 
+#if defined(__MOVBE__)
+bool independent_d(const std::span<const ResidentOperation> operations) {
+  for (const auto &operation : operations) {
+    const auto &instruction = operation.instruction;
+    if (instruction.kind == Kind::nop || instruction.kind == Kind::branch ||
+        native_word(instruction) != word_registers[0]) {
+      continue;
+    }
+    return instruction.kind == Kind::load && instruction.word && !operation.initial_load &&
+           operation.forwarded_word == 0 && operation.value_slot == 0;
+  }
+  return false;
+}
+
+bool stored_sum(const std::span<const ResidentOperation> operations) {
+  bool stored = false;
+  for (const auto &operation : operations) {
+    const auto &instruction = operation.instruction;
+    const bool reads_d = native_word(instruction) == word_registers[0];
+    if (operation.cache_store && !reads_d) { return false; }
+    if (instruction.kind == Kind::nop || instruction.kind == Kind::branch || !reads_d) { continue; }
+    if (instruction.kind != Kind::store || !instruction.word || operation.pointer == nullptr ||
+        (!operation.deferred && operation.flags != 0) || operation.branch_flags ||
+        operation.value_slot != 0) {
+      return false;
+    }
+    stored |= operation.cache_store;
+  }
+  return stored;
+}
+#endif
+
+const ResidentOperation *cached_sum(const ResidentPlan &plan) {
+#if defined(__MOVBE__)
+  if (!plan.loop) { return nullptr; }
+  const auto sum = std::ranges::find_if(
+      plan.operations, [](const auto &operation) { return operation.cached_operand; });
+  if (sum == plan.operations.end() || sum->instruction.kind != Kind::add ||
+      !sum->instruction.word || native_word(sum->instruction) != word_registers[0]) {
+    return nullptr;
+  }
+  const auto before = static_cast<std::size_t>(sum - plan.operations.begin());
+  const std::span operations(plan.operations);
+  if (!independent_d(operations.first(before)) || !stored_sum(operations.subspan(before + 1))) {
+    return nullptr;
+  }
+  return &*sum;
+#else
+  static_cast<void>(plan);
+  return nullptr;
+#endif
+}
+
+bool store_sum(Code &code, const ResidentOperation &operation, const bool sum_live) {
+  if (!sum_live || operation.instruction.kind != Kind::store ||
+      native_word(operation.instruction) != word_registers[0]) {
+    return false;
+  }
+  // MOVBE word [R15+disp32],R12W retains every original guest store.
+  constexpr std::array<std::uint8_t, 6> store{word_prefix, 0x45, 0x0f, 0x38, 0xf1, 0xa7};
+  code.raw(store);
+  code.u32(std::bit_cast<std::uint32_t>(operation.displacement));
+  return true;
+}
+
+struct BodyOptions {
+  const ResidentOperation *delayed_carry = nullptr;
+  const ResidentOperation *sum = nullptr;
+};
+
 void body(Code &code,
           const ResidentPlan &plan,
           EmissionState &state,
-          const ResidentOperation *const delayed_carry = nullptr) {
+          const BodyOptions options = {}) {
+  bool sum_live = false;
   for (const auto &operation : plan.operations) {
     const auto &instruction = operation.instruction;
     if (operation.initial_load) {
@@ -476,7 +547,13 @@ void body(Code &code,
       multiply(code, operation, state);
       continue;
     }
-    if (instruction.kind == Kind::register_operation || instruction.kind == Kind::loop) {
+    if (&operation == options.sum) {
+      constexpr std::array<std::uint8_t, 4> add{word_prefix, rex_b, 0x01, 0xdc}; // ADD R12W,BX.
+      code.raw(add);
+      sum_live = true;
+    } else if (store_sum(code, operation, sum_live)) {
+      continue; // The proof admits only deferred or dead store flags and no value fills.
+    } else if (instruction.kind == Kind::register_operation || instruction.kind == Kind::loop) {
       resident_unary(code, instruction);
     } else if (instruction.addressing == Addressing::indexed) {
       indexed_operation(code, operation, plan, needed_flags);
@@ -485,7 +562,9 @@ void body(Code &code,
     } else {
       immediate_operation(code, instruction, plan, needed_flags);
     }
-    if (!operation.deferred && &operation != delayed_carry) { capture(code, operation, state); }
+    if (!operation.deferred && &operation != options.delayed_carry) {
+      capture(code, operation, state);
+    }
   }
 }
 
@@ -787,10 +866,15 @@ std::vector<std::uint8_t> emit_variant(const ResidentPlan &plan,
   const auto loop = code.size();
   EmissionState state;
   const auto *const delayed_carry = loop_carry(plan);
-  body(code, plan, state, delayed_carry);
+  const auto *const sum = cached_sum(plan);
+  body(code, plan, state, {.delayed_carry = delayed_carry, .sum = sum});
   if (!carry_branch(plan)) { finish_branch(code, plan, loop, mode); }
   // Counted backedges use DEC/JNZ and preserve the final arithmetic carry.
   if (delayed_carry != nullptr) { capture(code, *delayed_carry, state); }
+  if (sum != nullptr) {
+    constexpr std::array<std::uint8_t, 4> restore_d{0x41, 0x0f, 0xb7, 0xdc}; // MOVZX EBX,R12W.
+    code.raw(restore_d);
+  }
   deferred_flags(code, plan, state);
   if (plan.swapped_d && (plan.dirty_words & (1U << word_registers[0])) != 0) {
     swap_word(code, word_registers[0]);

@@ -21,8 +21,12 @@ host(const std::span<const Byte> input, const std::span<Byte, 2> output, const A
                "movzwl (%[cursor]), %%ecx\n\t"
                "rolw $8, %%cx\n\t"
                "addw %%cx, %w[sum]\n\t"
+#if defined(__MOVBE__)
+               "movbew %w[sum], (%[output])\n\t"
+#else
                "movb %%ah, (%[output])\n\t"
                "movb %%al, 1(%[output])\n\t"
+#endif
                "leaq 2(%[cursor]), %[cursor]\n\t"
                "decw %w[count]\n\t"
                "jnz 1b\n\t"
