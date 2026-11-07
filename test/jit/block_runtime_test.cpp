@@ -84,7 +84,7 @@ void bounded_loop() {
           "A native backedge resumes with exact flags and original STOP stacking");
 }
 
-void precise_fault() {
+void precise_fault(const bool horizon) {
   constexpr std::array<Byte, 1> invalid_accumulator{0xfa};
   constexpr Address invalid_d = 0xfa00;
   constexpr auto program = isa::program(isa::nop,
@@ -94,15 +94,17 @@ void precise_fault() {
                                         isa::stop);
   Device device(program);
   device.core.set_registers({.pc = entry, .sp = stack, .ccr = 0x20});
-  const auto result = device.core.run();
+  const auto result = horizon ? device.core.run_until(20) : device.core.run();
   const auto state = device.core.state();
   require(result.fault == Fault::unsupported_state && result.retired == 2 &&
               result.pc == entry + 3 && result.opcode == isa::daa[0] &&
               state.registers.pc == entry + 3 && state.registers.d == invalid_d &&
-              state.registers.sp == stack,
+              state.registers.sp == stack &&
+              device.core.progress() == Progress{.estimated_cycles = 2},
           "A joined native fault preserves the precise failing PC and preceding retirements");
   const auto again = device.core.run();
-  require(again.fault == result.fault && again.retired == 0 && device.core.state() == state,
+  require(again.fault == result.fault && again.retired == 0 && device.core.state() == state &&
+              device.core.progress() == Progress{.estimated_cycles = 2},
           "A latched native failure cannot replay preceding work");
 }
 }
@@ -111,7 +113,8 @@ int main() {
   try {
     long_region();
     bounded_loop();
-    precise_fault();
+    precise_fault(false);
+    precise_fault(true);
     std::cout << "Native region length, reuse, bounded backedges and precise faults passed\n";
     return 0;
   } catch (const std::exception &error) {

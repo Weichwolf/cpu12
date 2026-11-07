@@ -119,7 +119,9 @@ void Emitter::sequence(const std::span<const BlockInstruction> operations) {
   unsigned cycles = 0;
   for (const auto &item : operations) {
     const bool owner = may_access_owner(item.instruction, memory_);
-    if (owner) {
+    const bool fault_boundary = owner || (item.instruction.kind == Kind::register_operation &&
+                                          item.instruction.operation == RegisterOp::decimal_adjust);
+    if (fault_boundary) {
       commit(count, {.estimated_cycles = cycles});
       count = 0;
       cycles = 0;
