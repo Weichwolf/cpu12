@@ -22,9 +22,9 @@ retains complete immutable blocks and connects native backedges and cached entri
 I/O uses the existing owner callbacks. There is no interpreter fallback.
 
 ISA, interrupt, fault, memory, block and ABI regression tests run on both hosts.
-ARM64 performance qualification and host-ASM benchmark ports remain in progress;
-no ARM64 throughput percentage is claimed. The benchmark targets below currently
-require Linux x86-64.
+ARM64 performance qualification and the remaining host-ASM benchmark ports are
+in progress. The matched ALU/RAM/control-flow and checksum comparisons run on
+both hosts; Mandelbrot and FFT comparisons currently require Linux x86-64.
 
 The `strict` preset enables ASan/UBSan. On macOS 26.4 and later, LLVM 19's
 original sanitizer runtime deadlocks during dyld initialization. Build the same
@@ -92,20 +92,22 @@ may require an owner word callback. Cycle/event accounting remains incomplete.
 cmake --build --preset release --target bench
 ```
 
-The command runs checked ALU/RAM/control-flow, indexed checksum, fixed-point
-Mandelbrot, FFT and continuous checksum/FFT packet scenarios sequentially. Select
+The command runs the available checked host-ASM comparisons sequentially:
+ALU/RAM/control-flow, indexed checksum and continuous checksum on both hosts;
+fixed-point Mandelbrot, FFT and continuous FFT additionally on Linux x86-64. Select
 scenarios with `CPU12_BENCH_FILTER` (a CMake cache test-name regex).
 
 Each scenario reports `hardware_factor` (target >=1) and `jit_to_host_percent` (target
 >=70). The hardware estimate conservatively assumes a 30 MHz CPU retiring one
 instruction per cycle; it is not a calibrated Blofeld timing model. The host
-comparison uses handwritten x86-64 ASM with identical inputs and independent
+comparison uses handwritten host ASM with identical inputs and independent
 state/memory expectations. Equal throughput is 100%. Finite-kernel timings include
 setup and result checks on both sides; the percentage is `100 * host_time / jit_time`.
 Cold compilation time is separate; warm execution must reuse translations.
-Packet reports include actual CPU affinity and starting/ending CPUs. Use
-`taskset` for placement diagnostics; pinned results do not qualify unrestricted
-scheduling.
+Linux packet reports include actual CPU affinity and starting/ending CPUs. macOS
+reports placement as unavailable and the CPU fields as -1; it cannot establish
+affinity or migration. Use `taskset` on Linux for placement diagnostics; pinned
+results do not qualify unrestricted scheduling.
 
 The finite kernels diagnose computation and call overhead. Their cold factors
 compare one kernel to its ideal device execution time, not to an audio/MIDI packet

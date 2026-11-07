@@ -2,6 +2,7 @@
 #pragma once
 #include "cpu12/memory.hpp"
 
+#include <cstdint>
 #include <span>
 
 namespace cpu12::test::checksum {
@@ -10,9 +11,42 @@ struct HostResult {
   Byte carry;
 };
 
+struct HostWordRegisters {
+  std::uint32_t sum, count, carry = 0;
+};
+
+#if defined(__aarch64__)
+inline void
+host_sum(HostWordRegisters &native, const Byte *cursor, const std::span<Byte, 2> output) {
+  asm volatile("1:\n"
+               "ldrh w9,[%[cursor]],#2\n"
+               "rev16 w9,w9\n"
+               "uxth %w[sum],%w[sum]\n"
+               "add %w[sum],%w[sum],w9\n"
+               "rev16 w9,%w[sum]\n"
+               "strh w9,[%[output]]\n"
+               "sub %w[count],%w[count],#1\n"
+               "uxth %w[count],%w[count]\n"
+               "cbnz %w[count],1b\n"
+               "ubfx %w[carry],%w[sum],#16,#1"
+               : [cursor] "+&r"(cursor),
+                 [sum] "+&r"(native.sum),
+                 [count] "+&r"(native.count),
+                 [carry] "=&r"(native.carry)
+               : [output] "r"(output.data())
+               : "memory", "x9");
+}
+#endif
+
 inline HostResult
 host(const std::span<const Byte> input, const std::span<Byte, 2> output, const Address sum) {
   HostResult result{.sum = sum, .carry = 0};
+#if defined(__aarch64__)
+  HostWordRegisters native{.sum = sum, .count = static_cast<Address>(input.size() / 2U)};
+  host_sum(native, input.data(), output);
+  result.sum = static_cast<Address>(native.sum);
+  result.carry = static_cast<Byte>(native.carry);
+#else
   auto count = static_cast<Address>(input.size() / 2U);
   const auto *cursor = input.data();
   // Keep the sum in AX, preserve every big-endian accumulator write, and
@@ -37,6 +71,7 @@ host(const std::span<const Byte> input, const std::span<Byte, 2> output, const A
                  [carry] "=qm"(result.carry)
                : [output] "D"(output.data())
                : "cc", "memory", "rcx");
+#endif
   return result;
 }
 }

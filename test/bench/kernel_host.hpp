@@ -2,6 +2,8 @@
 #pragma once
 #include "cpu12/memory.hpp"
 
+#include <cstdint>
+
 namespace cpu12::test::host {
 inline constexpr Address iterations = 128;
 
@@ -16,7 +18,54 @@ struct KernelRegisters {
   Byte carry = 0;
 };
 
+struct NativeRegisters {
+  std::uint32_t value = 0, count = 0, carry = 0;
+};
+
+#if defined(__aarch64__)
+inline void arithmetic_kernel(NativeRegisters &native) {
+  asm volatile(
+      "1:\n"
+      "uxth %w[value],%w[value]\n"
+      "add %w[value],%w[value],#3\n"
+      "sub %w[count],%w[count],#1\n"
+      "uxth %w[count],%w[count]\n"
+      "cbnz %w[count],1b\n"
+      "ubfx %w[carry],%w[value],#16,#1\n"
+      : [value] "+&r"(native.value), [count] "+&r"(native.count), [carry] "=&r"(native.carry));
+}
+
+inline void memory_kernel(NativeRegisters &native, Byte &payload) {
+  asm volatile("ldrb %w[value],[%[address]]\n"
+               "1:\n"
+               "add %w[value],%w[value],#1\n"
+               "and %w[value],%w[value],#255\n"
+               "strb %w[value],[%[address]]\n"
+               "sub %w[count],%w[count],#1\n"
+               "uxth %w[count],%w[count]\n"
+               "cbnz %w[count],1b\n"
+               : [value] "=&r"(native.value), [count] "+&r"(native.count), [payload] "+m"(payload)
+               : [address] "r"(&payload)
+               : "memory");
+}
+
+inline void branches_kernel(NativeRegisters &native) {
+  asm volatile("1:\n"
+               "sub %w[count],%w[count],#1\n"
+               "uxth %w[count],%w[count]\n"
+               "cbnz %w[count],1b"
+               : [count] "+r"(native.count));
+}
+#endif
+
 inline void arithmetic_kernel(KernelRegisters &state) {
+#if defined(__aarch64__)
+  NativeRegisters native{.value = state.value, .count = state.count};
+  arithmetic_kernel(native);
+  state.value = static_cast<Address>(native.value);
+  state.count = static_cast<Address>(native.count);
+  state.carry = static_cast<Byte>(native.carry);
+#else
   // The two guest EORAs cancel the value and leave V=0. DEX supplies final Z.
   // ADDD supplies final N/C; native DEC and JNZ preserve that last carry.
   asm volatile("1:\n\t"
@@ -27,9 +76,16 @@ inline void arithmetic_kernel(KernelRegisters &state) {
                : [value] "+a"(state.value), [count] "+c"(state.count), [carry] "=&q"(state.carry)
                :
                : "cc");
+#endif
 }
 
 inline void memory_kernel(KernelRegisters &state, Byte &payload) {
+#if defined(__aarch64__)
+  NativeRegisters native{.count = state.count};
+  memory_kernel(native, payload);
+  state.value = static_cast<Address>(native.value);
+  state.count = static_cast<Address>(native.count);
+#else
   // The preceding store supplies the next load in this owned ordinary-RAM loop.
   // Retain the byte in AL, preserve every write, and materialize final flags once.
   asm volatile("movzbl (%[address]), %k[value]\n\t"
@@ -41,10 +97,17 @@ inline void memory_kernel(KernelRegisters &state, Byte &payload) {
                : [value] "=&a"(state.value), [count] "+c"(state.count), [payload] "+m"(payload)
                : [address] "D"(&payload)
                : "cc");
+#endif
 }
 
 inline void branches_kernel(KernelRegisters &state) {
+#if defined(__aarch64__)
+  NativeRegisters native{.count = state.count};
+  branches_kernel(native);
+  state.count = static_cast<Address>(native.count);
+#else
   asm volatile("1:\n\tdecw %w[count]\n\tjnz 1b" : [count] "+c"(state.count) : : "cc");
+#endif
 }
 
 inline Result arithmetic_result(const KernelRegisters state) {

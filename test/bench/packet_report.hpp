@@ -10,7 +10,9 @@
 #include <exception>
 #include <iomanip>
 #include <iostream>
+#if defined(__linux__)
 #include <sched.h>
+#endif
 #include <stdexcept>
 #include <string_view>
 
@@ -58,20 +60,37 @@ struct Results {
   double worst_warm_packet = 0;
   unsigned missed_warm = 0;
   std::uint64_t compiled = 0;
-  int allowed_cpus = 0, first_cpu = -1, last_cpu = -1;
+  int allowed_cpus = -1, first_cpu = -1, last_cpu = -1;
 };
 
-template <class Guest, class Host>
-Results exercise(Guest &guest, Host &host, const Scenario &scenario) {
-  if (guest.compiled() != 0) { throw std::runtime_error("Cold packet must discover its code"); }
+inline void start_placement(Results &result) {
+#if defined(__linux__)
   cpu_set_t affinity{};
   if (sched_getaffinity(0, sizeof(affinity), &affinity) != 0) {
     throw std::runtime_error("Cannot read benchmark CPU affinity");
   }
-  Results result;
   result.allowed_cpus = CPU_COUNT(&affinity);
   result.first_cpu = sched_getcpu();
   if (result.first_cpu < 0) { throw std::runtime_error("Cannot read benchmark starting CPU"); }
+#else
+  static_cast<void>(result);
+#endif
+}
+
+inline void finish_placement(Results &result) {
+#if defined(__linux__)
+  result.last_cpu = sched_getcpu();
+  if (result.last_cpu < 0) { throw std::runtime_error("Cannot read benchmark ending CPU"); }
+#else
+  static_cast<void>(result);
+#endif
+}
+
+template <class Guest, class Host>
+Results exercise(Guest &guest, Host &host, const Scenario &scenario) {
+  if (guest.compiled() != 0) { throw std::runtime_error("Cold packet must discover its code"); }
+  Results result;
+  start_placement(result);
   result.cold = measure(guest, scenario);
   result.compiled = guest.compiled();
   guest.verify();
@@ -104,8 +123,7 @@ Results exercise(Guest &guest, Host &host, const Scenario &scenario) {
   if (guest.retired() - before != count) {
     throw std::runtime_error("Continuous retirement count");
   }
-  result.last_cpu = sched_getcpu();
-  if (result.last_cpu < 0) { throw std::runtime_error("Cannot read benchmark ending CPU"); }
+  finish_placement(result);
   return result;
 }
 
@@ -128,7 +146,8 @@ inline bool report(const Results &result, const Scenario &scenario) {
   const auto matched = host >= bench::target_fraction * guest;
   std::cout << std::fixed << std::setprecision(6) << scenario.name
             << " continuous=YES qualification_scope=" << scenario.qualification_scope
-            << "\n  allowed_cpus=" << result.allowed_cpus << " cpu_start=" << result.first_cpu
+            << "\n  placement=" << (result.allowed_cpus < 0 ? "unavailable" : "observed")
+            << " allowed_cpus=" << result.allowed_cpus << " cpu_start=" << result.first_cpu
             << " cpu_end=" << result.last_cpu << "\n  " << scenario.detail
             << " packets_per_second=" << scenario.packets_per_second
             << " measured_input_s=1 guest_instructions=" << retired << " trials=" << trials
