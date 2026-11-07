@@ -6,7 +6,6 @@
 #include "jit/a64/emitter.hpp"
 #include "runtime.hpp"
 
-#include <cstddef>
 #include <cstdint>
 
 namespace cpu12::detail::a64 {

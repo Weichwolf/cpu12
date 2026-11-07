@@ -8,7 +8,6 @@
 #include "jit/a64/emitter.hpp"
 
 #include <array>
-#include <cstddef>
 #include <vector>
 
 namespace cpu12::detail::a64 {

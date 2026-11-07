@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
+#include "cycles.hpp"
 #include "instruction.hpp"
 #include "jit/block.hpp"
+#include "jit/clock.hpp"
 #include "jit/code.hpp"
 #include "jit/emission.hpp"
 #include "jit/resident.hpp"
@@ -931,12 +933,72 @@ std::vector<std::size_t> bounded_admission(Code &code, const ResidentPlan &plan)
   return refused;
 }
 
+unsigned base_cycles(const ResidentPlan &plan) {
+  unsigned cycles = 0;
+  for (const auto &operation : plan.operations) {
+    cycles += instruction_timing(operation.instruction).base;
+  }
+  return cycles;
+}
+
+void resident_clock(Code &code,
+                    const ResidentPlan &plan,
+                    const LoopMode mode,
+                    const bool forwarded) {
+  constexpr std::array<std::uint8_t, 2> save{0x51, 0x52};
+  constexpr std::array<std::uint8_t, 2> restore{0x5a, 0x59};
+  if (forwarded) { code.raw(save); }
+  const auto base = base_cycles(plan);
+  const auto &last = plan.operations.back();
+  const auto extra = instruction_timing(last.instruction).taken_extra;
+  if (plan.loop) {
+    const bool split = plan.backedge_instructions != 0;
+    const bool full = mode == LoopMode::full;
+    const auto count = static_cast<unsigned>(plan.operations.size()) + plan.backedge_instructions;
+    const auto cost = base + (split ? plan.backedge_cycles : extra);
+    const auto correction = split ? static_cast<int>(extra) - static_cast<int>(plan.backedge_cycles)
+                                  : -static_cast<int>(extra);
+    emit_loop_progress(
+        code,
+        {.instructions_per_iteration = count,
+         .cycles_per_iteration = cost,
+         .instruction_bias = split && full ? static_cast<int>(plan.backedge_instructions) : 0,
+         .cycle_bias = full ? correction : 0},
+        ClockContext::argument);
+  } else {
+    emit_progress(code, {.estimated_cycles = base}, ClockContext::argument);
+    emit_control_cycles(code,
+                        last.instruction,
+                        static_cast<Address>(last.pc + last.instruction.length),
+                        ClockContext::argument);
+  }
+  if (forwarded) { code.raw(restore); }
+}
+
+Instruction terminal_instruction(const ExitLocation location) {
+  constexpr unsigned wait = 0x3e;
+  constexpr unsigned prefix = 0x18;
+  if (location.opcode == wait) { return {.kind = Kind::wait, .opcode = wait, .length = 1}; }
+  if (location.opcode == prefix) { return {.kind = Kind::stop, .opcode = prefix, .length = 2}; }
+  throw std::logic_error("Unexpected CPU12 resident terminal timing");
+}
+
+ClockScale clock_grant(const ResidentPlan &plan) {
+  const auto &last = plan.operations.back().instruction;
+  const auto extra =
+      plan.backedge_instructions != 0 ? plan.backedge_cycles : instruction_timing(last).taken_extra;
+  return {.instructions_per_iteration =
+              static_cast<unsigned>(plan.operations.size()) + plan.backedge_instructions,
+          .cycles_per_iteration = base_cycles(plan) + extra};
+}
+
 struct RegionTerminal {
   const RegionCode &machine;
   bool pad;
   LoopMode mode = LoopMode::bounded;
   bool fallthrough = false;
   std::vector<std::size_t> entries;
+  unsigned iteration_cycles = 0;
 };
 
 void join_terminal(Code &code, RegionTerminal &terminal) {
@@ -957,6 +1019,10 @@ void emit_terminal(Code &code, const ResidentPlan &combined, const RegionTermina
   const auto begin = code.size();
   code.raw(terminal.machine.terminal);
   const auto complete = code.size();
+  const auto instruction = terminal_instruction(terminal.machine.terminal_location);
+  emit_progress(
+      code, {.estimated_cycles = instruction_timing(instruction).base}, ClockContext::argument);
+  emit_control_cycles(code, instruction, 0, ClockContext::argument);
   constexpr std::array<std::uint8_t, 6> completed{0x44, 0x89, 0xf0, 0xff, 0xc0, 0xe9};
   code.raw(completed); // Count the terminal instruction only after a genuine complete exit.
   const auto counted = code.relative32();
@@ -977,6 +1043,16 @@ void emit_terminal(Code &code, const ResidentPlan &combined, const RegionTermina
   }
 }
 
+void resident_grant(Code &code, const ResidentPlan &plan, const RegionCode *terminal) {
+  auto scale = clock_grant(plan);
+  if (terminal != nullptr) {
+    const auto timing = instruction_timing(terminal_instruction(terminal->terminal_location));
+    scale.residual_instructions = 1;
+    scale.residual_cycles = timing.base + timing.taken_extra;
+  }
+  emit_cycle_grant(code, scale);
+}
+
 std::vector<std::uint8_t> emit_variant(const ResidentPlan &plan,
                                        const std::span<const std::uint8_t> general,
                                        const LoopMode mode,
@@ -984,6 +1060,7 @@ std::vector<std::uint8_t> emit_variant(const ResidentPlan &plan,
   Code code;
   constexpr std::array<std::uint8_t, 4> endbr{0xf3, 0x0f, 0x1e, 0xfa};
   code.raw(endbr);
+  resident_grant(code, plan, terminal);
   const auto refused = mode == LoopMode::bounded
                            ? bounded_admission(code, plan)
                            : std::vector<std::size_t>{admission(code, plan, terminal != nullptr)};
@@ -995,7 +1072,11 @@ std::vector<std::uint8_t> emit_variant(const ResidentPlan &plan,
   }
   constexpr std::array<std::uint8_t, 2> retired{0x41,
                                                 0x53}; // PUSH R11: one total, outside the loop.
-  if (terminal == nullptr) { code.raw(retired); }
+  if (terminal == nullptr) {
+    constexpr std::uint8_t context = 0x56;
+    code.byte(context);
+    code.raw(retired);
+  }
   if (mode == LoopMode::bounded) {
     constexpr std::array<std::uint8_t, 3> counter{0x45, 0x89, 0xd5}; // MOV R13D,R10D.
     code.raw(counter);
@@ -1033,6 +1114,9 @@ std::vector<std::uint8_t> emit_variant(const ResidentPlan &plan,
   if (terminal != nullptr) {
     constexpr std::uint8_t pop_context = 0x5e;
     code.byte(pop_context);
+    constexpr std::array<std::uint8_t, 3> progress{0x44, 0x89, 0xf0};
+    code.raw(progress);
+    resident_clock(code, plan, mode, true);
     const RegionTerminal joined{.machine = *terminal,
                                 .pad = (saved + 1U) % 2U != 0,
                                 .mode = mode,
@@ -1042,6 +1126,9 @@ std::vector<std::uint8_t> emit_variant(const ResidentPlan &plan,
   } else {
     constexpr std::uint8_t pop_rax = 0x58;
     code.byte(pop_rax);
+    constexpr std::uint8_t pop_context = 0x5e;
+    code.byte(pop_context);
+    resident_clock(code, plan, mode, false);
     preserve(code, plan, true, mode);
     const auto &last = plan.operations.back();
     const auto location = mode == LoopMode::bounded && plan.backedge_instructions != 0
@@ -1062,6 +1149,7 @@ struct RegionExit {
   EmissionState state;
   Address pc;
   std::uint32_t completed;
+  unsigned cycles = 0;
   ExitLocation location;
   KnownFlags known;
   // A branch exit retains the producer's host flags; a budget subtraction does not.
@@ -1094,10 +1182,18 @@ void region_exit(Code &code,
     code.byte(subtract_eax);
     code.u32(reserved - exit.completed);
   }
-  if (!terminal.machine.terminal.empty()) {
-    constexpr std::uint8_t pop_context = 0x5e;
-    code.byte(pop_context); // Preserve live Y/DX while restoring the original context.
-  }
+  constexpr std::uint8_t pop_context = 0x5e;
+  code.byte(pop_context);
+  constexpr std::array<std::uint8_t, 2> save_clock{0x51, 0x52};
+  constexpr std::array<std::uint8_t, 2> restore_clock{0x5a, 0x59};
+  code.raw(save_clock);
+  emit_loop_progress(code,
+                     {.instructions_per_iteration = reserved,
+                      .cycles_per_iteration = terminal.iteration_cycles,
+                      .residual_instructions = exit.completed,
+                      .residual_cycles = exit.cycles},
+                     ClockContext::argument);
+  code.raw(restore_clock);
   if (!terminal.machine.terminal.empty() && exit.pc == terminal.machine.terminal_location.pc) {
     join_terminal(code, terminal);
   }
@@ -1149,8 +1245,22 @@ std::vector<std::uint8_t> emit_resident_region(const ResidentRegion &region,
   const auto &tail = region.tail;
   const auto head_count = static_cast<std::uint32_t>(head.operations.size());
   const auto count = head_count + static_cast<std::uint32_t>(tail.operations.size());
+  const auto head_cycles = base_cycles(head);
+  const auto tail_cycles = base_cycles(tail);
+  const auto head_extra = instruction_timing(head.operations.back().instruction).taken_extra;
+  const auto tail_extra = instruction_timing(tail.operations.back().instruction).taken_extra;
   Code code;
-  constexpr std::array<std::uint8_t, 6> admission{0xf3, 0x0f, 0x1e, 0xfa, 0x81, 0xfa};
+  constexpr std::array<std::uint8_t, 4> endbr{0xf3, 0x0f, 0x1e, 0xfa};
+  code.raw(endbr);
+  ClockScale scale{.instructions_per_iteration = count,
+                   .cycles_per_iteration = head_cycles + tail_cycles + tail_extra};
+  if (!machine.terminal.empty()) {
+    const auto timing = instruction_timing(terminal_instruction(machine.terminal_location));
+    scale.residual_instructions = 1;
+    scale.residual_cycles = timing.base + timing.taken_extra;
+  }
+  emit_cycle_grant(code, scale);
+  constexpr std::array<std::uint8_t, 2> admission{0x81, 0xfa};
   code.raw(admission); // CMP EDX, complete two-phase body size.
   code.u32(count);
   constexpr std::array<std::uint8_t, 2> below{0x0f, 0x82};
@@ -1159,10 +1269,8 @@ std::vector<std::uint8_t> emit_resident_region(const ResidentRegion &region,
   const auto saved = preserve(code, combined, false, LoopMode::bounded);
   constexpr std::array<std::uint8_t, 8> grants{0x41, 0x56, 0x41, 0x89, 0xd5, 0x41, 0x89, 0xd6};
   code.raw(grants); // Preserve R14; R13D=remaining after reserving this iteration.
-  if (!machine.terminal.empty()) {
-    constexpr std::uint8_t push_context = 0x56;
-    code.byte(push_context);
-  }
+  constexpr std::uint8_t push_context = 0x56;
+  code.byte(push_context);
   constexpr std::array<std::uint8_t, 3> reserve{0x41, 0x81, 0xed};
   code.raw(reserve);
   code.u32(count);
@@ -1201,7 +1309,10 @@ std::vector<std::uint8_t> emit_resident_region(const ResidentRegion &region,
   const auto &last_head = head.operations.back();
   const auto &last_tail = tail.operations.back();
   const auto exit_pc = static_cast<Address>(last_tail.pc + last_tail.instruction.length);
-  RegionTerminal terminal{.machine = machine, .pad = (saved + 1U) % 2U != 0, .entries = {}};
+  RegionTerminal terminal{.machine = machine,
+                          .pad = (saved + 1U) % 2U != 0,
+                          .entries = {},
+                          .iteration_cycles = head_cycles + tail_cycles + tail_extra};
   const ExitLocation tail_location{.pc = last_tail.pc, .opcode = last_tail.instruction.opcode};
   region_exit(code,
               combined,
@@ -1222,6 +1333,7 @@ std::vector<std::uint8_t> emit_resident_region(const ResidentRegion &region,
                  .state = tail_state,
                  .pc = exit_pc,
                  .completed = count,
+                 .cycles = head_cycles + tail_cycles,
                  .location = tail_location,
                  .known = branch_flags(last_tail.instruction.condition, false),
                  .native_flags_live = true},
@@ -1235,6 +1347,7 @@ std::vector<std::uint8_t> emit_resident_region(const ResidentRegion &region,
                .state = head_state,
                .pc = exit_pc,
                .completed = head_count,
+               .cycles = head_cycles + head_extra,
                .location = {.pc = last_head.pc, .opcode = last_head.instruction.opcode},
                .known = branch_flags(last_head.instruction.condition, true),
                .native_flags_live = true},

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
+#include "cycles.hpp"
 #include "instruction.hpp"
 #include "jit/block.hpp"
 #include "jit/resident.hpp"
@@ -640,6 +641,8 @@ std::optional<ResidentPlan> resident_loop_plan(const std::span<const BlockInstru
   auto plan = resident_plan(combined, memory);
   if (!plan || !plan->loop) { return std::nullopt; }
   plan->backedge_instructions = 1;
+  const auto timing = instruction_timing(jump);
+  plan->backedge_cycles = timing.base + timing.taken_extra;
   plan->backedge_exit = {.pc = next, .opcode = jump.opcode};
   return plan;
 }

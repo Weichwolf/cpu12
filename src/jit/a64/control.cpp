@@ -15,6 +15,14 @@ void Emitter::branch(const Instruction &operation) {
   }
   advance(operation.length);
   if (condition == 1) { return; }
+  Label not_taken;
+  branch_guard(operation, not_taken);
+  advance(operation.operand);
+  code_.bind(not_taken);
+}
+
+void Emitter::branch_guard(const Instruction &operation, Label &not_taken) {
+  const auto condition = operation.condition;
   if (condition >= 12) {
     code_.shift(Shift::right, Reg::x5, ccr, 2);
     code_.alu(Alu::bit_xor, Reg::x5, Reg::x5, ccr);
@@ -38,10 +46,7 @@ void Emitter::branch(const Instruction &operation) {
                                flag_n};
     mask(Reg::x5, ccr, masks.at(condition));
   }
-  Label not_taken;
   code_.branch_zero_far(Reg::x5, not_taken, Width::w32, (condition & 1U) == 0);
-  advance(operation.operand);
-  code_.bind(not_taken);
 }
 
 void Emitter::loop(const Instruction &operation) {

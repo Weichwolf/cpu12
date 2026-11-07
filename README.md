@@ -16,15 +16,8 @@ ctest --preset release
 
 On macOS, install the matching tools with `brew install llvm@19 ninja ccache`.
 Presets discover the Homebrew LLVM 19 installation without replacing system tools.
-Both hosts execute the existing decoded ISA directly in generated native code.
-The ARM64 backend keeps guest registers resident, accesses mapped RAM directly,
-retains complete immutable blocks and connects native backedges and cached entries.
-I/O uses the existing owner callbacks. There is no interpreter fallback.
-
-ISA, interrupt, fault, memory, block and ABI regression tests run on both hosts.
-ARM64 performance qualification and the remaining host-ASM benchmark ports are
-in progress. The matched ALU/RAM/control-flow and checksum comparisons run on
-both hosts; Mandelbrot and FFT comparisons currently require Linux x86-64.
+Both hosts use native code, direct mapped memory and retained immutable blocks.
+I/O uses owner callbacks. Unsupported ISA forms report explicit faults.
 
 The `strict` preset enables ASan/UBSan. On macOS 26.4 and later, LLVM 19's
 original sanitizer runtime deadlocks during dyld initialization. Build the same
@@ -84,7 +77,13 @@ execution. Read-only program contents stay immutable for their binding identity.
 `set_memory` selects bindings between runs while
 preserving CPU state and retaining previous native translations. Changed executable
 contents require a new grant `identity` at that transition. Boundary words
-may require an owner word callback. Cycle/event accounting remains incomplete.
+may require an owner word callback.
+
+`progress()` reports completed nominal internal-bus cycles, including reset and
+interrupt entries. `run_until()` uses an absolute nominal-cycle horizon and may
+finish the final atomic instruction beyond it. It returns at interrupt-admission
+changes; I/O can request return after its instruction with `request_yield()`.
+External waits, clock routing and idle time belong to the consumer.
 
 ## Benchmarks
 
@@ -92,45 +91,15 @@ may require an owner word callback. Cycle/event accounting remains incomplete.
 cmake --build --preset release --target bench
 ```
 
-The command runs the available checked host-ASM comparisons sequentially:
-ALU/RAM/control-flow, indexed checksum and continuous checksum on both hosts;
-fixed-point Mandelbrot, FFT and continuous FFT additionally on Linux x86-64. Select
-scenarios with `CPU12_BENCH_FILTER` (a CMake cache test-name regex).
+The benchmarks compare native JIT execution with handwritten host ASM and check
+registers and memory against independent expectations. They report cold translation,
+warm throughput, packet deadline misses and `jit_to_host_percent`
+(`100 * host_time / jit_time`). The conservative `hardware_factor` assumes a
+30 MHz CPU retiring one instruction per cycle; it is not a Blofeld timing model.
 
-Each scenario reports `hardware_factor` (target >=1) and `jit_to_host_percent` (target
->=70). The hardware estimate conservatively assumes a 30 MHz CPU retiring one
-instruction per cycle; it is not a calibrated Blofeld timing model. The host
-comparison uses handwritten host ASM with identical inputs and independent
-state/memory expectations. Equal throughput is 100%. Finite-kernel timings include
-setup and result checks on both sides; the percentage is `100 * host_time / jit_time`.
-Cold compilation time is separate; warm execution must reuse translations.
-Linux packet reports include actual CPU affinity and starting/ending CPUs. macOS
-reports placement as unavailable and the CPU fields as -1; it cannot establish
-affinity or migration. Use `taskset` on Linux for placement diagnostics; pinned
-results do not qualify unrestricted scheduling.
-
-The finite kernels diagnose computation and call overhead. Their cold factors
-compare one kernel to its ideal device execution time, not to an audio/MIDI packet
-deadline. Short reset/run/check cases alone neither qualify sustained instrument
-performance nor establish freedom from live underruns. Sustained integration
-requires packet deadline measurements, including first-use compilation.
-
-`packet-word-checksum` runs a continuous guest loop with persistent registers and
-RAM: 7,499 big-endian words and 29,999 retired instructions per 1 ms packet, at
-1,000 packets per virtual second. It reports cold/warm deadlines and nine warm
-trials against host ASM; full state and memory checks run outside timing. Release
-enforces the 70% comparison and packet deadlines; sanitizer builds only report
-performance. This covers checksum processing only; other workloads require
-their own sustained evidence. Run its directed result cases
-with `cpu12-continuous-checksum-bench --verify`.
-
-`packet-fft-stream` runs six 16-point Q8.8 FFTs per 48 kHz/16 processing packet:
-333.3 microseconds per packet and 27.702 million guest instructions per virtual
-second. Guest code advances a RAM word-ramp seed, fills bit-reversed input lanes,
-transforms them and jumps back without STOP or host restoration. Host ASM preserves
-all input, scratch and output stores. Independent state/memory cases include
-signed word wrap and every retained CCR bit. This synthetic six-stream load is
-not a Blofeld cycle model; cold compilation and warm processing must meet the
-same explicit deadline/throughput gates.
+ALU, RAM, control flow and checksum comparisons support both hosts. Mandelbrot
+and FFT comparisons require Linux x86-64. Continuous checksum uses `run_until`;
+continuous FFT uses instruction-counted packets. Select scenarios with the CMake
+cache variable `CPU12_BENCH_FILTER`. Fixture definitions are in [test/bench](test/bench).
 
 [License](LICENSE)

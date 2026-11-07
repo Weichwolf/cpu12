@@ -17,6 +17,9 @@ struct NativeContext {
   std::uint16_t value = 0;
   std::uint8_t access_size = 0;
   std::uint8_t read_mask = std::numeric_limits<std::uint8_t>::max();
+  Progress progress{};
+  bool yield_requested = false;
+  std::uint64_t cycle_deadline = std::numeric_limits<std::uint64_t>::max();
 };
 
 [[nodiscard]] std::uint32_t read_byte(NativeContext *context, std::uint16_t address) noexcept;

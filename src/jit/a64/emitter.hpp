@@ -57,6 +57,10 @@ private:
   void location(const Instruction &operation);
   void operation(const Instruction &instruction);
   void sequence(std::span<const BlockInstruction> operations);
+  void commit(unsigned instructions, Progress elapsed);
+  void clock(unsigned cycles);
+  void control_clock(const Instruction &instruction);
+  void yield_boundary();
   void advance(unsigned amount);
   void add_word(Reg target, Reg source, int amount);
   void mask(Reg target, Reg source, std::uint32_t bits);
@@ -78,6 +82,7 @@ private:
   void decimal_adjust();
   void defer_interrupt(Reg candidate);
   void branch(const Instruction &operation);
+  void branch_guard(const Instruction &operation, Label &not_taken);
   void loop(const Instruction &operation);
   void transfer(const Instruction &operation);
   void transfer_read(Reg value, unsigned selector, bool sign = false);

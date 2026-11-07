@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
+#include "cycles.hpp"
 #include "instruction.hpp"
 #include "jit/block.hpp"
+#include "jit/clock.hpp"
 #include "jit/code.hpp"
 #include "jit/emission.hpp"
 #include "jit/emitter.hpp"
@@ -25,6 +27,8 @@ namespace {
 struct FailedExit {
   std::size_t displacement = 0;
   std::uint32_t completed = 0;
+  std::uint32_t committed = 0;
+  bool owner = false;
 };
 
 struct ResidentCall {
@@ -50,27 +54,6 @@ bool loops(const std::span<const BlockInstruction> instructions) {
   const auto target = static_cast<Address>(static_cast<int>(last.pc) + instruction.length +
                                            std::bit_cast<std::int16_t>(instruction.operand));
   return target == instructions.front().pc;
-}
-
-// These operations cannot observe CCR/PC, call an owner, or fail after prior
-// state publication was elided. Unknown paths are observation barriers, including live
-// knownness and indexed addresses. Initialized read-only data is ordinary RAM;
-// writes still require the complete width in a writable grant.
-bool ordinary_access(const Instruction &instruction, const Memory &memory) {
-  if (instruction.addressing == Addressing::immediate) { return true; }
-  if (instruction.addressing != Addressing::direct &&
-      instruction.addressing != Addressing::extended) {
-    return false;
-  }
-  const auto width = instruction.word ? 2U : 1U;
-  return std::ranges::any_of(memory.regions(), [&instruction, width](const auto &region) {
-    if ((instruction.kind == Kind::store && !region.writable) || !region.known.empty() ||
-        instruction.address < region.first) {
-      return false;
-    }
-    const auto offset = static_cast<std::size_t>(instruction.address - region.first);
-    return offset <= region.bytes.size() && width <= region.bytes.size() - offset;
-  });
 }
 
 std::optional<unsigned> flag_writes(const Instruction &instruction, const Memory &memory) {
@@ -104,7 +87,7 @@ std::optional<unsigned> flag_writes(const Instruction &instruction, const Memory
                           kind == Kind::subtract || kind == Kind::compare;
   const bool logical = kind == Kind::bit_and || kind == Kind::bit_or || kind == Kind::bit_xor ||
                        kind == Kind::bit_test;
-  if ((!arithmetic && !logical) || !ordinary_access(instruction, memory)) { return std::nullopt; }
+  if ((!arithmetic && !logical) || may_access_owner(instruction, memory)) { return std::nullopt; }
   return written_flags(instruction);
 }
 
@@ -133,12 +116,21 @@ void publish_pc(Code &code, const Address address) {
   code.u16(address);
 }
 
+Progress base_progress(const std::span<const BlockInstruction> instructions) {
+  Progress result;
+  for (const auto &operation : instructions) {
+    result.estimated_cycles += instruction_timing(operation.instruction).base;
+  }
+  return result;
+}
+
 void append_instruction(Code &code,
                         const BlockInstruction &operation,
                         const Memory &memory,
                         const std::uint32_t completed,
                         const EmissionOptions options,
-                        std::vector<FailedExit> &faults) {
+                        std::vector<FailedExit> &faults,
+                        const std::uint32_t committed) {
   const auto emitted = emit_joined(operation.instruction, memory, options);
   const auto begin = code.size();
   code.raw(emitted.bytes);
@@ -146,8 +138,57 @@ void append_instruction(Code &code,
     if (exit.kind == NativeExit::complete) {
       code.bind(begin + exit.displacement);
     } else {
-      faults.push_back({.displacement = begin + exit.displacement, .completed = completed});
+      faults.push_back({.displacement = begin + exit.displacement,
+                        .completed = completed,
+                        .committed = committed});
     }
+  }
+}
+
+void append_sequence(Code &code,
+                     const std::span<const BlockInstruction> instructions,
+                     const Memory &memory,
+                     std::vector<FailedExit> &faults,
+                     const std::uint32_t prefix) {
+  const auto suffix = instructions.subspan(prefix);
+  const auto options = emission_options(suffix, memory);
+  std::uint32_t completed = prefix;
+  std::uint32_t committed = prefix;
+  std::size_t policy_index = 0;
+  bool pending_pc = false;
+  for (const auto &operation : suffix) {
+    const auto policy = options[policy_index++];
+    if (pending_pc && policy.advance_pc) { publish_pc(code, operation.pc); }
+    if (policy.advance_pc || !pending_pc) { code.raw(restore_arguments); }
+    const bool owner = may_access_owner(operation.instruction, memory);
+    if (owner) {
+      emit_progress(code,
+                    base_progress(instructions.subspan(committed, completed - committed)),
+                    ClockContext::block);
+      committed = completed;
+    }
+    append_instruction(code, operation, memory, completed, policy, faults, committed);
+    pending_pc = !policy.advance_pc;
+    ++completed;
+    if (owner) {
+      emit_progress(code,
+                    base_progress(instructions.subspan(committed, completed - committed)),
+                    ClockContext::block);
+      const auto next = static_cast<Address>(operation.pc + operation.instruction.length);
+      emit_control_cycles(code, operation.instruction, next, ClockContext::block);
+      committed = completed;
+      faults.push_back({.displacement = emit_yield_check(code, ClockContext::block),
+                        .completed = completed,
+                        .committed = committed,
+                        .owner = true});
+    }
+  }
+  const auto &last = instructions.back();
+  const auto next = static_cast<Address>(last.pc + last.instruction.length);
+  if (pending_pc) { publish_pc(code, next); }
+  emit_progress(code, base_progress(instructions.subspan(committed)), ClockContext::block);
+  if (committed != completed) {
+    emit_control_cycles(code, last.instruction, next, ClockContext::block);
   }
 }
 
@@ -189,14 +230,28 @@ std::pair<Emission, ExitLocation> terminal_at(const Memory &memory, const WaitVa
 std::vector<std::uint8_t> single_entry(const BlockInstruction &operation, const Memory &memory) {
   Code code;
   code.raw(endbr);
+  constexpr std::array<std::uint8_t, 2> save_arguments{0x56, 0x57};
+  constexpr std::array<std::uint8_t, 2> restore{0x5f, 0x5e};
+  code.raw(save_arguments);
   constexpr std::array<std::uint8_t, 4> grant{0x85, 0xd2, 0x0f, 0x84};
-  code.raw(grant); // TEST EDX,EDX; a complete original instruction requires one grant.
+  code.raw(grant);
   const auto empty = code.relative32();
+  const auto timing = instruction_timing(operation.instruction);
+  const auto horizon = emit_horizon_guard(
+      code, {.estimated_cycles = timing.base + timing.taken_extra}, ClockContext::argument);
   const auto emitted = emit_joined(operation.instruction, memory);
   const auto begin = code.size();
   code.raw(emitted.bytes);
   const auto complete = code.size();
-  constexpr std::uint8_t result = 0xb8; // MOV EAX,imm32.
+  code.raw(restore);
+  emit_progress(code, base_progress(std::span{&operation, 1}), ClockContext::argument);
+  const auto next = static_cast<Address>(operation.pc + operation.instruction.length);
+  emit_control_cycles(code, operation.instruction, next, ClockContext::argument);
+  std::optional<std::size_t> owner;
+  if (may_access_owner(operation.instruction, memory)) {
+    owner = emit_yield_check(code, ClockContext::argument);
+  }
+  constexpr std::uint8_t result = 0xb8;
   code.byte(result);
   code.u32(1);
   const ExitLocation location{.pc = operation.pc, .opcode = operation.instruction.opcode};
@@ -206,12 +261,21 @@ std::vector<std::uint8_t> single_entry(const BlockInstruction &operation, const 
                     operation.instruction.kind == Kind::stop);
   constexpr std::uint8_t ret = 0xc3;
   code.byte(ret);
+  if (owner) {
+    code.bind(*owner);
+    code.byte(result);
+    code.u32(1);
+    describe_exit(code, location, true);
+    code.byte(ret);
+  }
   const auto failed = code.size();
+  code.raw(restore);
   code.byte(result);
   code.u32(0);
   describe_exit(code, location, true);
   code.byte(ret);
   code.bind(empty, failed);
+  code.bind(horizon, failed);
   for (const auto exit : emitted.exits) {
     code.bind(begin + exit.displacement, exit.kind == NativeExit::complete ? complete : failed);
   }
@@ -245,27 +309,15 @@ std::vector<std::uint8_t> emit_block(const std::span<const BlockInstruction> ins
   constexpr std::array<std::uint8_t, 2> below{0x0f, 0x82};
   code.raw(below);
   const auto insufficient = code.relative32();
+  auto required = base_progress(instructions);
+  required.estimated_cycles += instruction_timing(instructions.back().instruction).taken_extra;
+  const auto horizon = emit_horizon_guard(code, required, ClockContext::block);
   std::vector<FailedExit> faults;
   std::uint32_t completed = 0;
   const auto prefix = resident ? std::nullopt : append_resident_prefix(code, instructions, memory);
   if (prefix) { completed = static_cast<std::uint32_t>(prefix->plan.operations.size()); }
-  const auto suffix = instructions.subspan(completed);
-  const auto options = emission_options(suffix, memory);
-  std::size_t policy_index = 0;
-  bool pending_pc = false;
-  for (const auto &operation : suffix) {
-    const auto policy = options[policy_index++];
-    if (pending_pc && policy.advance_pc) { publish_pc(code, operation.pc); }
-    // Proven pure operations preserve RDI and do not need the context in RSI.
-    if (policy.advance_pc || !pending_pc) { code.raw(restore_arguments); }
-    append_instruction(code, operation, memory, completed, policy, faults);
-    pending_pc = !policy.advance_pc;
-    ++completed;
-  }
-  if (pending_pc) {
-    const auto &last = instructions.back();
-    publish_pc(code, static_cast<Address>(last.pc + last.instruction.length));
-  }
+  append_sequence(code, instructions, memory, faults, completed);
+  completed = static_cast<std::uint32_t>(instructions.size());
   code.raw(add_count);
   code.u32(completed);
   if (loops(instructions)) {
@@ -280,6 +332,7 @@ std::vector<std::uint8_t> emit_block(const std::span<const BlockInstruction> ins
     code.bind(repeat, begin);
   }
   code.bind(insufficient);
+  code.bind(horizon);
   code.raw(count_result);
   const auto &last = instructions.back();
   describe_exit(code,
@@ -289,12 +342,16 @@ std::vector<std::uint8_t> emit_block(const std::span<const BlockInstruction> ins
   code.raw(leave);
   for (const auto fault : faults) {
     code.bind(fault.displacement);
+    emit_progress(
+        code,
+        base_progress(instructions.subspan(fault.committed, fault.completed - fault.committed)),
+        ClockContext::block);
     if (fault.completed != 0) {
       code.raw(add_count);
       code.u32(fault.completed);
     }
     code.raw(count_result);
-    const auto &operation = instructions[fault.completed];
+    const auto &operation = instructions[fault.completed - (fault.owner ? 1U : 0U)];
     describe_exit(code, {.pc = operation.pc, .opcode = operation.instruction.opcode}, true);
     code.byte(jump);
     const auto done = code.relative32();

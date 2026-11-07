@@ -93,6 +93,13 @@ struct State {
   bool operator==(const State &) const = default;
 };
 
+struct Progress {
+  // Completed nominal internal-bus cycles, including accepted reset/IRQ entries.
+  // Monotonic for the Core lifetime; external waits belong to the owner.
+  std::uint64_t estimated_cycles = 0;
+  bool operator==(const Progress &) const = default;
+};
+
 struct Statistics {
   // Translation-only accounting; execution and transport observers belong to the owner.
   std::uint64_t compiled_entries = 0;
@@ -109,6 +116,7 @@ public:
   [[nodiscard]] Registers registers() const noexcept;
   // A live read-only view, valid for this Core lifetime; inspect on the execution owner.
   [[nodiscard]] const State &state() const noexcept;
+  [[nodiscard]] Progress progress() const noexcept;
   // An explicit fresh boundary clears a latched fault; coordinate bus state externally.
   void set_registers(Registers registers);
   // Explicit retirement-boundary remap; CPU state and previous translations remain intact.
@@ -127,6 +135,11 @@ public:
   // available for deterministic control; the default needs no consumer quantum.
   [[nodiscard]] RunResult
   run(std::uint32_t instruction_budget = std::numeric_limits<std::uint32_t>::max());
+  // Nominal internal-bus deadline; external waits and device time belong to the
+  // owner. The final atomic instruction can finish beyond the requested boundary.
+  [[nodiscard]] RunResult run_until(std::uint64_t base_cycle_deadline);
+  // Owner-thread I/O may request return after the current complete instruction.
+  void request_yield() noexcept;
   [[nodiscard]] Statistics statistics() const noexcept;
 
 private:

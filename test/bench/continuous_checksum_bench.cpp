@@ -6,7 +6,8 @@ int main(const int argc, const char *const *const argv) {
   using namespace cpu12::test;
   constexpr packet::Scenario scenario{.name = "packet-word-checksum",
                                       .qualification_scope = "checksum-only",
-                                      .detail = "words_per_packet=7499",
+                                      .detail =
+                                          "words_per_packet=7499 execution=nominal-cycle-horizon",
                                       .host_comparison = "word-recurrence-all-memory-sum-carry",
                                       .packets_per_second = packet_checksum::packets_per_second,
                                       .instructions = (packet_checksum::maximum_words * 4U) + 3};

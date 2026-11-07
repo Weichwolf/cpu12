@@ -32,6 +32,7 @@ set(CMAKE_CXX_CLANG_TIDY "${CPU12_CLANG_TIDY};--warnings-as-errors=*")
 set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE ON)
 set(cpu12_host_sources
   src/jit/block_emit.cpp
+  src/jit/clock.cpp
   src/jit/run.cpp
   src/jit/resident_plan.cpp
   src/jit/resident_emit.cpp
@@ -62,7 +63,7 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(arm64|aarch64)$")
     src/jit/a64/run.cpp)
 endif()
 add_library(cpu12_core STATIC
-  src/core.cpp
+  src/core.cpp src/cycles.cpp
   src/fetch.cpp
   src/decode.cpp
   src/indexed.cpp
@@ -97,6 +98,10 @@ endif()
 set(CPU12_FORMAT_TARGET "${CPU12_TOOL_PREFIX}format-check")
 add_custom_target(${CPU12_FORMAT_TARGET} COMMAND "${CPU12_CLANG_FORMAT}" --dry-run --Werror ${CPU12_FORMAT_FILES} VERBATIM)
 if(BUILD_TESTING AND CPU12_BUILD_TESTING)
+  add_executable(cpu12-progress-test test/core/progress_test.cpp)
+  target_link_libraries(cpu12-progress-test PRIVATE cpu12::core)
+  add_test(NAME native-device-horizons COMMAND cpu12-progress-test)
+  set_tests_properties(native-device-horizons PROPERTIES TIMEOUT 30)
   add_executable(cpu12-region-extent-test test/jit/region_extent_test.cpp)
   target_link_libraries(cpu12-region-extent-test PRIVATE cpu12::core)
   add_test(NAME complete-native-region-extent COMMAND cpu12-region-extent-test)

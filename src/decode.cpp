@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-only
+#include "cycles.hpp"
 #include "instruction.hpp"
 
 #include <array>
@@ -335,7 +336,8 @@ std::optional<Instruction> indexed_operation(Instruction instruction,
 
 }
 
-std::optional<Instruction> decode(const std::span<const std::uint8_t> bytes) {
+namespace {
+std::optional<Instruction> decode_instruction(const std::span<const std::uint8_t> bytes) {
   constexpr unsigned first_branch = 0x20;
   constexpr unsigned last_branch = 0x2f;
   constexpr unsigned prefix = 0x18;
@@ -382,4 +384,17 @@ std::optional<Instruction> decode(const std::span<const std::uint8_t> bytes) {
   }
   return {};
 }
+
+}
+
+std::optional<Instruction> decode(const std::span<const std::uint8_t> bytes) {
+  auto result = decode_instruction(bytes);
+  if (result) {
+    const auto timing = instruction_timing(*result);
+    result->cycles = static_cast<std::uint8_t>(timing.base);
+    result->taken_cycles = static_cast<std::uint8_t>(timing.taken_extra);
+  }
+  return result;
+}
+
 }

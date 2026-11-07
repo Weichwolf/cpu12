@@ -98,6 +98,7 @@ struct MoveOperand {
 struct Instruction {
   Kind kind = Kind::nop;
   std::uint8_t opcode = 0, length = 0;
+  std::uint8_t cycles = 0, taken_cycles = 0;
   std::uint16_t operand = 0;
   bool accumulator_b = false;
   Addressing addressing = Addressing::immediate;

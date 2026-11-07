@@ -29,6 +29,9 @@ constexpr auto body = isa::program(isa::opcode<isa::Opcode::ldd_indexed>(),
                                    decrement_y,
                                    word_backedge);
 constexpr unsigned prefix_bytes = 6, branch_bytes = 2, instructions_per_word = 4;
+// S12CPUV2 nominal timing: four three-cycle body operations, two two-cycle
+// immediate loads, then the three-cycle packet backedge.
+constexpr unsigned cycles_per_word = 12, cycles_per_packet_setup = 7;
 constexpr auto code_bytes = prefix_bytes + body.size() + branch_bytes;
 constexpr Address code_end = entry + code_bytes, branch_pc = code_end - branch_bytes;
 static_assert(code_bytes < 128);
@@ -140,7 +143,8 @@ Guest::Guest(const Case point)
 }
 
 void Guest::packet() {
-  const auto result = core_.run(instructions(point_));
+  const auto cycles = (std::uint64_t{point_.words} * cycles_per_word) + cycles_per_packet_setup;
+  const auto result = core_.run_until(core_.progress().estimated_cycles + cycles);
   const RunResult wanted{.retired = instructions(point_),
                          .pc = branch_pc,
                          .opcode = isa::opcode<isa::Opcode::bra_relative>()[0]};
@@ -157,7 +161,9 @@ void Guest::verify() const {
                      .execution = ExecutionState::running,
                      .irq_delay = 0,
                      .returned_frame = false};
-  if (core_.state() != wanted || retired_ != packets_ * instructions(point_)) {
+  const auto cycles = (std::uint64_t{point_.words} * cycles_per_word) + cycles_per_packet_setup;
+  if (core_.state() != wanted || retired_ != packets_ * instructions(point_) ||
+      core_.progress().estimated_cycles != packets_ * cycles) {
     throw std::runtime_error(
         "Continuous checksum state/progress differs from independent recurrence");
   }

@@ -2,6 +2,7 @@
 #include "cpu12/core.hpp"
 
 #include "cpu12/memory.hpp"
+#include "cycles.hpp"
 #include "fetch.hpp"
 #include "jit.hpp"
 #include "jit/block.hpp"
@@ -9,6 +10,7 @@
 #include "runtime.hpp"
 
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <span>
@@ -22,6 +24,27 @@
 
 namespace cpu12 {
 namespace {
+class DeadlineScope {
+public:
+  DeadlineScope(bool &active, detail::NativeContext &context, const std::uint64_t deadline)
+      : active_(active), context_(context) {
+    active_ = true;
+    context_.cycle_deadline = deadline;
+  }
+
+  ~DeadlineScope() {
+    active_ = false;
+    context_.cycle_deadline = std::numeric_limits<std::uint64_t>::max();
+  }
+
+  DeadlineScope(const DeadlineScope &) = delete;
+  DeadlineScope &operator=(const DeadlineScope &) = delete;
+
+private:
+  bool &active_;
+  detail::NativeContext &context_;
+};
+
 bool native_supported() noexcept {
 #if defined(__x86_64__) && defined(__linux__)
   if (std::endian::native != std::endian::little) { return false; }
@@ -57,6 +80,15 @@ public:
   detail::NativeContext context;
   detail::Jit jit;
   bool active = false;
+  bool deadline_active = false;
+
+  void observe_interrupt_boundary(const Byte previous_masks, const Byte previous_delay) noexcept {
+    constexpr unsigned masks = 0x50;
+    if (previous_masks != (context.cpu.registers.ccr & masks) ||
+        (previous_delay != 0 && context.cpu.irq_delay == 0) || context.cpu.returned_frame) {
+      context.yield_requested = true;
+    }
+  }
 
   RunResult failed(RunResult result) noexcept {
     result.state = context.cpu.execution;
@@ -112,6 +144,33 @@ public:
     if (result.fault != Fault::none) { context.cpu.failure = result; }
     return result;
   }
+
+  template <bool Timed> RunResult run_native(const std::uint32_t instruction_budget) {
+    RunResult result;
+    bool suffix = false;
+    for (std::uint32_t retired = 0; retired < instruction_budget;) {
+      constexpr unsigned interrupt_masks = 0x50;
+      const auto masks =
+          Timed ? static_cast<Byte>(context.cpu.registers.ccr & interrupt_masks) : Byte{};
+      const auto delay = Timed ? context.cpu.irq_delay : Byte{};
+      const auto block =
+          suffix ? std::nullopt
+                 : jit.run_block(instruction_budget - retired, context.cpu.registers, context);
+      if (block && block->retired == 0 && context.fault == Fault::none) { suffix = true; }
+      result = block && !suffix ? block_result(*block) : step();
+      if constexpr (Timed) { observe_interrupt_boundary(masks, delay); }
+      retired += result.retired;
+      result.retired = retired;
+      if constexpr (Timed) {
+        if (context.progress.estimated_cycles >= context.cycle_deadline) { break; }
+      }
+      if (result.fault != Fault::none || result.state != ExecutionState::running ||
+          context.yield_requested) {
+        break;
+      }
+    }
+    return result;
+  }
 };
 
 Core::Core(const Memory memory, Io *const io)
@@ -125,6 +184,14 @@ Registers Core::registers() const noexcept {
 
 const State &Core::state() const noexcept {
   return impl_->context.cpu;
+}
+
+Progress Core::progress() const noexcept {
+  return impl_->context.progress;
+}
+
+void Core::request_yield() noexcept {
+  if (impl_->active) { impl_->context.yield_requested = true; }
 }
 
 void Core::set_registers(const Registers registers) {
@@ -207,25 +274,41 @@ RunResult Core::step() {
     return result;
   }
   if (result.state != ExecutionState::running) { return result; }
+  impl_->context.yield_requested = false;
   impl_->active = true;
   try {
-    bool suffix = false;
-    for (std::uint32_t retired = 0; retired < instruction_budget;) {
-      const auto block = suffix ? std::nullopt
-                                : impl_->jit.run_block(instruction_budget - retired,
-                                                       impl_->context.cpu.registers,
-                                                       impl_->context);
-      if (block && block->retired == 0 && impl_->context.fault == Fault::none) { suffix = true; }
-      result = block && !suffix ? impl_->block_result(*block) : impl_->step();
-      retired += result.retired;
-      result.retired = retired;
-      if (result.fault != Fault::none || result.state != ExecutionState::running) { break; }
-    }
+    result = impl_->deadline_active ? impl_->run_native<true>(instruction_budget)
+                                    : impl_->run_native<false>(instruction_budget);
   } catch (...) {
     impl_->active = false;
     throw;
   }
   impl_->active = false;
+  return result;
+}
+
+RunResult Core::run_until(const std::uint64_t base_cycle_deadline) {
+  if (impl_->active) { throw std::logic_error("Recursive CPU12 execution is not permitted"); }
+  if (impl_->context.cpu.failure.fault != Fault::none) { return impl_->context.cpu.failure; }
+  const DeadlineScope deadline(impl_->deadline_active, impl_->context, base_cycle_deadline);
+  constexpr auto bound = detail::maximum_instruction_cycles;
+  constexpr auto maximum = std::numeric_limits<std::uint64_t>::max();
+  if (base_cycle_deadline > maximum - (bound - 1)) {
+    throw std::overflow_error("CPU12 deadline leaves no representable instruction boundary");
+  }
+  RunResult result{.fault = impl_->context.cpu.failure.fault,
+                   .state = impl_->context.cpu.execution,
+                   .pc = impl_->context.cpu.registers.pc};
+  while (impl_->context.progress.estimated_cycles < base_cycle_deadline &&
+         result.fault == Fault::none && result.state == ExecutionState::running &&
+         result.retired != std::numeric_limits<std::uint32_t>::max()) {
+    const auto available = std::numeric_limits<std::uint32_t>::max() - result.retired;
+    const auto retired = result.retired;
+    result = run(available);
+    const bool stopped = result.retired == 0 || impl_->context.yield_requested;
+    result.retired += retired;
+    if (stopped) { break; }
+  }
   return result;
 }
 
@@ -256,6 +339,7 @@ EventResult Core::reset(const std::uint16_t vector) noexcept {
     impl_->context.cpu.registers.pc = static_cast<Address>(target);
     impl_->context.cpu.registers.ccr = static_cast<Byte>(impl_->context.cpu.registers.ccr | masks);
     impl_->context.cpu.execution = ExecutionState::running;
+    impl_->context.progress.estimated_cycles += 5;
     result.accepted = true;
   }
   impl_->active = false;
@@ -311,6 +395,7 @@ EventResult Core::interrupt(const InterruptRequest request) {
     return result;
   }
   if (!interrupt_ready(request.kind)) { return result; }
+  const bool reuse = interrupt_frame_available();
   impl_->active = true;
   try {
     impl_->jit.interrupt(request, impl_->context.cpu.registers, impl_->context);
@@ -322,6 +407,7 @@ EventResult Core::interrupt(const InterruptRequest request) {
       result.access_size = failed.access_size;
     } else {
       result.accepted = true;
+      impl_->context.progress.estimated_cycles += reuse ? 6U : 9U;
     }
   } catch (...) {
     impl_->active = false;

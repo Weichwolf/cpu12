@@ -5,6 +5,7 @@
 
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
+#include "cycles.hpp"
 #include "instruction.hpp"
 #include "jit/arena.hpp"
 #include "jit/block.hpp"
@@ -64,6 +65,11 @@ bool same_region(const Ram &left, const Ram &right) noexcept {
 
 constexpr unsigned page_mask = static_cast<unsigned>(native_page_entries - 1);
 
+struct Entry {
+  const void *code = nullptr;
+  Instruction instruction{};
+};
+
 struct Mapping {
   explicit Mapping(const Memory &requested)
       : grants(requested.regions().begin(), requested.regions().end()), memory(Memory::external()) {
@@ -76,7 +82,7 @@ struct Mapping {
 
   std::vector<Ram> grants;
   Memory memory;
-  std::unordered_map<std::uint64_t, const void *> blocks;
+  std::unordered_map<std::uint64_t, Entry> blocks;
   std::array<std::unique_ptr<NativePage>, native_page_entries> pages;
   NativeIndex native_regions{};
 
@@ -161,13 +167,23 @@ bool Jit::execute(const std::span<const std::uint8_t> bytes,
   if (found == impl_->current->blocks.end()) {
     const auto instruction = decode(bytes);
     if (!instruction) { return false; }
-    found = impl_->current->blocks
-                .emplace(key, impl_->arena.append(emit(*instruction, impl_->current->memory)))
-                .first;
+    found =
+        impl_->current->blocks
+            .emplace(key,
+                     Entry{.code = impl_->arena.append(emit(*instruction, impl_->current->memory)),
+                           .instruction = *instruction})
+            .first;
     ++impl_->statistics.compiled_entries;
   }
-  enter(found->second, registers, context);
+  enter(found->second.code, registers, context);
   if (context.fault == Fault::none) {
+    const auto &instruction = found->second.instruction;
+    const auto timing = instruction_timing(instruction);
+    const bool extra =
+        instruction.kind == Kind::branch
+            ? branch_taken(instruction, registers.ccr)
+            : instruction.kind == Kind::stop && context.cpu.execution == ExecutionState::stopped;
+    context.progress.estimated_cycles += timing.base + (extra ? timing.taken_extra : 0U);
     if (context.cpu.irq_delay != 0) { --context.cpu.irq_delay; }
     if (context.cpu.returned_frame) {
       constexpr unsigned rti = 0x0b;
@@ -205,24 +221,26 @@ void Jit::interrupt(const InterruptRequest request, Registers &registers, Native
                    (static_cast<std::uint64_t>(request.kind) << kind_shift) | request.vector;
   auto found = impl_->current->blocks.find(key);
   if (found == impl_->current->blocks.end()) {
-    found =
-        impl_->current->blocks
-            .emplace(key,
-                     impl_->arena.append(emit_interrupt(request, impl_->current->memory, frame)))
-            .first;
+    found = impl_->current->blocks
+                .emplace(key,
+                         Entry{.code = impl_->arena.append(
+                                   emit_interrupt(request, impl_->current->memory, frame))})
+                .first;
     ++impl_->statistics.compiled_entries;
   }
-  enter(found->second, registers, context);
+  enter(found->second.code, registers, context);
 }
 
 void Jit::resume_stop(Registers &registers, NativeContext &context) {
   constexpr auto key = std::uint64_t{3} << 62U;
   auto found = impl_->current->blocks.find(key);
   if (found == impl_->current->blocks.end()) {
-    found = impl_->current->blocks.emplace(key, impl_->arena.append(emit_stop_wake())).first;
+    found =
+        impl_->current->blocks.emplace(key, Entry{.code = impl_->arena.append(emit_stop_wake())})
+            .first;
     ++impl_->statistics.compiled_entries;
   }
-  enter(found->second, registers, context);
+  enter(found->second.code, registers, context);
 }
 
 Statistics Jit::statistics() const noexcept {
