@@ -6,15 +6,23 @@
 #include <cstddef>
 #include <cstdint>
 #include <exception>
-#include <fstream>
 #include <iostream>
 #include <stdexcept>
-#include <string>
 #include <vector>
+#if defined(__aarch64__)
+#include <bit>
+#endif
+#if defined(__linux__)
+#include <fstream>
+#include <string>
+#elif defined(__APPLE__)
+#include <pthread.h>
+#endif
 
 namespace {
 using cpu12::detail::ExecutableArena;
 extern "C" std::uint32_t cpu12_arena_test_enter(const void *) noexcept;
+#if defined(__x86_64__) && defined(__linux__)
 asm(".pushsection .text\n"
     ".globl cpu12_arena_test_enter\n"
     ".hidden cpu12_arena_test_enter\n"
@@ -24,12 +32,38 @@ asm(".pushsection .text\n"
     "jmp *%rdi\n"
     ".size cpu12_arena_test_enter,.-cpu12_arena_test_enter\n"
     ".popsection\n");
+#elif defined(__aarch64__) && defined(__APPLE__)
+asm(".text\n"
+    ".globl _cpu12_arena_test_enter\n"
+    "_cpu12_arena_test_enter:\n"
+    "br x0\n");
+#elif defined(__aarch64__) && defined(__linux__)
+asm(".text\n"
+    ".globl cpu12_arena_test_enter\n"
+    ".type cpu12_arena_test_enter,%function\n"
+    "cpu12_arena_test_enter:\n"
+    "br x0\n");
+#endif
 
 void require(const bool condition, const char *message) {
   if (!condition) { throw std::runtime_error(message); }
 }
 
-std::array<std::uint8_t, 10> return_code(const std::uint32_t value) {
+auto return_code(const std::uint32_t value) {
+#if defined(__aarch64__)
+  constexpr std::uint32_t movz = 0x52800000;
+  constexpr std::uint32_t movk = 0x72a00000;
+  constexpr std::uint32_t ret = 0xd65f03c0;
+  constexpr std::uint32_t nop = 0xd503201f;
+  constexpr unsigned immediate_shift = 5;
+  constexpr unsigned high_half = 16;
+  constexpr unsigned half_mask = 0xffff;
+  const std::array words{movz | ((value & half_mask) << immediate_shift),
+                         movk | ((value >> high_half) << immediate_shift),
+                         ret,
+                         nop};
+  return std::bit_cast<std::array<std::uint8_t, sizeof(words)>>(words);
+#else
   // Native test function: ENDBR64; MOV EAX, immediate; RET (not guest opcodes).
   constexpr std::uint8_t endbr_prefix = 0xf3;
   constexpr std::uint8_t escape = 0x0f;
@@ -39,19 +73,22 @@ std::array<std::uint8_t, 10> return_code(const std::uint32_t value) {
   constexpr std::uint8_t ret = 0xc3;
   constexpr unsigned byte_bits = 8;
   constexpr unsigned byte_mask = 0xff;
-  return {endbr_prefix,
-          escape,
-          endbr,
-          endbr64,
-          mov_eax,
-          static_cast<std::uint8_t>(value & byte_mask),
-          static_cast<std::uint8_t>((value >> byte_bits) & byte_mask),
-          static_cast<std::uint8_t>((value >> (2U * byte_bits)) & byte_mask),
-          static_cast<std::uint8_t>(value >> (3U * byte_bits)),
-          ret};
+  return std::array<std::uint8_t, 10>{
+      endbr_prefix,
+      escape,
+      endbr,
+      endbr64,
+      mov_eax,
+      static_cast<std::uint8_t>(value & byte_mask),
+      static_cast<std::uint8_t>((value >> byte_bits) & byte_mask),
+      static_cast<std::uint8_t>((value >> (2U * byte_bits)) & byte_mask),
+      static_cast<std::uint8_t>(value >> (3U * byte_bits)),
+      ret};
+#endif
 }
 
 void mapping_permissions() {
+#if defined(__linux__)
   std::ifstream mappings("/proc/self/maps");
   require(mappings.is_open(), "Cannot inspect executable mappings on this Linux host");
   unsigned writable = 0;
@@ -67,6 +104,10 @@ void mapping_permissions() {
   }
   require(writable == 2 && executable == 2,
           "Two arenas own exactly two writable and two executable mappings");
+#elif defined(__APPLE__)
+  require(pthread_jit_write_protect_supported_np() != 0,
+          "Apple silicon must enforce thread-local JIT write protection");
+#endif
 }
 
 void packing_and_growth() {

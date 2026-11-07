@@ -14,8 +14,11 @@ target_compile_options(cpu12_quality INTERFACE
   -Woverloaded-virtual -Wextra-semi -Wvla -Wswitch-enum -Wswitch-default
   -ffp-contract=off -fno-omit-frame-pointer)
 # Setup and host API validation use exceptions; ordinary execution reports explicit faults.
-target_link_options(cpu12_quality INTERFACE
-  -Wl,--fatal-warnings -Wl,-z,defs)
+if(APPLE)
+  target_link_options(cpu12_quality INTERFACE -Wl,-fatal_warnings)
+else()
+  target_link_options(cpu12_quality INTERFACE -Wl,--fatal-warnings -Wl,-z,defs)
+endif()
 
 if(CPU12_SANITIZER STREQUAL "address-undefined")
   set(cpu12_sanitizers "address,undefined,float-divide-by-zero,unsigned-integer-overflow,implicit-conversion")

@@ -279,7 +279,7 @@ public:
     dense_.assign(static_cast<std::size_t>(high - low) + 2, empty_);
   }
 
-  Value get(const std::uintptr_t address) const {
+  [[nodiscard]] Value get(const std::uintptr_t address) const {
     if (!dense_.empty()) {
       if (address < first_ || address - first_ >= dense_.size()) { return empty_; }
       return dense_[static_cast<std::size_t>(address - first_)];

@@ -8,8 +8,8 @@
 #include <vector>
 
 namespace cpu12::detail {
-// Append-only dual mappings: generated entry addresses remain valid until destruction.
-// Writable storage is private; consumers receive only the RX address.
+// Append-only code; published entry addresses remain valid until destruction.
+// Linux uses RW/RX aliases; Apple silicon uses thread-local MAP_JIT write protection.
 class ExecutableArena {
 public:
   ExecutableArena();

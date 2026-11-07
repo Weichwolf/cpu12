@@ -8,13 +8,13 @@
 #include "memory_access.hpp"
 #include "runtime.hpp"
 
-#include <bit>
 #include <cstdint>
 #include <memory>
 #include <optional>
 #include <span>
 #include <stdexcept>
 #if defined(__x86_64__) && defined(__linux__)
+#include <bit>
 #include <cpuid.h>
 #endif
 

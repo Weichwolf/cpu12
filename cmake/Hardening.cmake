@@ -15,10 +15,21 @@ check_cxx_source_compiles("#include <cstddef>
 int main() { return 0; }" CPU12_USE_LIBSTDCXX)
 
 add_library(cpu12_hardening INTERFACE)
+set(LLVM19_RESOURCE_DIR "$ENV{LLVM19_RESOURCE_DIR}" CACHE PATH "Optional LLVM 19 resource directory")
+if(LLVM19_RESOURCE_DIR)
+  if(NOT EXISTS "${LLVM19_RESOURCE_DIR}/include/stddef.h")
+    message(FATAL_ERROR "LLVM19_RESOURCE_DIR must contain LLVM 19 headers and runtimes")
+  endif()
+  target_compile_options(cpu12_hardening INTERFACE "-resource-dir=${LLVM19_RESOURCE_DIR}")
+  target_link_options(cpu12_hardening INTERFACE "-resource-dir=${LLVM19_RESOURCE_DIR}")
+endif()
 target_compile_options(cpu12_hardening INTERFACE
-  -fstack-protector-strong -fstack-clash-protection
+  -fstack-protector-strong
   -Wformat=2 -Werror=format-security $<$<CONFIG:Debug>:-O1>)
-target_compile_definitions(cpu12_hardening INTERFACE _FORTIFY_SOURCE=3)
+# Darwin ASan disables fortified libc calls to preserve sanitizer interception.
+if(NOT APPLE OR NOT CPU12_SANITIZER STREQUAL "address-undefined")
+  target_compile_definitions(cpu12_hardening INTERFACE _FORTIFY_SOURCE=3)
+endif()
 if(CPU12_USE_LIBSTDCXX)
   target_compile_definitions(cpu12_hardening INTERFACE
     $<$<COMPILE_LANGUAGE:CXX>:_GLIBCXX_ASSERTIONS>)
@@ -29,8 +40,11 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
   set(CPU12_CF_PROTECTION ON)
   target_compile_options(cpu12_hardening INTERFACE -fcf-protection=full)
 endif()
-target_link_options(cpu12_hardening INTERFACE
-  -Wl,-z,relro -Wl,-z,now -Wl,-z,noexecstack)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  target_compile_options(cpu12_hardening INTERFACE -fstack-clash-protection)
+  target_link_options(cpu12_hardening INTERFACE
+    -Wl,-z,relro -Wl,-z,now -Wl,-z,noexecstack)
+endif()
 
 # Static dependencies keep their upstream exports independent of project targets.
 function(cpu12_harden_native target)
