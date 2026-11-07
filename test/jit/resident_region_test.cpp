@@ -1,4 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-only
+#if defined(__aarch64__)
+#include "a64_clobber.hpp"
+#endif
+
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
 #include "isa.hpp"
@@ -249,6 +253,9 @@ RunResult advance(Snapshot &snapshot, const Form form, const Program &code, cons
 
 [[gnu::noinline]] void clobber_callers() noexcept {
   alignas(16) std::array<std::uint64_t, 2> aligned{};
+#if defined(__aarch64__)
+  cpu12::test::clobber_a64(aligned.data());
+#else
   asm volatile("pxor %%xmm0, %%xmm0\n\t"
                "movaps %%xmm0, (%0)\n\t"
                "pcmpeqd %%xmm1, %%xmm1\n\tpcmpeqd %%xmm2, %%xmm2\n\t"
@@ -291,6 +298,7 @@ RunResult advance(Snapshot &snapshot, const Form form, const Program &code, cons
                  "xmm15",
                  "memory",
                  "cc");
+#endif
 }
 
 struct Access {

@@ -1,8 +1,8 @@
 # cpu12
 
-Independent CPU12/HC12 emulator with an x86-64 JIT.
+Independent CPU12/HC12 emulator with native x86-64 and ARM64 JITs.
 
-C++23 · Linux x86-64 · GPL-3.0-only
+C++23 · Linux x86-64 · macOS ARM64 · GPL-3.0-only
 
 ## Build
 
@@ -16,9 +16,15 @@ ctest --preset release
 
 On macOS, install the matching tools with `brew install llvm@19 ninja ccache`.
 Presets discover the Homebrew LLVM 19 installation without replacing system tools.
-ARM64 executable storage and native instruction encoding are implemented;
-complete ARM64 Core execution and qualification remain in progress. The production
-Core still reports an unsupported host on ARM64.
+Both hosts execute the existing decoded ISA directly in generated native code.
+The ARM64 backend keeps guest registers resident, accesses mapped RAM directly,
+retains complete immutable blocks and connects native backedges and cached entries.
+I/O uses the existing owner callbacks. There is no interpreter fallback.
+
+ISA, interrupt, fault, memory, block and ABI regression tests run on both hosts.
+ARM64 performance qualification and host-ASM benchmark ports remain in progress;
+no ARM64 throughput percentage is claimed. The benchmark targets below currently
+require Linux x86-64.
 
 The `strict` preset enables ASan/UBSan. On macOS 26.4 and later, LLVM 19's
 original sanitizer runtime deadlocks during dyld initialization. Build the same

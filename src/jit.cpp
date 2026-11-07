@@ -38,9 +38,12 @@ asm(".pushsection .text\n"
     "jmp *%rax\n"
     ".size cpu12_enter_generated,.-cpu12_enter_generated\n"
     ".popsection\n");
+#elif defined(__aarch64__) && (defined(__APPLE__) || defined(__linux__))
+extern "C" void cpu12_enter_generated(const void *, Registers *, NativeContext *) noexcept;
 #endif
 void enter(const void *entry, Registers &registers, NativeContext &context) noexcept {
-#if defined(__x86_64__) && defined(__linux__)
+#if (defined(__x86_64__) && defined(__linux__)) ||                                                 \
+    (defined(__aarch64__) && (defined(__APPLE__) || defined(__linux__)))
   cpu12_enter_generated(entry, &registers, &context);
 #else
   static_cast<void>(entry);

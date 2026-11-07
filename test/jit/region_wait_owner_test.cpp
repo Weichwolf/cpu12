@@ -1,4 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-only
+#if defined(__aarch64__)
+#include "a64_clobber.hpp"
+#endif
+
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
 #include "isa.hpp"
@@ -243,6 +247,9 @@ struct Model {
 
 void clobber(const unsigned salt) noexcept {
   alignas(16) std::array<std::uint64_t, 2> aligned{salt, ~std::uint64_t{salt}};
+#if defined(__aarch64__)
+  cpu12::test::clobber_a64(aligned.data());
+#else
   asm volatile("movaps (%0),%%xmm0\n"
                "xor %%eax,%%eax\n xor %%ecx,%%ecx\n xor %%edx,%%edx\n"
                "xor %%esi,%%esi\n xor %%edi,%%edi\n xor %%r8d,%%r8d\n"
@@ -281,6 +288,7 @@ void clobber(const unsigned salt) noexcept {
                  "xmm15",
                  "cc",
                  "memory");
+#endif
 }
 
 struct Bus {

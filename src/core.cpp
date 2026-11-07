@@ -13,8 +13,10 @@
 #include <optional>
 #include <span>
 #include <stdexcept>
-#if defined(__x86_64__) && defined(__linux__)
+#if defined(__x86_64__) || defined(__aarch64__)
 #include <bit>
+#endif
+#if defined(__x86_64__) && defined(__linux__)
 #include <cpuid.h>
 #endif
 
@@ -30,6 +32,8 @@ bool native_supported() noexcept {
   unsigned ecx = 0;
   unsigned edx = 0;
   return __get_cpuid(extended_features, &eax, &ebx, &ecx, &edx) != 0 && (ecx & lahf_lm) != 0;
+#elif defined(__aarch64__) && (defined(__APPLE__) || defined(__linux__))
+  return std::endian::native == std::endian::little;
 #else
   return false;
 #endif

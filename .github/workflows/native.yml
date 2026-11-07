@@ -24,7 +24,7 @@ jobs:
       - run: cmake --build --preset ${{ matrix.preset }} --parallel 2
       - run: cmake --build --preset ${{ matrix.preset }} --target format-check
       - run: ctest --preset ${{ matrix.preset }} --parallel 2 --timeout 120
-  macos-arm64-foundation:
+  macos-arm64:
     runs-on: macos-26
     strategy:
       fail-fast: false
@@ -40,6 +40,6 @@ jobs:
           runtime_resource="$(python3 tools/darwin_runtime.py)"
           echo "LLVM19_RESOURCE_DIR=$runtime_resource" >> "$GITHUB_ENV"
       - run: cmake --preset ${{ matrix.preset }}
-      - run: cmake --build --preset ${{ matrix.preset }} --parallel 2 --target cpu12-arena-test cpu12-a64-code-test
+      - run: cmake --build --preset ${{ matrix.preset }} --parallel 2
       - run: cmake --build --preset ${{ matrix.preset }} --target format-check
-      - run: ctest --preset ${{ matrix.preset }} --output-on-failure -R '^(executable-arena|a64-code-emission)$'
+      - run: ctest --preset ${{ matrix.preset }} --parallel 2 --timeout 120

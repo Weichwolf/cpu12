@@ -1,4 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-only
+#if defined(__aarch64__)
+#include "a64_clobber.hpp"
+#endif
+
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
 #include "isa.hpp"
@@ -200,6 +204,9 @@ struct Port {
     if (port.accept) { word(port.storage->data, 4, static_cast<Address>(port.offered ^ dma_mask)); }
     alignas(16) std::array<Byte, 16> aligned{};
     // Exercise real aligned stack use across the native-to-owner ABI boundary.
+#if defined(__aarch64__)
+    cpu12::test::clobber_a64(aligned.data());
+#else
     asm volatile("movaps (%0),%%xmm0" : : "r"(aligned.data()) : "xmm0", "memory");
     asm volatile("xor %%eax,%%eax\n"
                  "xor %%ecx,%%ecx\n"
@@ -253,6 +260,7 @@ struct Port {
                    "xmm15",
                    "cc",
                    "memory");
+#endif
     return port.accept;
   }
 };

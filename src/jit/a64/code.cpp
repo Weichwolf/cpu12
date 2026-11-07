@@ -246,6 +246,24 @@ void Code::bind(Label &label) {
   label.references.clear();
 }
 
+void Code::branch_far(const Condition condition, Label &label) {
+  if (condition == Condition::always) {
+    branch(label);
+    return;
+  }
+  Label skip;
+  branch(static_cast<Condition>(static_cast<unsigned>(condition) ^ 1U), skip);
+  branch(label);
+  bind(skip);
+}
+
+void Code::branch_zero_far(const Reg value, Label &label, const Width width, const bool nonzero) {
+  Label skip;
+  branch_zero(value, skip, width, !nonzero);
+  branch(label);
+  bind(skip);
+}
+
 void Code::call(const Reg target) {
   constexpr std::uint32_t opcode = 0xd63f0000;
   word(opcode | (reg(target) << register_shift));

@@ -116,6 +116,8 @@ public:
   void branch(Label &label);
   void branch(Condition condition, Label &label);
   void branch_zero(Reg value, Label &label, Width width = Width::w32, bool nonzero = false);
+  void branch_far(Condition condition, Label &label);
+  void branch_zero_far(Reg value, Label &label, Width width = Width::w32, bool nonzero = false);
   void bind(Label &label);
   void call(Reg target);
   void jump(Reg target);
