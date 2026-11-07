@@ -94,7 +94,8 @@ void check_dft(const Samples &input, const Image &ram) {
     long double real_sum = 0;
     long double imaginary_sum = 0;
     for (std::size_t index = 0; index < points; ++index) {
-      const auto angle = -2 * std::numbers::pi_v<long double> * bin * index / points;
+      const auto angle = -2 * std::numbers::pi_v<long double> * static_cast<long double>(bin) *
+                         static_cast<long double>(index) / points;
       const auto re = signed_word(input[index * 2]);
       const auto im = signed_word(input[(index * 2) + 1]);
       real_sum += re * std::cos(angle) - im * std::sin(angle);

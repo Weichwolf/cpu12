@@ -58,18 +58,30 @@ consteval auto assemble() {
 constexpr auto program = assemble();
 
 Address host_input(const std::span<Byte, input_bytes> destination, Address sum) {
-  // One optimized host sequence: retain AX across all 32 ramp words and write
-  // directly to bit-reversed complex lanes. No guest state or memory restoration.
-  asm volatile(".macro cpu12_stream_sample offset\n\t"
-               "addw $%c[stride], %%ax\n\t"
-#if defined(__MOVBE__)
-               "movbew %%ax, \\offset(%%rdi)\n\t"
-#else
-               "movb %%ah, \\offset(%%rdi)\n\t"
-               "movb %%al, (\\offset+1)(%%rdi)\n\t"
+#if defined(__aarch64__)
+  std::uint32_t value;
 #endif
-               ".endm\n\t"
-               R"(
+  // Match the guest's unrolled, bit-reversed stores without restoring its state.
+  asm volatile(
+#if defined(__aarch64__)
+      "mov w10,#%c[stride]\n\t"
+      ".macro cpu12_stream_sample offset\n\t"
+      "add %w[sum],%w[sum],w10\n\t"
+      "uxth %w[sum],%w[sum]\n\t"
+      "rev16 w9,%w[sum]\n\t"
+      "strh w9,[%[data],#\\offset]\n\t"
+#else
+      ".macro cpu12_stream_sample offset\n\t"
+      "addw $%c[stride], %%ax\n\t"
+#if defined(__MOVBE__)
+      "movbew %%ax, \\offset(%%rdi)\n\t"
+#else
+      "movb %%ah, \\offset(%%rdi)\n\t"
+      "movb %%al, (\\offset+1)(%%rdi)\n\t"
+#endif
+#endif
+      ".endm\n\t"
+      R"(
     cpu12_stream_sample 0
     cpu12_stream_sample 2
     cpu12_stream_sample 32
@@ -104,10 +116,17 @@ Address host_input(const std::span<Byte, input_bytes> destination, Address sum) 
     cpu12_stream_sample 62
     .purgem cpu12_stream_sample
   )"
-               : "+a"(sum)
-               : "D"(destination.data()), [stride] "i"(input_stride)
-               : "cc", "memory");
+#if defined(__aarch64__)
+      : [sum] "=&r"(value)
+      : "0"(std::uint32_t{sum}), [data] "r"(destination.data()), [stride] "i"(input_stride)
+      : "cc", "memory", "x9", "x10");
+  return static_cast<Address>(value);
+#else
+      : "+a"(sum)
+      : "D"(destination.data()), [stride] "i"(input_stride)
+      : "cc", "memory");
   return sum;
+#endif
 }
 }
 

@@ -97,9 +97,9 @@ warm throughput, packet deadline misses and `jit_to_host_percent`
 (`100 * host_time / jit_time`). The conservative `hardware_factor` assumes a
 30 MHz CPU retiring one instruction per cycle; it is not a Blofeld timing model.
 
-ALU, RAM, control flow and checksum comparisons support both hosts. Mandelbrot
-and FFT comparisons require Linux x86-64. Continuous checksum uses `run_until`;
-continuous FFT uses instruction-counted packets. Select scenarios with the CMake
+ALU, RAM, control flow, checksum, Mandelbrot and FFT comparisons support both
+hosts. Continuous checksum uses `run_until`; continuous FFT uses
+instruction-counted packets. Select scenarios with the CMake
 cache variable `CPU12_BENCH_FILTER`. Fixture definitions are in [test/bench](test/bench).
 
 [License](LICENSE)

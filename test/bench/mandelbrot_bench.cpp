@@ -4,7 +4,11 @@
 #include "isa.hpp"
 #include "jit/arena.hpp"
 #include "jit/block.hpp"
+#if defined(__aarch64__)
+#include "mandelbrot_host_a64.hpp"
+#else
 #include "mandelbrot_host.hpp"
+#endif
 #include "mandelbrot_program.hpp"
 #include "report.hpp"
 #include "runtime.hpp"
