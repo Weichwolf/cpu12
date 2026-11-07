@@ -34,7 +34,7 @@ set(bench_selection)
 if(NOT CPU12_BENCH_FILTER STREQUAL "")
   list(APPEND bench_selection -R "${CPU12_BENCH_FILTER}")
 endif()
-add_custom_target(bench
+add_custom_target(${CPU12_TOOL_PREFIX}bench
   COMMAND "${CMAKE_CTEST_COMMAND}" --test-dir "${bench_directory}"
     --parallel 1 --no-tests=error --verbose ${bench_selection}
   DEPENDS ${bench_targets}
