@@ -47,6 +47,8 @@ public:
 
   [[nodiscard]] std::vector<Byte> instruction(const Instruction &operation);
   [[nodiscard]] std::vector<Byte> block(std::span<const BlockInstruction> operations);
+  [[nodiscard]] std::vector<Byte> resident_region(const ResidentRegion &region,
+                                                  std::span<const Byte> general);
   [[nodiscard]] std::vector<Byte> resident(const ResidentPlan &plan,
                                            std::span<const BlockInstruction> suffix,
                                            std::span<const Byte> general);
@@ -65,6 +67,7 @@ private:
   void clock(unsigned cycles);
   void control_clock(const Instruction &instruction);
   void yield_boundary();
+  void resident_region_exit(const ResidentRegion &region, bool head);
   void resident_grant(const ResidentPlan &plan,
                       std::span<const BlockInstruction> suffix,
                       Label &general);

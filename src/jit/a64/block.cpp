@@ -180,6 +180,9 @@ std::vector<Byte> Emitter::block(const std::span<const BlockInstruction> operati
     }
   }
   auto general = finish();
+  if (const auto region = resident_region_plan(operations, memory_)) {
+    return Emitter(memory_).resident_region(*region, general);
+  }
   auto prefix = operations;
   const auto kind = prefix.back().instruction.kind;
   if (prefix.size() > 1 && (kind == Kind::stop || kind == Kind::wait || kind == Kind::jump)) {

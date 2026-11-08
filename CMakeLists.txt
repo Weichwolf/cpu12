@@ -53,6 +53,7 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(arm64|aarch64)$")
     src/jit/a64/emitter.cpp
     src/jit/a64/block.cpp
     src/jit/a64/resident.cpp
+    src/jit/a64/region.cpp
     src/jit/resident_plan.cpp
     src/jit/a64/memory.cpp
     src/jit/a64/arithmetic.cpp
