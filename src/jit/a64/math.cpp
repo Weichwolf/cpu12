@@ -84,6 +84,7 @@ void Emitter::math(const Instruction &operation) {
       code_.extract(Reg::x0, d, byte_bits, byte_bits);
       code_.extract(Reg::x1, d, 0, byte_bits);
       code_.multiply(d, Reg::x0, Reg::x1);
+      if (!policy_.flags_live) { return; }
       mask(ccr, ccr, byte_mask ^ flag_c);
       code_.extract(Reg::x5, d, byte_bits - 1, 1);
       code_.alu(Alu::bit_or, ccr, ccr, Reg::x5);
@@ -95,6 +96,7 @@ void Emitter::math(const Instruction &operation) {
       code_.multiply(Reg::x2, Reg::x0, Reg::x1);
       code_.extract(d, Reg::x2, 0, word_bits);
       code_.extract(y, Reg::x2, word_bits, word_bits);
+      if (!policy_.flags_live) { return; }
       mask(ccr, ccr, byte_mask ^ (flag_n | flag_z | flag_c));
       code_.extract(Reg::x5, Reg::x2, (2 * word_bits) - 1, 1);
       code_.shift(Shift::left, Reg::x5, Reg::x5, 3);

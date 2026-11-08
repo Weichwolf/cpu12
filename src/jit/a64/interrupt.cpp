@@ -7,33 +7,115 @@
 #include "jit/a64/code.hpp"
 #include "jit/a64/emitter.hpp"
 
+#include <algorithm>
 #include <array>
+#include <cstddef>
+#include <cstdint>
 #include <vector>
 
 namespace cpu12::detail::a64 {
-void Emitter::stack_context(const Byte next_pc) {
-  struct Part {
-    Reg source;
-    int position;
-    bool word = true;
-  };
+namespace {
+struct FramePart {
+  Reg source;
+  unsigned position;
+  bool word = true;
+};
 
-  constexpr std::array parts{Part{.source = pc, .position = 2},
-                             Part{.source = y, .position = 4},
-                             Part{.source = x, .position = 6},
-                             Part{.source = d, .position = 8},
-                             Part{.source = ccr, .position = 9, .word = false}};
-  for (const auto part : parts) {
-    add_word(Reg::x9, stack, -part.position);
-    if (part.source == pc) {
-      add_word(Reg::x0, pc, next_pc);
-    } else if (part.source == d) {
-      code_.reverse_half(Reg::x0, d);
+constexpr unsigned frame_bytes = 9, frame_pivot = 8;
+constexpr std::array frame_parts{FramePart{.source = pc, .position = 2},
+                                 FramePart{.source = y, .position = 4},
+                                 FramePart{.source = x, .position = 6},
+                                 FramePart{.source = d, .position = 8},
+                                 FramePart{.source = ccr, .position = 9, .word = false}};
+}
+
+Reg Emitter::frame_value(const Reg source,
+                         const bool word,
+                         const Byte next_pc,
+                         const FrameOrder order) {
+  auto value = source;
+  if (source == pc) {
+    if (order == FrameOrder::native) {
+      code_.add(Reg::x0, pc, next_pc);
     } else {
-      code_.move(Reg::x0, part.source, Width::w32);
+      add_word(Reg::x0, pc, next_pc);
     }
+    value = Reg::x0;
+  } else {
+    const auto dirty =
+        code_.written_registers() & (std::uint32_t{1} << static_cast<unsigned>(source));
+    if (dirty == 0) {
+      constexpr std::array offsets{offsetof(Registers, d),
+                                   offsetof(Registers, x),
+                                   offsetof(Registers, y),
+                                   offsetof(Registers, ccr)};
+      constexpr std::array sources{d, x, y, ccr};
+      const auto *const found = std::ranges::find(sources, source);
+      const auto index = static_cast<std::size_t>(found - sources.begin());
+      code_.load(Reg::x0, registers, offsets.at(index), word ? Access::half : Access::byte);
+      value = Reg::x0;
+    }
+  }
+  const bool reverse = order == FrameOrder::native ? source != d : source == d;
+  if (word && reverse) {
+    code_.reverse_half(Reg::x0, value);
+    value = Reg::x0;
+  }
+  return value;
+}
+
+void Emitter::frame_ram(const Byte next_pc) {
+  for (const auto part : frame_parts) {
+    const auto value = frame_value(part.source, part.word, next_pc, FrameOrder::native);
+    if (part.word) {
+      code_.store(value, Reg::x11, frame_pivot - part.position, Access::half);
+    } else {
+      code_.subtract(Reg::x11, Reg::x11, 1, Width::x64);
+      code_.store(value, Reg::x11, 0, Access::byte);
+    }
+  }
+}
+
+void Emitter::frame_admission(const Byte next_pc, Label &complete) {
+  Label slow;
+  code_.constant(Reg::x17, frame_bytes);
+  code_.compare(stack, Reg::x17);
+  code_.branch_far(Condition::no_carry, slow);
+  auto regions = std::vector(memory_.regions().begin(), memory_.regions().end());
+  std::ranges::sort(regions, [](const auto &left, const auto &right) {
+    return left.bytes.size() > right.bytes.size();
+  });
+  for (const auto &region : regions) {
+    if (!region.writable || !region.known.empty() || region.bytes.size() < frame_bytes) {
+      continue;
+    }
+    Label next;
+    code_.subtract(Reg::x9, stack, frame_bytes);
+    code_.constant(Reg::x17, region.first);
+    code_.alu(Alu::subtract, Reg::x9, Reg::x9, Reg::x17);
+    code_.constant(Reg::x17, region.bytes.size() - frame_bytes);
+    code_.compare(Reg::x9, Reg::x17);
+    code_.branch_far(Condition::above, next);
+    code_.constant(Reg::x11, reinterpret_cast<std::uintptr_t>(region.bytes.data()));
+    code_.add(Reg::x9, Reg::x9, 1);
+    code_.alu(Alu::add, Reg::x11, Reg::x11, Reg::x9, Width::x64);
+    frame_ram(next_pc);
+    code_.branch(complete);
+    code_.bind(next);
+  }
+  code_.bind(slow);
+}
+
+void Emitter::stack_context(const Byte next_pc) {
+  Label complete;
+  frame_admission(next_pc, complete);
+  for (const auto part : frame_parts) {
+    add_word(Reg::x9, stack, -static_cast<int>(part.position));
+    const auto value = frame_value(part.source, part.word, next_pc);
+    if (value != Reg::x0) { code_.move(Reg::x0, value, Width::w32); }
     data_access({.word = part.word, .write = true});
   }
+  code_.bind(complete);
 }
 
 std::vector<Byte>

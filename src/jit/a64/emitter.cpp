@@ -21,7 +21,23 @@
 
 namespace cpu12::detail::a64 {
 namespace {
-constexpr std::array saved{Reg::x19, Reg::x21, Reg::x23, Reg::x25, Reg::x27};
+constexpr std::uint32_t bit(const Reg value) {
+  return std::uint32_t{1} << static_cast<unsigned>(value);
+}
+
+std::vector<std::pair<Reg, Reg>> saved(const std::uint32_t used) {
+  constexpr std::array pairs{Reg::x19, Reg::x21, Reg::x23, Reg::x25, Reg::x27};
+  std::vector<std::pair<Reg, Reg>> result;
+  for (const auto first : pairs) {
+    const auto second = static_cast<Reg>(static_cast<unsigned>(first) + 1);
+    if ((used & (bit(first) | bit(second))) != 0) {
+      result.emplace_back((used & bit(first)) != 0 ? first : Reg::zr,
+                          (used & bit(second)) != 0 ? second : Reg::zr);
+    }
+  }
+  return result;
+}
+
 constexpr std::array fields{std::pair{pc, offsetof(Registers, pc)},
                             std::pair{d, offsetof(Registers, d)},
                             std::pair{x, offsetof(Registers, x)},
@@ -30,30 +46,39 @@ constexpr std::array fields{std::pair{pc, offsetof(Registers, pc)},
 constexpr std::size_t location_offset = 24;
 }
 
+Code Emitter::prologue(const std::uint32_t used) {
+  Code entry;
+  entry.push(Reg::fp, Reg::lr);
+  entry.add(Reg::fp, Reg::sp, 0, Width::x64);
+  for (const auto &[first, second] : saved(used)) { entry.push(first, second); }
+  entry.push(Reg::zr, Reg::x17);
+  entry.push(Reg::zr, Reg::x17);
+  entry.move(registers, Reg::x0);
+  entry.move(context, Reg::x1);
+  for (const auto &[reg, offset] : fields) {
+    if ((used & bit(reg)) != 0) { entry.load(reg, registers, offset, Access::half); }
+  }
+  if ((used & bit(ccr)) != 0) {
+    entry.load(ccr, registers, offsetof(Registers, ccr), Access::byte);
+  }
+  return entry;
+}
+
 void Emitter::begin(const bool bounded) {
-  code_.push(Reg::fp, Reg::lr);
-  code_.add(Reg::fp, Reg::sp, 0, Width::x64);
-  for (const auto reg : saved) {
-    code_.push(reg, static_cast<Reg>(static_cast<unsigned>(reg) + 1));
-  }
-  code_.push(Reg::zr, Reg::x17);
-  code_.push(Reg::zr, Reg::x17);
-  code_.move(registers, Reg::x0);
-  code_.move(context, Reg::x1);
-  for (const auto &[reg, offset] : fields) { code_.load(reg, registers, offset, Access::half); }
-  code_.load(ccr, registers, offsetof(Registers, ccr), Access::byte);
+  begin_offset_ = code_.size();
   code_.constant(retired, 0);
-  if (bounded) {
-    code_.move(remaining, Reg::x2, Width::w32);
-  } else {
-    code_.constant(remaining, 1);
-  }
+  if (bounded) { code_.move(remaining, Reg::x2, Width::w32); }
   code_.store(Reg::zr, Reg::sp, location_offset, Access::word);
 }
 
 void Emitter::publish() {
-  for (const auto &[reg, offset] : fields) { code_.store(reg, registers, offset, Access::half); }
-  code_.store(ccr, registers, offsetof(Registers, ccr), Access::byte);
+  const auto dirty = code_.written_registers();
+  for (const auto &[reg, offset] : fields) {
+    if ((dirty & bit(reg)) != 0) { code_.store(reg, registers, offset, Access::half); }
+  }
+  if ((dirty & bit(ccr)) != 0) {
+    code_.store(ccr, registers, offsetof(Registers, ccr), Access::byte);
+  }
 }
 
 std::vector<Byte> Emitter::finish() {
@@ -67,14 +92,20 @@ std::vector<Byte> Emitter::finish() {
   publish();
   code_.move(Reg::x0, retired);
   code_.load(Reg::x1, Reg::sp, location_offset);
+  const auto used = code_.used_registers() | bit(registers) | bit(context);
+  const auto preserved = saved(used);
   code_.pop(Reg::zr, Reg::x17);
   code_.pop(Reg::zr, Reg::x17);
-  for (const auto reg : std::views::reverse(saved)) {
-    code_.pop(reg, static_cast<Reg>(static_cast<unsigned>(reg) + 1));
-  }
+  for (const auto &[first, second] : std::views::reverse(preserved)) { code_.pop(first, second); }
   code_.pop(Reg::fp, Reg::lr);
   code_.return_();
+  const auto entry = prologue(used);
+  code_.splice(begin_offset_, entry.bytes());
   return code_.bytes();
+}
+
+void Emitter::publish_flags() {
+  if (policy_.flags_live) { code_.move(ccr, Reg::x4, Width::w32); }
 }
 
 void Emitter::location(const Instruction &operation) {
@@ -105,6 +136,7 @@ void Emitter::add_word(const Reg target, const Reg source, const int amount) {
 }
 
 void Emitter::advance(const unsigned amount) {
+  if (!policy_.advance_pc) { return; }
   add_word(pc, pc, static_cast<int>(amount));
 }
 

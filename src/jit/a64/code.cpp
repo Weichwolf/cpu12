@@ -13,6 +13,7 @@ namespace {
 constexpr unsigned register_shift = 5, operand_shift = 16, immediate_shift = 10;
 constexpr unsigned half_bits = 16, byte_bits = 8, byte_mask = 0xff;
 constexpr unsigned instruction_bytes = 4, condition_shift = 12;
+constexpr unsigned branch_bits = 26, conditional_bits = 19;
 constexpr std::uint32_t wide_bit = 0x80000000;
 
 constexpr auto reg(const Reg value) {
@@ -28,10 +29,28 @@ constexpr unsigned bit_count(const Width width) {
 }
 }
 
+void Code::read_register(const Reg value) {
+  read_ |= std::uint32_t{1} << reg(value);
+}
+
+void Code::write_register(const Reg value) {
+  written_ |= std::uint32_t{1} << reg(value);
+}
+
 void Code::word(const std::uint32_t value) {
-  for (unsigned shift = 0; shift < 32; shift += byte_bits) {
-    bytes_.push_back(static_cast<std::uint8_t>((value >> shift) & byte_mask));
+  const auto offset = bytes_.size();
+  bytes_.resize(offset + instruction_bytes);
+  for (unsigned index = 0; index < instruction_bytes; ++index) {
+    bytes_[offset + index] = static_cast<std::uint8_t>((value >> (index * byte_bits)) & byte_mask);
   }
+}
+
+void Code::splice(const std::size_t offset, const std::span<const std::uint8_t> bytes) {
+  if (offset > bytes_.size() || offset % instruction_bytes != 0 ||
+      bytes.size() % instruction_bytes != 0) {
+    throw std::invalid_argument("Invalid A64 code insertion extent");
+  }
+  bytes_.insert(bytes_.begin() + static_cast<std::ptrdiff_t>(offset), bytes.begin(), bytes.end());
 }
 
 void Code::append(const std::span<const std::uint8_t> bytes) {
@@ -42,6 +61,8 @@ void Code::append(const std::span<const std::uint8_t> bytes) {
 }
 
 void Code::constant(const Reg target, const std::uint64_t value, const Width width) {
+  write_register(target);
+
   if (width == Width::w32 && value > std::numeric_limits<std::uint32_t>::max()) {
     throw std::invalid_argument("A64 constant exceeds its register width");
   }
@@ -63,11 +84,18 @@ void Code::move(const Reg target, const Reg source, const Width width) {
 
 void Code::alu(
     const Alu operation, const Reg target, const Reg left, const Reg right, const Width width) {
+  read_register(left);
+  read_register(right);
+  write_register(target);
+
   word(wide(width) | static_cast<std::uint32_t>(operation) | (reg(right) << operand_shift) |
        (reg(left) << register_shift) | reg(target));
 }
 
 void Code::add(const Reg target, const Reg source, const std::uint16_t value, const Width width) {
+  read_register(source);
+  write_register(target);
+
   constexpr std::uint32_t opcode = 0x11000000;
   constexpr unsigned maximum = 0xfff;
   if (value > maximum) { throw std::invalid_argument("A64 add immediate exceeds 12 bits"); }
@@ -79,6 +107,9 @@ void Code::subtract(const Reg target,
                     const Reg source,
                     const std::uint16_t value,
                     const Width width) {
+  read_register(source);
+  write_register(target);
+
   constexpr unsigned maximum = 0xfff;
   if (value > maximum) { throw std::invalid_argument("A64 subtract immediate exceeds 12 bits"); }
   constexpr std::uint32_t opcode = 0x51000000;
@@ -87,6 +118,10 @@ void Code::subtract(const Reg target,
 }
 
 void Code::insert(const Reg target, const Reg source, const unsigned first, const unsigned count) {
+  read_register(source);
+  read_register(target);
+  write_register(target);
+
   constexpr unsigned bits = 32;
   if (count == 0 || first >= bits || count > bits - first) {
     throw std::invalid_argument("Invalid A64 insertion extent");
@@ -97,6 +132,12 @@ void Code::insert(const Reg target, const Reg source, const unsigned first, cons
 }
 
 void Code::scalar_move(const Reg value, const unsigned vector, const bool to_vector) {
+  if (to_vector) {
+    read_register(value);
+  } else {
+    write_register(value);
+  }
+
   constexpr unsigned vector_registers = 32;
   if (vector >= vector_registers) { throw std::invalid_argument("Invalid A64 vector register"); }
   constexpr std::uint32_t to_scalar = 0x1e270000;
@@ -111,6 +152,9 @@ void Code::extract(const Reg target,
                    const unsigned count,
                    const Width width,
                    const bool sign) {
+  read_register(source);
+  write_register(target);
+
   const auto bits = bit_count(width);
   if (count == 0 || first >= bits || count > bits - first) {
     throw std::invalid_argument("Invalid A64 bit-field extent");
@@ -128,6 +172,9 @@ void Code::shift(const Shift operation,
                  const Reg source,
                  const unsigned count,
                  const Width width) {
+  read_register(source);
+  write_register(target);
+
   const auto bits = bit_count(width);
   if (count >= bits) { throw std::invalid_argument("A64 shift exceeds register width"); }
   if (operation == Shift::right || operation == Shift::arithmetic) {
@@ -148,6 +195,9 @@ void Code::shift(const Shift operation,
 }
 
 void Code::reverse_half(const Reg target, const Reg source) {
+  read_register(source);
+  write_register(target);
+
   constexpr std::uint32_t opcode = 0x5ac00400;
   word(opcode | (reg(source) << register_shift) | reg(target));
 }
@@ -157,6 +207,13 @@ void Code::memory(const Reg value,
                   const std::size_t offset,
                   const Access access,
                   const bool read) {
+  read_register(base);
+  if (read) {
+    write_register(value);
+  } else {
+    read_register(value);
+  }
+
   constexpr std::uint32_t store = 0x39000000;
   constexpr std::uint32_t load = 0x00400000;
   constexpr unsigned size_shift = 30;
@@ -180,6 +237,10 @@ void Code::store(const Reg source, const Reg base, const std::size_t offset, con
 }
 
 void Code::multiply(const Reg target, const Reg left, const Reg right, const Width width) {
+  read_register(left);
+  read_register(right);
+  write_register(target);
+
   constexpr std::uint32_t opcode = 0x1b007c00;
   word(wide(width) | opcode | (reg(right) << operand_shift) | (reg(left) << register_shift) |
        reg(target));
@@ -187,6 +248,10 @@ void Code::multiply(const Reg target, const Reg left, const Reg right, const Wid
 
 void Code::divide(
     const Reg target, const Reg left, const Reg right, const bool sign, const Width width) {
+  read_register(left);
+  read_register(right);
+  write_register(target);
+
   constexpr std::uint32_t unsigned_divide = 0x1ac00800;
   constexpr std::uint32_t signed_divide = 0x1ac00c00;
   word(wide(width) | (sign ? signed_divide : unsigned_divide) | (reg(right) << operand_shift) |
@@ -195,6 +260,11 @@ void Code::divide(
 
 void Code::multiply_subtract(
     const Reg target, const Reg left, const Reg right, const Reg minuend, const Width width) {
+  read_register(left);
+  read_register(right);
+  read_register(minuend);
+  write_register(target);
+
   constexpr std::uint32_t opcode = 0x1b008000;
   word(wide(width) | opcode | (reg(right) << operand_shift) | (reg(minuend) << immediate_shift) |
        (reg(left) << register_shift) | reg(target));
@@ -204,11 +274,24 @@ void Code::compare(const Reg left, const Reg right, const Width width) {
   alu(Alu::subtract_flags, Reg::zr, left, right, width);
 }
 
+void Code::compare(const Reg source, const std::uint16_t value, const Width width) {
+  constexpr unsigned maximum = 0xfff;
+  if (value > maximum) { throw std::invalid_argument("A64 compare immediate exceeds 12 bits"); }
+  read_register(source);
+  constexpr std::uint32_t opcode = 0x7100001f;
+  word(wide(width) | opcode | (std::uint32_t{value} << immediate_shift) |
+       (reg(source) << register_shift));
+}
+
 void Code::select(const Reg target,
                   const Reg left,
                   const Reg right,
                   const Condition condition,
                   const Width width) {
+  read_register(left);
+  read_register(right);
+  write_register(target);
+
   constexpr std::uint32_t opcode = 0x1a800000;
   word(wide(width) | opcode | (reg(right) << operand_shift) |
        (static_cast<unsigned>(condition) << condition_shift) | (reg(left) << register_shift) |
@@ -216,11 +299,37 @@ void Code::select(const Reg target,
 }
 
 void Code::set(const Reg target, const Condition condition) {
+  write_register(target);
+
   constexpr std::uint32_t opcode = 0x1a9f07e0;
   word(opcode | ((static_cast<unsigned>(condition) ^ 1U) << condition_shift) | reg(target));
 }
 
 void Code::patch(const Reference reference, const std::size_t target) {
+  if (reference.conditional) {
+    const auto first = reference.offset - instruction_bytes;
+    const auto distance = static_cast<std::int64_t>(target) - static_cast<std::int64_t>(first);
+    constexpr std::int64_t reach = 1 << 20;
+    if (distance >= -reach && distance < reach) {
+      std::uint32_t branch = 0;
+      for (unsigned index = 0; index < instruction_bytes; ++index) {
+        branch |= std::uint32_t{bytes_[first + index]} << (index * byte_bits);
+      }
+      constexpr std::uint32_t immediate = 0x00ffffe0;
+      constexpr std::uint32_t condition = 0x54000000;
+      const auto inversion = (branch & 0x7e000000) == condition ? 1U : 0x01000000U;
+      branch = (branch & ~immediate) ^ inversion;
+      constexpr std::uint32_t nop = 0xd503201f;
+      for (unsigned index = 0; index < instruction_bytes; ++index) {
+        bytes_[first + index] =
+            static_cast<std::uint8_t>((branch >> (index * byte_bits)) & byte_mask);
+        bytes_[reference.offset + index] =
+            static_cast<std::uint8_t>((nop >> (index * byte_bits)) & byte_mask);
+      }
+      patch({.offset = first, .bits = conditional_bits}, target);
+      return;
+    }
+  }
   const auto delta =
       static_cast<std::int64_t>(target) - static_cast<std::int64_t>(reference.offset);
   const auto limit = std::int64_t{1} << (reference.bits - 1);
@@ -237,8 +346,9 @@ void Code::patch(const Reference reference, const std::size_t target) {
   }
 }
 
-void Code::reference(Label &label, const unsigned bits) {
-  const Reference pending{.offset = size() - instruction_bytes, .bits = bits};
+void Code::reference(Label &label, const unsigned bits, const bool conditional) {
+  const Reference pending{
+      .offset = size() - instruction_bytes, .bits = bits, .conditional = conditional};
   if (label.bound) {
     patch(pending, label.offset);
   } else {
@@ -261,6 +371,8 @@ void Code::branch(const Condition condition, Label &label) {
 }
 
 void Code::branch_zero(const Reg value, Label &label, const Width width, const bool nonzero) {
+  read_register(value);
+
   constexpr std::uint32_t opcode = 0x34000000;
   constexpr std::uint32_t nonzero_bit = 0x01000000;
   constexpr unsigned bits = 19;
@@ -281,25 +393,33 @@ void Code::branch_far(const Condition condition, Label &label) {
     branch(label);
     return;
   }
-  Label skip;
-  branch(static_cast<Condition>(static_cast<unsigned>(condition) ^ 1U), skip);
-  branch(label);
-  bind(skip);
+  constexpr std::uint32_t inverse = 0x54000040;
+  constexpr std::uint32_t jump = 0x14000000;
+  word(inverse | (static_cast<unsigned>(condition) ^ 1U));
+  word(jump);
+  reference(label, branch_bits, true);
 }
 
 void Code::branch_zero_far(const Reg value, Label &label, const Width width, const bool nonzero) {
-  Label skip;
-  branch_zero(value, skip, width, !nonzero);
-  branch(label);
-  bind(skip);
+  read_register(value);
+  constexpr std::uint32_t inverse = 0x34000040;
+  constexpr std::uint32_t nonzero_bit = 0x01000000;
+  constexpr std::uint32_t jump = 0x14000000;
+  word(wide(width) | inverse | (nonzero ? 0U : nonzero_bit) | reg(value));
+  word(jump);
+  reference(label, branch_bits, true);
 }
 
 void Code::call(const Reg target) {
+  read_register(target);
+
   constexpr std::uint32_t opcode = 0xd63f0000;
   word(opcode | (reg(target) << register_shift));
 }
 
 void Code::jump(const Reg target) {
+  read_register(target);
+
   constexpr std::uint32_t opcode = 0xd61f0000;
   word(opcode | (reg(target) << register_shift));
 }
@@ -310,21 +430,31 @@ void Code::return_() {
 }
 
 void Code::push(const Reg left, const Reg right) {
+  read_register(left);
+  read_register(right);
+
   constexpr std::uint32_t opcode = 0xa9bf03e0;
   word(opcode | (reg(right) << immediate_shift) | reg(left));
 }
 
 void Code::pop(const Reg left, const Reg right) {
+  write_register(left);
+  write_register(right);
+
   constexpr std::uint32_t opcode = 0xa8c103e0;
   word(opcode | (reg(right) << immediate_shift) | reg(left));
 }
 
 void Code::read_flags(const Reg target) {
+  write_register(target);
+
   constexpr std::uint32_t opcode = 0xd53b4200;
   word(opcode | reg(target));
 }
 
 void Code::write_flags(const Reg source) {
+  read_register(source);
+
   constexpr std::uint32_t opcode = 0xd51b4200;
   word(opcode | reg(source));
 }

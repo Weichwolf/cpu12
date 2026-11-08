@@ -6,6 +6,8 @@
 #include "jit/a64/emitter.hpp"
 #include "runtime.hpp"
 
+#include <algorithm>
+#include <cstddef>
 #include <cstdint>
 
 namespace cpu12::detail::a64 {
@@ -128,6 +130,33 @@ void Emitter::bus_access(const DataAccess access) {
   }
 }
 
+bool Emitter::direct_ram(const Instruction &operation, const bool write) {
+  if (operation.addressing != Addressing::direct && operation.addressing != Addressing::extended) {
+    return false;
+  }
+  const auto width = operation.word ? 2U : 1U;
+  const auto regions = memory_.regions();
+  const auto found = std::ranges::find_if(regions, [&](const auto &region) {
+    if (!region.known.empty() || (write && !region.writable) || operation.address < region.first) {
+      return false;
+    }
+    const auto offset = static_cast<std::size_t>(operation.address - region.first);
+    return offset <= region.bytes.size() && width <= region.bytes.size() - offset;
+  });
+  if (found == regions.end()) { return false; }
+  const auto offset = static_cast<std::size_t>(operation.address - found->first);
+  code_.constant(Reg::x11, reinterpret_cast<std::uintptr_t>(found->bytes.data() + offset));
+  const auto access = operation.word ? Access::half : Access::byte;
+  if (write) {
+    if (operation.word) { code_.reverse_half(Reg::x3, Reg::x0); }
+    code_.store(operation.word ? Reg::x3 : Reg::x0, Reg::x11, 0, access);
+  } else {
+    code_.load(Reg::x1, Reg::x11, 0, access);
+    if (operation.word) { code_.reverse_half(Reg::x1, Reg::x1); }
+  }
+  return true;
+}
+
 void Emitter::data_access(const DataAccess access) {
   Label done;
   for (const auto ram : memory_.regions()) {
@@ -143,7 +172,7 @@ void Emitter::data_access(const DataAccess access) {
 void Emitter::operand(const Instruction &operation) {
   if (operation.addressing == Addressing::immediate) {
     code_.constant(Reg::x1, operation.operand);
-  } else {
+  } else if (!direct_ram(operation, false)) {
     address(operation);
     data_access({.word = operation.word});
     commit_index(operation);

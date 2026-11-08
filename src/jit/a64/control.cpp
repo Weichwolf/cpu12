@@ -111,7 +111,7 @@ void Emitter::transfer(const Instruction &operation) {
   if (operation.opcode == prefix) {
     code_.move(Reg::x2, Reg::x0, Width::w32);
     flags(byte_bits);
-    code_.move(ccr, Reg::x4, Width::w32);
+    publish_flags();
   }
 }
 }

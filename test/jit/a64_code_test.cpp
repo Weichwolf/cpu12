@@ -7,6 +7,7 @@
 #include <exception>
 #include <iostream>
 #include <stdexcept>
+#include <vector>
 #if defined(__aarch64__)
 #include "jit/arena.hpp"
 
@@ -62,12 +63,15 @@ void encodings() {
   code.subtract(Reg::x2, Reg::x3, maximum_immediate, Width::x64);
   code.scalar_move(Reg::x2, 16, true);
   code.scalar_move(Reg::x2, 16, false);
-  constexpr std::array<std::uint32_t, 30> expected{
-      0x0b020020, 0x6b020020, 0x0a220020, 0x53185c20, 0x53087c20, 0x13087c20,
-      0x13812020, 0x5ac00420, 0x13001c20, 0x39401420, 0x79400c20, 0xf9400420,
-      0xa9bf53f3, 0xa8c153f3, 0x1a9f17e0, 0x1a820020, 0xd53b4200, 0xd51b4200,
-      0x1b027c20, 0x1ac20c20, 0x1ac20820, 0x1b028c20, 0xd63f0200, 0xd65f03c0,
-      0x33181c55, 0x33003c20, 0x51000420, 0xd13ffc62, 0x1e270050, 0x1e260202};
+  constexpr std::uint16_t radius = 1024;
+  code.compare(Reg::x21, radius);
+  code.compare(Reg::x3, maximum_immediate, Width::x64);
+  constexpr std::array<std::uint32_t, 32> expected{
+      0x0b020020, 0x6b020020, 0x0a220020, 0x53185c20, 0x53087c20, 0x13087c20, 0x13812020,
+      0x5ac00420, 0x13001c20, 0x39401420, 0x79400c20, 0xf9400420, 0xa9bf53f3, 0xa8c153f3,
+      0x1a9f17e0, 0x1a820020, 0xd53b4200, 0xd51b4200, 0x1b027c20, 0x1ac20c20, 0x1ac20820,
+      0x1b028c20, 0xd63f0200, 0xd65f03c0, 0x33181c55, 0x33003c20, 0x51000420, 0xd13ffc62,
+      0x1e270050, 0x1e260202, 0x711002bf, 0xf13ffc7f};
   for (std::size_t index = 0; index < expected.size(); ++index) {
     require(instruction(code, index) == expected[index], "A64 encoding differs from ISA reference");
   }
@@ -93,6 +97,34 @@ void fixups() {
     code.bind(end);
   } catch (const std::logic_error &) { rejected = true; }
   require(rejected, "A64 labels must not be rebound");
+}
+
+void far_fixups() {
+  Code code;
+  Label begin;
+  Label end;
+  code.bind(begin);
+  code.branch_far(Condition::equal, end);
+  code.branch_zero_far(Reg::x0, end, Width::x64, true);
+  code.branch_far(Condition::not_equal, begin);
+  code.bind(end);
+  constexpr std::array<std::uint32_t, 6> expected{
+      0x540000c0, 0xd503201f, 0xb5000080, 0xd503201f, 0x54ffff81, 0xd503201f};
+  for (std::size_t index = 0; index < expected.size(); ++index) {
+    require(instruction(code, index) == expected[index],
+            "Near A64 conditional branch relaxation failed");
+  }
+  Code distant;
+  Label beyond;
+  distant.branch_far(Condition::equal, beyond);
+  constexpr std::size_t padding_bytes = 1U << 20;
+  const std::vector<std::uint8_t> padding(padding_bytes);
+  distant.append(padding);
+  distant.bind(beyond);
+  constexpr std::uint32_t inverse = 0x54000041;
+  constexpr std::uint32_t jump = 0x14040001;
+  require(instruction(distant, 0) == inverse && instruction(distant, 1) == jump,
+          "Distant A64 branches must retain their complete long form");
 }
 
 #if defined(__aarch64__)
@@ -152,6 +184,7 @@ int main() {
   try {
     encodings();
     fixups();
+    far_fixups();
 #if defined(__aarch64__)
     execute();
 #endif

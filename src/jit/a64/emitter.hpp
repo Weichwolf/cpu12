@@ -5,9 +5,11 @@
 #include "instruction.hpp"
 #include "jit/a64/code.hpp"
 #include "jit/block.hpp"
+#include "jit/emission.hpp"
 #include "jit/interrupt.hpp"
 #include "jit/resident.hpp"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <span>
@@ -20,6 +22,17 @@ inline constexpr Reg registers = Reg::x19, context = Reg::x20, d = Reg::x21, x =
 inline constexpr unsigned byte_bits = 8, word_bits = 16, byte_mask = 0xff, word_mask = 0xffff;
 inline constexpr unsigned flag_c = 1, flag_v = 2, flag_z = 4, flag_n = 8, flag_i = 0x10,
                           flag_h = 0x20, flag_x = 0x40, flag_s = 0x80;
+
+inline constexpr std::array region_values{Reg::x7, Reg::x8, Reg::x9, Reg::x10, Reg::x12, Reg::x13};
+
+enum class Admission : std::uint8_t { checked, reserved };
+enum class FrameOrder : std::uint8_t { bus, native };
+enum class ResidentMode : std::uint8_t { complete, bounded };
+enum class RegionExit : std::uint8_t { head, tail, budget };
+
+struct RegionLabels {
+  Label repeat, head, tail, budget, final_tail, terminal, complete;
+};
 
 struct DataAccess {
   bool word = false, write = false, selected = false;
@@ -48,26 +61,43 @@ public:
   [[nodiscard]] std::vector<Byte> instruction(const Instruction &operation);
   [[nodiscard]] std::vector<Byte> block(std::span<const BlockInstruction> operations);
   [[nodiscard]] std::vector<Byte> resident_region(const ResidentRegion &region,
-                                                  std::span<const Byte> general);
+                                                  std::span<const Byte> general,
+                                                  std::span<const BlockInstruction> terminal = {});
   [[nodiscard]] std::vector<Byte> resident(const ResidentPlan &plan,
                                            std::span<const BlockInstruction> suffix,
-                                           std::span<const Byte> general);
+                                           std::span<const Byte> general,
+                                           ResidentMode mode = ResidentMode::complete,
+                                           std::span<const BlockInstruction> terminal = {});
   [[nodiscard]] std::vector<Byte>
   interrupt(InterruptRequest request, InterruptFrame frame, Byte next_pc);
   [[nodiscard]] std::vector<Byte> wake();
 
 private:
   void begin(bool bounded);
+  [[nodiscard]] static Code prologue(std::uint32_t used);
   void publish();
+  void publish_flags();
   [[nodiscard]] std::vector<Byte> finish();
   void location(const Instruction &operation);
   void operation(const Instruction &instruction);
-  void sequence(std::span<const BlockInstruction> operations);
-  void commit(unsigned instructions, Progress elapsed);
+  void sequence(std::span<const BlockInstruction> operations,
+                Admission admission = Admission::checked);
+  void commit(unsigned instructions, Progress elapsed, Admission admission = Admission::checked);
   void clock(unsigned cycles);
   void control_clock(const Instruction &instruction);
   void yield_boundary();
-  void resident_region_exit(const ResidentRegion &region, bool head);
+  void resident_region_cache(const ResidentPlan &plan);
+  [[nodiscard]] Reg resident_word(const ResidentOperation &operation) const;
+  void resident_region_exit(const ResidentRegion &region, RegionExit exit);
+  [[nodiscard]] Reg
+  resident_region_tail(const ResidentRegion &region, RegionLabels &labels, bool counted);
+  [[nodiscard]] Reg resident_compare(const ResidentOperation &operation);
+  void resident_compare_flags(const ResidentOperation &operation, Reg source);
+  void resident_region_grant(const ResidentRegion &region,
+                             std::span<const BlockInstruction> terminal,
+                             Label &general);
+  void resident_bounded_grant(const ResidentPlan &plan, Label &general);
+  void resident_trips(const ResidentPlan &plan);
   void resident_grant(const ResidentPlan &plan,
                       std::span<const BlockInstruction> suffix,
                       Label &general);
@@ -83,7 +113,7 @@ private:
   void resident_flags(const ResidentOperation &operation);
   void resident_value(Reg value, unsigned slot, bool read);
   void resident_memory(Reg value, const ResidentOperation &operation, bool write);
-  void resident_multiply(const ResidentOperation &operation, bool live);
+  void resident_multiply(const ResidentOperation &operation, bool live, bool square = false);
   void resident_operand(const ResidentOperation &operation, Reg value = Reg::x1);
   void advance(unsigned amount);
   void add_word(Reg target, Reg source, int amount);
@@ -94,6 +124,7 @@ private:
   [[nodiscard]] static Reg index_base(IndexBase base);
   void address(const Instruction &operation);
   void commit_index(const Instruction &operation);
+  [[nodiscard]] bool direct_ram(const Instruction &operation, bool write);
   void data_access(DataAccess access);
   void ram_access(Ram ram, DataAccess access, MemoryExit exits);
   void bus_access(DataAccess access);
@@ -115,12 +146,20 @@ private:
   void move(const Instruction &operation);
   void stack_operation(const Instruction &operation);
   void subroutine(const Instruction &operation);
+  [[nodiscard]] Reg
+  frame_value(Reg source, bool word, Byte next_pc, FrameOrder order = FrameOrder::bus);
+  void frame_ram(Byte next_pc);
+  void frame_admission(Byte next_pc, Label &complete);
   void stack_context(Byte next_pc);
   void return_interrupt();
   void wait(const Instruction &operation);
   void math(const Instruction &operation);
   void divide(MathOp operation);
   void state_byte(StateField field, Byte value);
+  EmissionOptions policy_;
+  std::size_t begin_offset_ = 0;
+  std::vector<const Byte *> resident_words_;
+  bool d_word_ = false;
   unsigned resident_gpr_slots_ = 0;
   Reg resident_counter_ = Reg::zr;
   const ResidentOperation *resident_sum_ = nullptr;

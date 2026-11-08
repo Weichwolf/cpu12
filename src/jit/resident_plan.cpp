@@ -519,6 +519,16 @@ void analyze(ResidentPlan &plan) {
 }
 }
 
+bool resident_square_input(const ResidentPlan &plan, const std::size_t index) {
+  if (index + 1 >= plan.operations.size()) { return false; }
+  const auto &load = plan.operations[index];
+  const auto &instruction = load.instruction;
+  return instruction.kind == Kind::load && instruction.word &&
+         instruction.target == WordTarget::y && load.forwarded_word == 3U &&
+         load.forwarded_shift == 0 && load.flags == 0 && !load.branch_flags && !load.fill_value &&
+         plan.operations[index + 1].instruction.kind == Kind::multiply_divide;
+}
+
 unsigned native_word(const Instruction &instruction) {
   constexpr unsigned native_bx = 3;
   constexpr unsigned native_cx = 1;

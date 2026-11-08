@@ -5,6 +5,7 @@
 #include "jit/block.hpp"
 #include "jit/emission.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <span>
@@ -57,6 +58,7 @@ resident_plan(std::span<const BlockInstruction> instructions, const Memory &memo
 resident_loop_plan(std::span<const BlockInstruction> instructions, const Memory &memory);
 [[nodiscard]] std::optional<ResidentRegion>
 resident_region_plan(std::span<const BlockInstruction> instructions, const Memory &memory);
+[[nodiscard]] bool resident_square_input(const ResidentPlan &plan, std::size_t index);
 [[nodiscard]] unsigned written_flags(const Instruction &instruction);
 [[nodiscard]] unsigned written_words(const Instruction &instruction);
 [[nodiscard]] unsigned native_word(const Instruction &instruction);

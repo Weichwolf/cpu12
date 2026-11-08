@@ -7,6 +7,7 @@
 
 namespace cpu12::detail::a64 {
 void Emitter::flags(const unsigned bits, const Flags policy) {
+  if (!policy_.flags_live) { return; }
   mask(Reg::x4, ccr, byte_mask ^ policy.changed);
   if ((policy.changed & flag_n) != 0) {
     code_.extract(Reg::x5, Reg::x2, bits - 1, 1);
@@ -54,7 +55,7 @@ void Emitter::arithmetic(const Instruction &operation) {
         word_target(operation.target) == index_base(operation.indexed.base)) {
       add_word(Reg::x0, Reg::x0, operation.indexed.update);
     }
-    data_access({.word = operation.word, .write = true});
+    if (!direct_ram(operation, true)) { data_access({.word = operation.word, .write = true}); }
     commit_index(operation);
     load_target(Reg::x2, operation);
   } else {
@@ -107,7 +108,7 @@ void Emitter::arithmetic(const Instruction &operation) {
                     (add && !operation.word ? flag_h : 0U),
          .subtract = subtract,
          .arithmetic = add || subtract});
-  code_.move(ccr, Reg::x4, Width::w32);
+  publish_flags();
   if (kind != Kind::store && kind != Kind::compare && kind != Kind::bit_test) {
     store_target(Reg::x2, operation);
   }

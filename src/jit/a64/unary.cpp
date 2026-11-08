@@ -64,6 +64,7 @@ void Emitter::unary_value(const Instruction &operation) {
     case RegisterOp::decimal_adjust:
     default: throw std::logic_error("Not a CPU12 unary operation");
   }
+  if (!policy_.flags_live) { return; }
   const bool inc_dec = unary == RegisterOp::increment || unary == RegisterOp::decrement;
   flags(bits,
         {.changed = flag_n | flag_z | flag_v | (inc_dec ? 0U : flag_c),
@@ -98,7 +99,7 @@ void Emitter::special_register(const Instruction &operation) {
     add_word(target, target, unary == RegisterOp::index_increment ? 1 : -1);
     code_.move(Reg::x2, target, Width::w32);
     flags(word_bits, {.changed = flag_z});
-    code_.move(ccr, Reg::x4, Width::w32);
+    publish_flags();
   } else if (unary == RegisterOp::ccr_and || unary == RegisterOp::ccr_or) {
     code_.constant(Reg::x17,
                    unary == RegisterOp::ccr_or ? operation.operand & (byte_mask ^ flag_x)
@@ -117,7 +118,7 @@ void Emitter::special_register(const Instruction &operation) {
           {.changed = flag_n | flag_z | flag_v | flag_c | (add ? flag_h : 0U),
            .subtract = !add,
            .arithmetic = true});
-    code_.move(ccr, Reg::x4, Width::w32);
+    publish_flags();
     if (unary != RegisterOp::compare_b) { store_target(Reg::x2, {}); }
   }
 }
@@ -130,7 +131,7 @@ void Emitter::unary(const Instruction &operation) {
   load_target(Reg::x0, operation);
   unary_value(operation);
   if (operation.operation != RegisterOp::test) { store_target(Reg::x2, operation); }
-  code_.move(ccr, Reg::x4, Width::w32);
+  publish_flags();
 }
 
 void Emitter::decimal_adjust() {

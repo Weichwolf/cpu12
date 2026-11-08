@@ -35,7 +35,7 @@ void Emitter::memory_modify(const Instruction &operation) {
     unary_value(operation);
   }
   if (operation.kind == Kind::memory_unary && operation.operation == RegisterOp::test) {
-    code_.move(ccr, Reg::x4, Width::w32);
+    publish_flags();
   } else {
     code_.store(Reg::x2, Reg::sp, 8);
     code_.store(Reg::x4, Reg::sp, 16);

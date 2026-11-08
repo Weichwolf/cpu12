@@ -7,6 +7,7 @@
 #include "instruction.hpp"
 #include "jit/a64/code.hpp"
 #include "jit/a64/emitter.hpp"
+#include "jit/block_plan.hpp"
 #include "jit/resident.hpp"
 #include "runtime.hpp"
 
@@ -60,12 +61,14 @@ void Emitter::clock(const unsigned cycles) {
   code_.store(Reg::x9, context, offset, Access::doubleword);
 }
 
-void Emitter::commit(const unsigned instructions, const Progress elapsed) {
+void Emitter::commit(const unsigned instructions,
+                     const Progress elapsed,
+                     const Admission admission) {
   if (instructions == 0) { return; }
   clock(static_cast<unsigned>(elapsed.estimated_cycles));
   code_.constant(Reg::x17, instructions);
   code_.alu(Alu::add, retired, retired, Reg::x17);
-  code_.alu(Alu::subtract, remaining, remaining, Reg::x17);
+  if (admission == Admission::checked) { code_.alu(Alu::subtract, remaining, remaining, Reg::x17); }
 }
 
 void Emitter::control_clock(const Instruction &instruction) {
@@ -100,46 +103,60 @@ void Emitter::yield_boundary() {
   code_.bind(proceed);
 }
 
-void Emitter::sequence(const std::span<const BlockInstruction> operations) {
-  unsigned required = 0;
-  for (const auto &item : operations) { required += instruction_timing(item.instruction).base; }
-  required += instruction_timing(operations.back().instruction).taken_extra;
-  code_.load(Reg::x9, context, offsetof(NativeContext, cycle_deadline), Access::doubleword);
-  constexpr auto offset = offsetof(NativeContext, progress) + offsetof(Progress, estimated_cycles);
-  code_.load(Reg::x10, context, offset, Access::doubleword);
-  code_.compare(Reg::x9, Reg::x10, Width::x64);
-  code_.branch_far(Condition::no_carry, done_);
-  code_.alu(Alu::subtract, Reg::x9, Reg::x9, Reg::x10, Width::x64);
-  code_.constant(Reg::x17, required);
-  code_.compare(Reg::x9, Reg::x17, Width::x64);
-  code_.branch_far(Condition::no_carry, done_);
-  code_.constant(Reg::x17, operations.size());
-  code_.compare(remaining, Reg::x17);
-  code_.branch_far(Condition::no_carry, done_);
+void Emitter::sequence(const std::span<const BlockInstruction> operations,
+                       const Admission admission) {
+  if (admission == Admission::checked) {
+    unsigned required = 0;
+    for (const auto &item : operations) { required += instruction_timing(item.instruction).base; }
+    required += instruction_timing(operations.back().instruction).taken_extra;
+    code_.load(Reg::x9, context, offsetof(NativeContext, cycle_deadline), Access::doubleword);
+    constexpr auto offset =
+        offsetof(NativeContext, progress) + offsetof(Progress, estimated_cycles);
+    code_.load(Reg::x10, context, offset, Access::doubleword);
+    code_.compare(Reg::x9, Reg::x10, Width::x64);
+    code_.branch_far(Condition::no_carry, done_);
+    code_.alu(Alu::subtract, Reg::x9, Reg::x9, Reg::x10, Width::x64);
+    code_.constant(Reg::x17, required);
+    code_.compare(Reg::x9, Reg::x17, Width::x64);
+    code_.branch_far(Condition::no_carry, done_);
+    code_.constant(Reg::x17, operations.size());
+    code_.compare(remaining, Reg::x17);
+    code_.branch_far(Condition::no_carry, done_);
+  }
   unsigned count = 0;
   unsigned cycles = 0;
+  const auto options = emission_options(operations, memory_);
+  std::size_t index = 0;
+  bool pending_pc = false;
   for (const auto &item : operations) {
+    policy_ = options[index++];
+    const bool indexed_pc = item.instruction.addressing == Addressing::indexed &&
+                            item.instruction.indexed.base == IndexBase::pc;
+    if (pending_pc && (policy_.advance_pc || indexed_pc)) { code_.constant(pc, item.pc); }
     const bool owner = may_access_owner(item.instruction, memory_);
     const bool fault_boundary = owner || (item.instruction.kind == Kind::register_operation &&
                                           item.instruction.operation == RegisterOp::decimal_adjust);
     if (fault_boundary) {
-      commit(count, {.estimated_cycles = cycles});
+      commit(count, {.estimated_cycles = cycles}, admission);
       count = 0;
       cycles = 0;
       location(item.instruction);
     }
     operation(item.instruction);
+    pending_pc = !policy_.advance_pc;
     ++count;
     cycles += instruction_timing(item.instruction).base;
     if (owner) {
-      commit(count, {.estimated_cycles = cycles});
+      commit(count, {.estimated_cycles = cycles}, admission);
       control_clock(item.instruction);
       count = 0;
       cycles = 0;
       yield_boundary();
     }
   }
-  commit(count, {.estimated_cycles = cycles});
+  if (pending_pc) { code_.constant(pc, following(operations.back())); }
+  policy_ = {};
+  commit(count, {.estimated_cycles = cycles}, admission);
   if (count != 0) { control_clock(operations.back().instruction); }
   const auto &last = operations.back();
   const bool boundary = last.instruction.kind == Kind::wait || last.instruction.kind == Kind::stop;
@@ -181,7 +198,13 @@ std::vector<Byte> Emitter::block(const std::span<const BlockInstruction> operati
   }
   auto general = finish();
   if (const auto region = resident_region_plan(operations, memory_)) {
-    return Emitter(memory_).resident_region(*region, general);
+    const auto terminal =
+        resident_terminal(memory_,
+                          static_cast<Address>(region->tail.operations.back().pc +
+                                               region->tail.operations.back().instruction.length));
+    auto bounded = Emitter(memory_).resident_region(*region, general);
+    if (terminal.empty()) { return bounded; }
+    return Emitter(memory_).resident_region(*region, bounded, terminal);
   }
   auto prefix = operations;
   const auto kind = prefix.back().instruction.kind;
@@ -190,8 +213,18 @@ std::vector<Byte> Emitter::block(const std::span<const BlockInstruction> operati
   }
   auto plan = resident_loop_plan(prefix, memory_);
   if (!plan) { plan = resident_plan(prefix, memory_); }
+  if (!plan) { plan = resident_prefix_plan(operations, memory_); }
   if (plan && (tail.empty() || plan->loop)) {
-    return Emitter(memory_).resident(*plan, operations.subspan(prefix.size()), general);
+    if (!plan->loop) {
+      return Emitter(memory_).resident(*plan, operations.subspan(plan->operations.size()), general);
+    }
+    const auto &end = plan->operations.back();
+    const auto terminal =
+        resident_terminal(memory_, static_cast<Address>(end.pc + end.instruction.length));
+    const auto bounded = Emitter(memory_).resident(*plan, {}, general, ResidentMode::bounded);
+    auto complete = Emitter(memory_).resident(*plan, {}, bounded);
+    if (terminal.empty()) { return complete; }
+    return Emitter(memory_).resident(*plan, {}, complete, ResidentMode::complete, terminal);
   }
   return general;
 }

@@ -540,16 +540,6 @@ struct BodyOptions {
   const ResidentOperation *sum = nullptr;
 };
 
-bool square_input(const ResidentPlan &plan, const std::size_t index) {
-  if (index + 1 >= plan.operations.size()) { return false; }
-  const auto &load = plan.operations[index];
-  const auto &instruction = load.instruction;
-  return instruction.kind == Kind::load && instruction.word &&
-         instruction.target == WordTarget::y && load.forwarded_word == word_registers[0] &&
-         load.forwarded_shift == 0 && load.flags == 0 && !load.branch_flags && !load.fill_value &&
-         plan.operations[index + 1].instruction.kind == Kind::multiply_divide;
-}
-
 bool needs_flags(const ResidentOperation &operation) {
   return (!operation.deferred && operation.flags != 0) || operation.branch_flags;
 }
@@ -562,7 +552,7 @@ void body(Code &code,
   for (std::size_t index = 0; index < plan.operations.size(); ++index) {
     const auto &operation = plan.operations[index];
     const auto &instruction = operation.instruction;
-    if (square_input(plan, index)) {
+    if (resident_square_input(plan, index)) {
       multiply(code, plan.operations[++index], state, true);
       continue;
     }

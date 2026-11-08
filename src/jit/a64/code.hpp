@@ -78,6 +78,7 @@ enum class Shift : std::uint8_t { left, right, arithmetic, rotate };
 struct Reference {
   std::size_t offset;
   unsigned bits;
+  bool conditional = false;
 };
 
 struct Label {
@@ -92,6 +93,11 @@ public:
 
   [[nodiscard]] std::size_t size() const noexcept { return bytes_.size(); }
 
+  [[nodiscard]] std::uint32_t used_registers() const noexcept { return read_ | written_; }
+
+  [[nodiscard]] std::uint32_t written_registers() const noexcept { return written_; }
+
+  void splice(std::size_t offset, std::span<const std::uint8_t> bytes);
   void append(std::span<const std::uint8_t> bytes);
   void constant(Reg target, std::uint64_t value, Width width = Width::x64);
   void move(Reg target, Reg source, Width width = Width::x64);
@@ -114,6 +120,7 @@ public:
   void divide(Reg target, Reg left, Reg right, bool sign, Width width = Width::w32);
   void multiply_subtract(Reg target, Reg left, Reg right, Reg minuend, Width width = Width::w32);
   void compare(Reg left, Reg right, Width width = Width::w32);
+  void compare(Reg source, std::uint16_t value, Width width = Width::w32);
   void select(Reg target, Reg left, Reg right, Condition condition, Width width = Width::w32);
   void set(Reg target, Condition condition);
   void branch(Label &label);
@@ -131,10 +138,13 @@ public:
   void write_flags(Reg source);
 
 private:
+  void read_register(Reg value);
+  void write_register(Reg value);
   void word(std::uint32_t value);
-  void reference(Label &label, unsigned bits);
+  void reference(Label &label, unsigned bits, bool conditional = false);
   void patch(Reference reference, std::size_t target);
   void memory(Reg value, Reg base, std::size_t offset, Access access, bool read);
+  std::uint32_t read_ = 0, written_ = 0;
   std::vector<std::uint8_t> bytes_;
 };
 }

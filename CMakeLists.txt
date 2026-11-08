@@ -54,6 +54,7 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(arm64|aarch64)$")
     src/jit/a64/block.cpp
     src/jit/a64/resident.cpp
     src/jit/a64/region.cpp
+    src/jit/a64/grant.cpp
     src/jit/resident_plan.cpp
     src/jit/a64/memory.cpp
     src/jit/a64/arithmetic.cpp
@@ -77,6 +78,7 @@ add_library(cpu12_core STATIC
   src/move.cpp
   src/jit.cpp
   src/jit/block_parse.cpp
+  src/jit/block_plan.cpp
   src/jit/arena.cpp
   src/jit/a64/code.cpp
   src/runtime.cpp
@@ -109,6 +111,13 @@ if(BUILD_TESTING AND CPU12_BUILD_TESTING)
   target_link_libraries(cpu12-region-extent-test PRIVATE cpu12::core)
   add_test(NAME complete-native-region-extent COMMAND cpu12-region-extent-test)
   set_tests_properties(complete-native-region-extent PROPERTIES TIMEOUT 30)
+  if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(arm64|aarch64)$")
+    add_executable(cpu12-a64-abi-test test/jit/a64_abi_test.cpp)
+    target_include_directories(cpu12-a64-abi-test PRIVATE src)
+    target_link_libraries(cpu12-a64-abi-test PRIVATE cpu12::core)
+    add_test(NAME a64-entry-abi COMMAND cpu12-a64-abi-test)
+    set_tests_properties(a64-entry-abi PROPERTIES TIMEOUT 30)
+  endif()
   add_executable(cpu12-a64-code-test test/jit/a64_code_test.cpp)
   target_include_directories(cpu12-a64-code-test PRIVATE src)
   target_link_libraries(cpu12-a64-code-test PRIVATE cpu12::core)
