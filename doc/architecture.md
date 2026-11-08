@@ -1,188 +1,45 @@
 # Target JIT architecture
 
-This is the design target, not a statement of implementation completeness.
-The same execution architecture applies to cpu12 and dsp56300; their ISA lowering,
-register allocation and memory semantics differ. Prioritize instrument integration;
-fix and optimize the responsible core when a connected workload exposes a need.
+Shared design for cpu12 and dsp56300; this is a target, not an implementation claim.
 
 ```text
-consumer: borrowed memory, peripherals, events and virtual time
-                       |
-                 Core(Memory, Io*)
-                       |
-       cold: decode -> control-flow graph -> semantic IR
-                       -> liveness -> allocation -> native emission
-                       -> immutable executable arena
-                       |
-       warm: native entry -> linked native regions -> native loop
-                       |                           |
-                  direct memory              precise cold exit
-                                                   |
-                                      I/O / event / sleep / fault
+consumer memory + I/O -> Core -> retained native regions and loops
+                                  |                     |
+                             direct RAM          real event/I/O/fault
 ```
 
-## Public contract and ownership
+Core owns complete readable state; consumers own memory and device scheduling.
+Only core.hpp and memory.hpp are public. One owner executes each core; different
+cores may run independently. No board model, universal core hierarchy, checkpoint
+API, effect-ticket API or production interpreter belongs in the library.
 
-The public surface consists of core.hpp and memory.hpp. ISA encodings live in
-test/support/isa.hpp; production decoding/transfer helpers stay private. Core owns
-all architectural state and translations. Optional read-only state inspection is
-available at execution-owner boundaries; it does not copy state on every step.
-There are no checkpoint, restore, pipeline-ticket or backend-selection APIs.
-Production execution is JIT-only. Unsupported operations fail visibly with PC,
-operation, address and context; an interpreter or instruction helper is not a
-silent fallback. Real peripheral callbacks are distinct from ISA helpers.
+Compile from actual code entries along natural control flow. Retain immutable
+translations for the core lifetime and link successors natively. No instruction
+count caps, budget-specific recompilation, continuous hashing or cache eviction.
+Changed executable identities require an explicit owner transition; unrelated
+programs use a fresh core. Consider eager reachable-code preparation or persistent
+caching only when measured first-use latency justifies it.
 
-One thread owns execution of a Core. The consumer owns memory lifetimes,
-peripheral state, shared-buffer synchronization, virtual clocks and pacing.
-Neither core contains Blofeld protocols, an audio scheduler or physical wiring.
-The host emitter is a private implementation boundary: x86 today, other hosts
-later. Do not add abstractions to an executed instruction merely for symmetry.
+Keep live values in GPR/SIMD registers across instructions and backedges. Preserve
+old operands, aliases, flags and ordered effects. Eliminate dead work and hoist
+bounds/permission checks only with valid proofs. Exact faults, interrupts and
+owner observations publish complete architectural state. Actual I/O calls may
+continue natively; generic ISA helper execution remains an explicit coverage gap.
 
-## Cold path: compile control flow once
+Use compact executable arenas, deliberate layout and cold failure paths. Avoid
+per-instruction dispatch, state copies, allocations and telemetry. Translation
+boundaries do not depend on execution grants; event handling retains precise
+observable ISA prefixes. Consumer buffering and pacing do not change guest time.
 
-Decode from the actual entry PC into a compact semantic representation. Basic
-blocks end at architectural control-flow boundaries. Combine connected blocks
-into regions with native backedges; a function may span many basic blocks.
-An indirect branch, unavailable code, I/O or an event boundary may require an exit.
-No fixed 64/256-instruction cap, execution-budget-sized compilation or arbitrary
-function-size promise determines translation boundaries. At load time, eagerly
-walk statically reachable paths from consumer-supplied code roots such as reset
-and interrupt entries, and link known direct targets before execution. Code and
-data may share an image; never linearly decode every byte as executable code.
-Unknown indirect targets are resolved and translated on first use, then retained.
-The same compiler serves eager preparation and runtime discovery; neither path
-introduces a second execution engine or claims to know all indirect destinations.
+Measure realistic continuous workloads against matched optimized host ASM with
+identical inputs, relevant semantics and independently checked results. Report
+cold translation, warm execution, API/boundary costs, code size and each slow case.
+>=70% warm host-ASM throughput is a reference, not an integration gate. Keep
+hardware-factor assumptions explicit. SIMD is optional; add complexity only for
+correctness or measured speed. Test ISA/flags, RAM/aliases, control, IRQ/wait,
+Mandelbrot/FFT and application-appropriate streams. Benchmarks live in test/bench/.
 
-The IR represents register reads/writes, exact arithmetic, flag effects, memory
-effects and control flow. Analyze liveness across loop backedges to a fixed point.
-Fold constants and remove dead work only when all observable ISA effects survive.
-This is general compilation, not recognition or replacement of benchmark programs.
+Preserve A/B/D overlaps, big-endian transfers, flags, stack, reset/interrupt
+entry, wait states and nominal ISA-cycle progress. Device clocks remain external.
 
-Finish code and relocations before publishing an entry. Retain executable code
-for the entire Core lifetime in compact shared arenas, not a page per instruction.
-Known successors use native branches. Unresolved or indirect successors use a
-cold resolver and retained target slots; never return through a C++ dispatcher
-for every instruction or loop iteration. Mutable link data is separate from
-immutable machine code. Preserve the register convention across linked regions.
-Place connected hot regions together and move fault/diagnostic paths out of line.
-Align deliberately; measure code expansion and instruction-cache behavior.
-
-## Warm path: keep values in host registers
-
-Load live architectural values at native entry and keep them in allocated host
-registers across instructions and backedges. Spill only under actual register
-pressure or at an observable boundary. Do not reload/store the entire register
-file, advance a memory-resident PC, or invoke a generic helper after every opcode.
-The current guest PC is normally compile-time metadata, materialized when needed.
-
-Compute only flags with a future use before their next overwrite. Preserve sticky
-flags and flags visible through explicit status reads, interrupts, I/O callbacks
-or exits. Host flags are usable only where their semantics match. Keep a compact
-pending expression when that is cheaper; materialize the exact guest status at
-observation points. Flag elimination must include exceptional and cold exits.
-
-ISA-specific native lowering handles widths, carries, saturation, wrapping and
-address updates. Memory and parallel operations retain their required ordering.
-No counters, tracing, instruction hashes or heap allocation belong in the default
-hot path. Architectural time progress is required state, not telemetry. Optional
-telemetry selects a separate instrumented path at a safe runtime boundary.
-
-Before implementing a lowering, trace a small complete loop as a register table:
-list values live at entry, at every instruction and across the backedge. Separate
-architectural register names from value lifetimes; a dead value releases its host
-register even if the guest register remains named. At joins, reconcile locations
-on incoming edges rather than spilling the entire state. Trace cold exits too.
-
-For a signed fixed-point multiplication loop, keep operands, full product,
-accumulator and address induction values in host registers. Account explicitly
-for overlapping A/B/D views, product halves, big-endian stores and flags that
-survive the next arithmetic instruction. A scratch endian conversion must not
-rotate a still-live guest value. Reuse a RAM value only while intervening aliases
-cannot change it, and retain observable stores. Compare this hand-planned native
-sequence with emitted assembly before tuning instruction encodings.
-
-For DSP parallel arithmetic and moves, distinguish old inputs from committed
-outputs: a multiply must consume the pre-move operands. Snapshot only values that
-would otherwise be overwritten. Packed SIMD storage is useful only when its
-extract/insert/shuffle cost beats keeping active scalar values in general
-registers; register capacity alone does not establish a faster allocation.
-
-## Memory and code identity
-
-Validate borrowed mappings on binding: backing, bounds, permissions, aliases and
-lifetimes. Lower proven RAM accesses to native loads/stores. Eliminate a guard
-only if its premise remains true throughout the execution region. Dynamic
-knownness, permissions or ambiguous addresses retain necessary checks. Peripheral
-holes and unknown accesses take explicit cold paths, never fabricated RAM values.
-Cross-region accesses preserve word ordering and actual callback semantics.
-
-Normal execution assumes a stable program identity and avoids continuous code
-hashing. A changed bank or explicitly programmed region receives a new identity
-at a safe boundary; old native code stays retained but is no longer selected for
-that identity. A genuine RAM-resident updater keeps its architectural state.
-Loading an unrelated program creates a new Core. A writable-code contract must
-explicitly handle modification or refuse it; silently executing stale code is
-incorrect. Core code contains no firmware-update protocol.
-
-## Precise exits without a per-instruction dispatcher
-
-Annotate potential exits with guest PC, live-value locations and completed effects.
-Publish canonical architectural state when returning to the owner or invoking a
-callback that observes it. Keep fault exits cold. Preserve completed external
-writes; a failed callback cannot be replayed as an execution-yield mechanism.
-Do not use one universal rollback rule for ISA operations with different effects.
-
-Execution is bounded by the next relevant event, not by a compilation cap.
-Use static cycle progress and region/loop guards where valid. A deadline inside a
-region takes an exact instruction-boundary path within the retained translation;
-it does not create a new budget-specific translation. Data-dependent timing and
-I/O require the additional boundaries their semantics demand. An interrupt poll
-at a loop backedge is sufficient only if its latency contract permits it.
-Exact observation can cost work; choose the least expensive correct placement
-rather than promising zero checks for arbitrary asynchronous behavior.
-
-The consumer defines offline lookahead and live buffering. Host speed never
-changes guest clock rates. Sleep/STOP returns or parks execution until a real
-wake condition; it does not busy-loop or invent an interrupt.
-
-## Implementation and acceptance order
-
-1. Join native instructions into retained control-flow regions and native loops.
-2. Keep registers resident; eliminate dead flags, PC stores and redundant loads.
-3. Specialize proven memory paths; link regions and minimize boundary work.
-4. Measure each bottleneck before adding SIMD or further compiler machinery.
-
-Use short optimized experiments and focused independent semantic checks while
-speed is low; broaden validation as performance improves. Keep strict compilation
-and check definitions intact. Benchmarks live outside the core and use named ISA
-encodings. Compare identical inputs, relevant guest semantics and independently
-verified results against optimized handwritten host ASM. Report cold compilation,
-warm native-entry throughput and full Core.run throughput separately. Include
-code size and boundary costs; do not disguise slow fixtures with an average.
-
-Retain at least 70% of matched host-ASM throughput on representative warm
-fixtures as an optimization reference, not an integration gate. Complete the
-instrument and use connected firmware failures and measured whole-device
-bottlenecks to select targeted core work. Keep broad ALU, flags, memory, branch,
-Mandelbrot/FFT and instrument-workload coverage; report every shortfall. Scalar
-and SIMD lowering are options selected by measured benefit. Establish at least
-4x sustained offline instrument throughput under representative high load while
-preserving correct guest time and bounded live latency. No current performance
-or completion is implied.
-
-## CPU12 lowering
-
-Use scalar host registers for the small CPU12 register set; SIMD needs measured
-benefit. Preserve overlapping A/B/D views without repeated memory round trips.
-Arithmetic uses the actual 8/16-bit semantics, including H/N/Z/V/C dependencies.
-Native stack, calls, returns and conditional branches preserve wrap and ordering.
-Memory is byte addressed with big-endian words and a 16-bit address space.
-
-Interrupt masks, delayed admission, SWI, RTI, WAI and STOP are architectural state,
-not dispatcher conveniences. Resolve their precise boundaries before chaining.
-For the current diagnostic I/O-rejection contract, interrupt entry publishes
-registers only after vector/frame success; accepted external writes remain real
-on failure. Latch that failure so subsequent calls cannot replay the accesses.
-This software contract does not claim hardware SP visibility during a bus cycle.
-
-Primary references are listed in reference-manifest.json.
+Primary references: reference-manifest.json.

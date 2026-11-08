@@ -1,63 +1,33 @@
 # Objective
 
-Build a complete, independent, high-performance CPU12/HC12 emulator core with a
-native JIT, analogous to the independent dsp56300 library. Execute documented
-instructions, flags, addressing, memory transfers, reset, stack/interrupt/wait
-behavior and complete readable Core-owned state. Keep CPU semantics separate from
-board clocks,
-peripheral wiring and application firmware. Make memory/event budgets and code
-invalidation explicit, and preserve precise side effects and visible faults.
+Build a complete, independent, high-performance CPU12/HC12 native JIT library for
+arbitrary consumer programs. Preserve the entire implemented ISA and complete
+architectural state, flags, addressing, memory ordering, reset, IRQ and wait
+semantics; complete unsupported legal forms with independent tests. Unsupported
+host/ISA/access cases fail explicitly with useful context.
 
-Native execution must ultimately cover every supported legal instruction and
-addressing form. Do not disguise interpreter/helper gaps as completed JIT work.
-Keep unsupported host/ISA cases explicit. Specializations need actual guards and
-correct side exits. Preserve instrument-visible behavior and musical timing in
-the integrating Blofeld Desktop SL emulator: MIDI <-> emulator -> audio.
+Expose the same minimal Core/Memory/Io shape as the other core, through core.hpp
+and memory.hpp. Core owns state; consumers own memory and supply device I/O,
+clocks, scheduling and synchronization. No application firmware, foreign core,
+checkpoint interface or public backend selector. Production execution is JIT-only;
+x86-64 and ARM64 lower the same semantics. See doc/architecture.md.
 
-Use C++23/LLVM19, CMake/Ninja, strict diagnostics and independent directed tests.
-Run affected core correctness tests, including independent expectations and
-appropriate sanitizer coverage, before publishing source changes. Core tests
-remain active before the integrating instrument reaches real time. Keep strict
-compilation, formatting and static analysis; never weaken checks.
-Keep manufacturer assets and application firmware out of source and tests.
-Commit/push verified increments to configured origin/main in this public
-repository. Passing an initial captured-instruction subset is not completion.
+Prioritize connected instrument integration and fix generic defects here.
+Keep native registers live, RAM direct and translations immutable and retained.
+Use natural control-flow regions without instruction-count translation caps.
+Do not hide ISA helper gaps, fabricate retirement or discard supported operations.
 
-Keep public integration consistent with dsp56300: explicit typed Memory views,
-a Core(Memory, Io*) setup and named captured-instruction execution.
-Support common storage ownership with architecture-native units and explicit
-aliases, without a virtual memory manager in direct-RAM execution. Emulation is
-single-owner; separate host MIDI/audio queues do not change virtual clocks.
+Provide reproducible independently authored fixtures using test/support/isa.hpp;
+organize test/isa, test/core, test/jit, test/bench and test/support consistently.
+The bench target reports cold/warm latency, packet deadlines, guest instructions
+and base cycles, code size, and JIT/host throughput against matched handwritten
+ASM with independently checked complete results. Keep hardware-factor assumptions
+explicit; report every slow scenario and first-use miss, not averages alone.
+>=70% realistic warm host-ASM throughput is a reference, not an integration gate.
+Optimize continuous meaningful workloads across domains; SIMD is optional.
 
-Keep the outward public API aligned with dsp56300 and as small as necessary.
-Core owns state, exposed read-only when requested; normal consumers do not manage
-it. Production execution is JIT-only. Future x86/SSE/AVX and ARM/NEON emitters
-implement the same host concept. Preserve the general ISA beyond Blofeld needs.
-
-Prioritize the complete Blofeld instrument and connected firmware execution.
-Fix and optimize CPU12 or DSP56300 when integration exposes a generic core defect
-or a measured throughput or latency bottleneck. Keep the cores independent and
-generally usable; manufacturer firmware remains outside their source and tests.
-
-Retain >=70% of matched optimized host-ASM throughput on representative warm
-workloads as an optimization reference, not a prerequisite for emulator
-integration. Instrument correctness, measured whole-device throughput and live
-latency determine application progress. Compare identical inputs and relevant
-ISA semantics with independently verified results; report every slow scenario
-and first-use deadline miss. Tiny microfixtures and averages cannot establish
-sustained performance. Use scalar or SIMD lowering according to measured benefit;
-SIMD is optional. No current performance or completion is implied.
-
-Provide a `bench` command under the tests that reports assumed hardware throughput
-(target >=1x) and warm JIT/host throughput, with clock/cost assumptions and the
-comparison scope. Cold runtime compilation must also fit actual processing packet
-deadlines: report the worst cold and warm packets, first-use translations and
-missed deadlines separately from average throughput. A cold microkernel time alone
-is not a processing deadline. Add a persistent cache only if measurements justify
-it as necessary to avoid first-use underruns.
-
-Use focused validation during slow-core iteration and broaden it as performance
-improves. Keep code small, with complexity justified by correctness or measured
-speed. Complete Blofeld integration must sustain >=4x offline real-time
-throughput on this host under representative high load while retaining correct
-guest time and bounded live latency.
+Use strict builds and affected independent correctness/sanitizer tests before
+publishing code. Tests remain required while Blofeld is below real time.
+Manufacturer assets and application program extracts stay outside source/tests.
+The Blofeld consumer requires >=4x sustainable offline instrument throughput and
+bounded live latency; isolated core benchmarks do not establish that result.

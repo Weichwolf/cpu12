@@ -1,38 +1,23 @@
 # cpu12
 
-Independent CPU12/HC12 emulator with native x86-64 and ARM64 JITs.
-
-C++23 · Linux x86-64 · macOS ARM64 · GPL-3.0-only
+Independent CPU12/HC12 native JIT. C++23, Linux x86-64,
+macOS ARM64, GPL-3.0-only. See OBJECTIVE.md for complete-ISA acceptance.
 
 ## Build
 
-Requires LLVM 19, CMake, Ninja, clang-format-19 and clang-tidy-19.
+LLVM 19, CMake, Ninja, clang-format-19 and clang-tidy-19 are required.
 
 ```sh
 cmake --preset release
 cmake --build --preset release
 ctest --preset release
+cmake --build --preset release --target bench
 ```
 
-On macOS, install the matching tools with `brew install llvm@19 ninja ccache`.
-Presets discover the Homebrew LLVM 19 installation without replacing system tools.
-Both hosts use native code, direct mapped memory and retained immutable blocks.
-I/O uses owner callbacks. Unsupported ISA forms report explicit faults.
-
-The `strict` preset enables ASan/UBSan. On macOS 26.4 and later, LLVM 19's
-original sanitizer runtime deadlocks during dyld initialization. Build the same
-19.1.7 runtime with upstream fixes for [allocation-free shadow checks](https://github.com/llvm/llvm-project/commit/6a89439423351be2d63e13e191acd4cb33e0aaff)
-and [dyld lookup](https://github.com/llvm/llvm-project/commit/2e7d07a33725a82ecfc514e27f047ece3ff13d4c):
-
-```sh
-export LLVM19_RESOURCE_DIR="$(python3 tools/darwin_runtime.py)"
-cmake --preset strict
-cmake --build --preset strict
-```
-
-This keeps the LLVM 19 compiler and headers, verifies source identities and retains
-all sanitizers. Sources and runtime artifacts remain under ignored `build/local/`.
-A second core checkout can use the same `LLVM19_RESOURCE_DIR`.
+`strict` enables ASan/UBSan; `thread` selects separate TSan. Ccache is used when
+available. On macOS use `brew install llvm@19 ninja ccache`. When required by the
+macOS version, set `LLVM19_RESOURCE_DIR` from `python3 tools/darwin_runtime.py`
+before configuring strict; the tool prepares the patched LLVM 19 sanitizer runtime.
 
 ## Use
 
@@ -63,43 +48,15 @@ int main() {
 }
 ```
 
-Memory is borrowed and must outlive the core. One execution thread owns each
-core. The example executes NOP and STOP; a consumer supplies its own program and
-optional I/O. `state()` provides an optional live, read-only view of Core-owned
-state on that execution thread. Unsupported instructions or modes report explicit faults.
+Memory belongs to the consumer and must outlive Core. One thread owns execution;
+state inspection is optional. Use Io for device effects and run_until() for an
+absolute local cycle deadline. Core does not schedule an instrument or its audio.
+Unsupported operations fail explicitly.
 
-`Memory::mapped` accepts disjoint `Ram` grants with optional live byte knownness
-and write permission. Core copies the descriptors; their backing storage must
-remain alive for its lifetime. Initialized read-only program grants enable
-retained native blocks and backedges without repeated instruction fetches.
-Writable or dynamically known program bytes retain exact captured-instruction
-execution. Read-only program contents stay immutable for their binding identity.
-`set_memory` selects bindings between runs while
-preserving CPU state and retaining previous native translations. Changed executable
-contents require a new grant `identity` at that transition. Boundary words
-may require an owner word callback.
-
-`progress()` reports completed nominal internal-bus cycles, including reset and
-interrupt entries. `run_until()` uses an absolute nominal-cycle horizon and may
-finish the final atomic instruction beyond it. It returns at interrupt-admission
-changes; I/O can request return after its instruction with `request_yield()`.
-External waits, clock routing and idle time belong to the consumer.
-
-## Benchmarks
-
-```sh
-cmake --build --preset release --target bench
-```
-
-The benchmarks compare native JIT execution with handwritten host ASM and check
-registers and memory against independent expectations. They report cold translation,
-warm throughput, packet deadline misses and `jit_to_host_percent`
-(`100 * host_time / jit_time`). The conservative `hardware_factor` assumes a
-30 MHz CPU retiring one instruction per cycle; it is not a Blofeld timing model.
-
-ALU, RAM, control flow, checksum, Mandelbrot and FFT comparisons support both
-hosts. Continuous checksum uses `run_until`; continuous FFT uses
-instruction-counted packets. Select scenarios with the CMake
-cache variable `CPU12_BENCH_FILTER`. Fixture definitions are in [test/bench](test/bench).
+Benchmarks check independent results and report cold/warm timing and matched
+JIT/host ratios (`100 * host_time / jit_time`). All scenarios have x86-64 and
+ARM64 host references. Hardware factors use stated models, not measured device
+speed. Select cases with CPU12_BENCH_FILTER; fixtures are in test/bench/.
+See doc/architecture.md and test/ for details.
 
 [License](LICENSE)
