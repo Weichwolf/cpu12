@@ -131,6 +131,7 @@ void native(Image &ram, const Case point, const Registers expected) {
 }
 
 template <class Operation> double median(Operation operation) {
+  test::bench::warm_up(operation);
   constexpr unsigned trials = 9;
   constexpr unsigned repetitions = 32768;
   std::array<double, trials> times{};

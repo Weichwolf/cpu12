@@ -169,6 +169,7 @@ void validation() {
 }
 
 template <class Operation> double median(Operation operation) {
+  test::bench::warm_up(operation);
   constexpr unsigned trials = 9;
   constexpr unsigned repetitions = 32768;
   std::array<double, trials> samples{};

@@ -96,6 +96,15 @@ Results exercise(Guest &guest, Host &host, const Scenario &scenario) {
   guest.verify();
   measure(host, scenario);
   host.verify();
+  bench::warm_up([&] {
+    guest.packet();
+    host.packet();
+  });
+  guest.verify();
+  host.verify();
+  if (guest.compiled() != result.compiled) {
+    throw std::runtime_error("Warm-up continuous execution compiled another entry");
+  }
   const auto before = guest.retired();
   for (unsigned trial = 0; trial < trials; ++trial) {
     const auto run_guest = [&] {
@@ -152,7 +161,8 @@ inline bool report(const Results &result, const Scenario &scenario) {
             << " packets_per_second=" << scenario.packets_per_second
             << " measured_input_s=1 guest_instructions=" << retired << " trials=" << trials
             << " full_state_memory=PASS warm_compiled_entries=0 cold_compiled_entries="
-            << result.compiled << '\n'
+            << result.compiled << " warmup_ms=" << bench::warmup_duration.count()
+            << " warmup_scope=untimed-continuous-guest-and-host-after-cold\n"
             << "  reference_model=ideal-one-instruction-per-cycle reference_hz="
             << bench::reference_instructions_per_second << " reference_load=" << ideal_seconds
             << " wall_s=" << guest << " process_cpu_s=" << median(result.cpu)

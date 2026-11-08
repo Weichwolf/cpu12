@@ -170,6 +170,7 @@ private:
 };
 
 template <class Operation> double median(Operation operation) {
+  test::bench::warm_up(operation);
   std::array<double, trials> samples{};
   for (auto &sample : samples) {
     const auto begin = Clock::now();

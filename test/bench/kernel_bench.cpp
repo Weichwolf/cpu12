@@ -279,6 +279,7 @@ void verify_memory_host() {
 }
 
 template <class Operation> double median(Operation operation) {
+  test::bench::warm_up(operation);
   std::array<double, trials> samples{};
   for (auto &sample : samples) {
     const auto start = Clock::now();

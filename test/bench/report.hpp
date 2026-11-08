@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #pragma once
 
+#include <chrono>
 #include <cstdint>
 #include <iostream>
 #include <stdexcept>
@@ -9,6 +10,16 @@ namespace cpu12::test::bench {
 // Conservative peak-IPC reference, not a calibrated board cycle model.
 inline constexpr double reference_instructions_per_second = 30000000;
 inline constexpr double nanoseconds_per_second = 1e9, target_fraction = 0.7;
+
+inline constexpr auto warmup_duration = std::chrono::milliseconds{100};
+
+template <class Operation> void warm_up(Operation operation) {
+  constexpr unsigned batch = 256;
+  const auto deadline = std::chrono::steady_clock::now() + warmup_duration;
+  do {
+    for (unsigned index = 0; index < batch; ++index) { operation(); }
+  } while (std::chrono::steady_clock::now() < deadline);
+}
 
 inline void report(const std::uint64_t instructions,
                    const double cold_seconds,
@@ -26,6 +37,7 @@ inline void report(const std::uint64_t instructions,
             << " jit_to_host_percent=" << 100.0 * host_seconds / warm_seconds << " jit_target_70="
             << (host_seconds >= target_fraction * warm_seconds ? "PASS" : "FAIL")
             << " cold_scope=single-kernel-not-processing-packet"
-            << " qualification_scope=reset-run-diagnostic sustained_gate=NOT-ESTABLISHED";
+            << " qualification_scope=reset-run-diagnostic sustained_gate=NOT-ESTABLISHED"
+            << " warmup_ms=" << warmup_duration.count() << " warmup_scope=untimed-per-population";
 }
 }

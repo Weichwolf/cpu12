@@ -56,7 +56,9 @@ Unsupported operations fail explicitly.
 Benchmarks check independent results and report cold/warm timing and matched
 JIT/host ratios (`100 * host_time / jit_time`). All scenarios have x86-64 and
 ARM64 host references. Hardware factors use stated models, not measured device
-speed. Select cases with CPU12_BENCH_FILTER; fixtures are in test/bench/.
+speed. Warm populations use a fixed 100 ms warm-up after cold measurement;
+packet warm-up advances both engines continuously. Select cases with
+CPU12_BENCH_FILTER; fixtures are in test/bench/.
 See doc/architecture.md and test/ for details.
 
 [License](LICENSE)
