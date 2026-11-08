@@ -185,8 +185,9 @@ std::vector<Byte> Emitter::block(const std::span<const BlockInstruction> operati
   if (prefix.size() > 1 && (kind == Kind::stop || kind == Kind::wait || kind == Kind::jump)) {
     prefix = prefix.first(prefix.size() - 1);
   }
-  if (const auto plan = resident_plan(prefix, memory_);
-      plan && plan->indexed_regions.empty() && (tail.empty() || plan->loop)) {
+  auto plan = resident_loop_plan(prefix, memory_);
+  if (!plan) { plan = resident_plan(prefix, memory_); }
+  if (plan && (tail.empty() || plan->loop)) {
     return Emitter(memory_).resident(*plan, operations.subspan(prefix.size()), general);
   }
   return general;

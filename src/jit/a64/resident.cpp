@@ -10,6 +10,7 @@
 #include "jit/block.hpp"
 #include "runtime.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -29,6 +30,15 @@ unsigned base_cycles(const ResidentPlan &plan) {
   }
   return result;
 }
+
+bool independent_counter(const ResidentPlan &plan, const unsigned word) {
+  return std::ranges::all_of(plan.operations, [word](const auto &operation) {
+    const auto &instruction = operation.instruction;
+    return instruction.kind == Kind::nop || instruction.kind == Kind::branch ||
+           instruction.kind == Kind::loop || instruction.kind == Kind::register_operation ||
+           native_word(instruction) != word;
+  });
+}
 }
 
 void Emitter::resident_grant(const ResidentPlan &plan,
@@ -46,18 +56,25 @@ void Emitter::resident_grant(const ResidentPlan &plan,
       code_.select(Reg::x11, Reg::x17, Reg::x11, Condition::equal);
     }
   }
-  code_.constant(Reg::x17, plan.operations.size());
+  code_.constant(Reg::x17, plan.operations.size() + plan.backedge_instructions);
   code_.multiply(Reg::x12, Reg::x11, Reg::x17);
+  if (plan.backedge_instructions != 0) {
+    code_.subtract(Reg::x12, Reg::x12, static_cast<std::uint16_t>(plan.backedge_instructions));
+  }
   code_.constant(Reg::x17, suffix.size());
   code_.alu(Alu::add, Reg::x9, Reg::x12, Reg::x17);
   code_.compare(Reg::x2, Reg::x9);
   code_.branch_far(Condition::no_carry, general);
   const auto extra = instruction_timing(plan.operations.back().instruction).taken_extra;
-  code_.constant(Reg::x17, base_cycles(plan) + extra);
+  const auto repeat_extra = plan.backedge_instructions != 0 ? plan.backedge_cycles : extra;
+  code_.constant(Reg::x17, base_cycles(plan) + repeat_extra);
   code_.multiply(Reg::x13, Reg::x11, Reg::x17, Width::x64);
   if (plan.loop && extra != 0) {
-    code_.constant(Reg::x17, extra);
+    code_.constant(Reg::x17, repeat_extra);
     code_.alu(Alu::subtract, Reg::x13, Reg::x13, Reg::x17, Width::x64);
+    if (plan.backedge_instructions != 0) {
+      code_.add(Reg::x13, Reg::x13, static_cast<std::uint16_t>(extra), Width::x64);
+    }
   }
   code_.load(Reg::x14, Reg::x1, progress_offset, Access::doubleword);
   code_.load(Reg::x9, Reg::x1, offsetof(NativeContext, cycle_deadline), Access::doubleword);
@@ -73,6 +90,31 @@ void Emitter::resident_grant(const ResidentPlan &plan,
   code_.alu(Alu::add, Reg::x10, Reg::x13, Reg::x17, Width::x64);
   code_.compare(Reg::x9, Reg::x10, Width::x64);
   code_.branch_far(Condition::no_carry, general);
+  if (!plan.indexed_regions.empty()) { resident_indexed_grant(plan, general); }
+}
+
+void Emitter::resident_indexed_grant(const ResidentPlan &plan, Label &general) {
+  code_.load(Reg::x6, Reg::x0, offsetof(Registers, x), Access::half);
+  code_.shift(Shift::left, Reg::x5, Reg::x11, 1);
+  code_.alu(Alu::add, Reg::x5, Reg::x5, Reg::x6);
+  Label admitted;
+  for (const auto &region : plan.indexed_regions) {
+    Label next;
+    code_.constant(Reg::x17, region.first);
+    code_.compare(Reg::x6, Reg::x17);
+    code_.branch_far(Condition::no_carry, next);
+    code_.constant(Reg::x17, std::size_t{region.first} + region.bytes.size());
+    code_.compare(Reg::x5, Reg::x17);
+    code_.branch_far(Condition::above, next);
+    code_.constant(Reg::x17, region.first);
+    code_.alu(Alu::subtract, Reg::x9, Reg::x6, Reg::x17);
+    code_.constant(Reg::x7, reinterpret_cast<std::uintptr_t>(region.bytes.data()));
+    code_.alu(Alu::add, Reg::x7, Reg::x7, Reg::x9, Width::x64);
+    code_.branch(admitted);
+    code_.bind(next);
+  }
+  code_.branch(general);
+  code_.bind(admitted);
 }
 
 void Emitter::resident_memory(const Reg value,
@@ -98,25 +140,29 @@ void Emitter::resident_memory(const Reg value,
   }
 }
 
-void Emitter::resident_operand(const ResidentOperation &operation) {
+void Emitter::resident_operand(const ResidentOperation &operation, const Reg value) {
   const auto &instruction = operation.instruction;
   constexpr unsigned vector_slot_bias = 15;
-  if (operation.cached_operand) {
-    code_.move(Reg::x1, Reg::x8, Width::w32);
+  if (instruction.addressing == Addressing::indexed) {
+    code_.load(value, Reg::x7, 0, Access::half);
+    code_.reverse_half(value, value);
+    code_.add(Reg::x7, Reg::x7, 2, Width::x64);
+    if (!resident_index_elided_) { add_word(x, x, 2); }
+  } else if (operation.cached_operand) {
+    code_.move(value, Reg::x8, Width::w32);
   } else if (operation.value_slot != 0 && !operation.fill_value) {
-    code_.scalar_move(Reg::x1, operation.value_slot + vector_slot_bias, false);
+    code_.scalar_move(value, operation.value_slot + vector_slot_bias, false);
   } else if (operation.forwarded_word != 0) {
     constexpr std::array words{Reg::zr, x, y, d, Reg::zr, stack};
-    code_.extract(
-        Reg::x1, words.at(operation.forwarded_word), operation.forwarded_shift, word_bits);
+    code_.extract(value, words.at(operation.forwarded_word), operation.forwarded_shift, word_bits);
   } else if (operation.pointer == nullptr) {
-    code_.constant(Reg::x1, instruction.operand);
+    code_.constant(value, instruction.operand);
   } else {
-    resident_memory(Reg::x1, operation, false);
-    if (instruction.word) { code_.reverse_half(Reg::x1, Reg::x1); }
+    resident_memory(value, operation, false);
+    if (instruction.word) { code_.reverse_half(value, value); }
   }
   if (operation.value_slot != 0 && operation.fill_value) {
-    code_.scalar_move(Reg::x1, operation.value_slot + vector_slot_bias, true);
+    code_.scalar_move(value, operation.value_slot + vector_slot_bias, true);
   }
 }
 
@@ -146,14 +192,14 @@ void Emitter::resident_operation(const ResidentOperation &operation, const bool 
   if (kind == Kind::loop || (kind == Kind::register_operation &&
                              (instruction.operation == RegisterOp::index_increment ||
                               instruction.operation == RegisterOp::index_decrement))) {
-    const bool increment = instruction.operation == RegisterOp::increment ||
-                           instruction.operation == RegisterOp::index_increment;
-    add_word(word_target(instruction.target), word_target(instruction.target), increment ? 1 : -1);
-    code_.move(Reg::x2, word_target(instruction.target), Width::w32);
-  } else if (kind == Kind::multiply_divide) {
+    resident_update(operation, live);
+    return;
+  }
+  if (kind == Kind::multiply_divide) {
     resident_multiply(operation, live);
     return;
-  } else if (kind == Kind::register_operation) {
+  }
+  if (kind == Kind::register_operation) {
     load_target(Reg::x0, instruction);
     code_.shift(Shift::left, Reg::x2, Reg::x0, 1);
     store_target(Reg::x2, instruction);
@@ -165,6 +211,23 @@ void Emitter::resident_operation(const ResidentOperation &operation, const bool 
     if (!live) { value.flags = 0; }
     resident_calculate(value);
   }
+  if (changed != 0) { resident_flags(operation); }
+}
+
+void Emitter::resident_update(const ResidentOperation &operation, const bool live) {
+  const auto &instruction = operation.instruction;
+  const auto changed = live ? operation.flags : 0;
+  const bool increment = instruction.operation == RegisterOp::increment ||
+                         instruction.operation == RegisterOp::index_increment;
+  if (word_target(instruction.target) == resident_counter_) {
+    if (changed != 0) {
+      code_.constant(Reg::x2, 0);
+      resident_flags(operation);
+    }
+    return;
+  }
+  add_word(word_target(instruction.target), word_target(instruction.target), increment ? 1 : -1);
+  code_.move(Reg::x2, word_target(instruction.target), Width::w32);
   if (changed != 0) { resident_flags(operation); }
 }
 
@@ -180,9 +243,36 @@ void Emitter::resident_store(const ResidentOperation &operation) {
   }
 }
 
+bool Emitter::resident_fast(const ResidentOperation &operation) {
+  if (operation.flags != 0) { return false; }
+  const auto &instruction = operation.instruction;
+  const auto kind = instruction.kind;
+  if (kind == Kind::load && instruction.word) {
+    resident_operand(operation, word_target(instruction.target));
+    return true;
+  }
+  const bool low = instruction.word || instruction.accumulator_b != swapped_d_;
+  if (!low || (kind != Kind::add && kind != Kind::subtract)) { return false; }
+  const auto target = instruction.word ? word_target(instruction.target) : d;
+  constexpr unsigned maximum_immediate = 4095;
+  if (instruction.addressing == Addressing::immediate && instruction.operand <= maximum_immediate) {
+    if (kind == Kind::add) {
+      code_.add(Reg::x2, target, instruction.operand);
+    } else {
+      code_.subtract(Reg::x2, target, instruction.operand);
+    }
+  } else {
+    resident_operand(operation);
+    code_.alu(kind == Kind::add ? Alu::add : Alu::subtract, Reg::x2, target, Reg::x1);
+  }
+  store_target(Reg::x2, instruction);
+  return true;
+}
+
 void Emitter::resident_calculate(const ResidentOperation &operation) {
   const auto &instruction = operation.instruction;
   const auto kind = instruction.kind;
+  if (resident_fast(operation)) { return; }
   resident_operand(operation);
   const bool byte_low = !instruction.word && instruction.accumulator_b != swapped_d_;
   if (kind != Kind::load) {
@@ -233,6 +323,12 @@ void Emitter::resident_body(const ResidentPlan &plan, const bool live) {
 }
 
 void Emitter::resident_prepare(const ResidentPlan &plan) {
+  if (plan.loop) {
+    const auto word = plan.counter_offset == offsetof(Registers, x) ? 1U : 2U;
+    if (independent_counter(plan, word)) { resident_counter_ = word == 1 ? x : y; }
+  }
+  resident_index_elided_ = !plan.indexed_regions.empty() && independent_counter(plan, 1);
+  if (resident_index_elided_) { code_.shift(Shift::left, Reg::x10, Reg::x11, 1); }
   swapped_d_ = plan.swapped_d;
   if (swapped_d_) { code_.reverse_half(d, d); }
   resident_base_ = plan.base;
@@ -266,17 +362,20 @@ std::vector<Byte> Emitter::resident(const ResidentPlan &plan,
   if (plan.loop) {
     Label repeat;
     Label final;
-    code_.constant(Reg::x17, 1);
-    code_.alu(Alu::subtract, Reg::x11, Reg::x11, Reg::x17);
+    code_.subtract(Reg::x11, Reg::x11, 1);
     code_.branch_zero_far(Reg::x11, final);
     code_.bind(repeat);
     resident_body(plan, false);
-    code_.constant(Reg::x17, 1);
-    code_.alu(Alu::subtract, Reg::x11, Reg::x11, Reg::x17);
+    code_.subtract(Reg::x11, Reg::x11, 1);
     code_.branch_zero_far(Reg::x11, repeat, Width::w32, true);
     code_.bind(final);
   }
+  if (resident_counter_ != Reg::zr) { code_.constant(resident_counter_, 0); }
   resident_body(plan, true);
+  if (resident_index_elided_) {
+    code_.alu(Alu::add, x, x, Reg::x10);
+    code_.extract(x, x, 0, word_bits);
+  }
   const auto &last = plan.operations.back();
   code_.constant(pc, static_cast<Address>(last.pc + last.instruction.length));
   if (!plan.loop && last.instruction.kind == Kind::branch && last.instruction.condition != 1) {

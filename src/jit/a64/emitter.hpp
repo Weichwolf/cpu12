@@ -68,15 +68,18 @@ private:
   void resident_grant(const ResidentPlan &plan,
                       std::span<const BlockInstruction> suffix,
                       Label &general);
+  void resident_indexed_grant(const ResidentPlan &plan, Label &general);
   void resident_prepare(const ResidentPlan &plan);
+  void resident_update(const ResidentOperation &operation, bool live);
   void resident_store(const ResidentOperation &operation);
   void resident_body(const ResidentPlan &plan, bool live);
   void resident_operation(const ResidentOperation &operation, bool live);
+  [[nodiscard]] bool resident_fast(const ResidentOperation &operation);
   void resident_calculate(const ResidentOperation &operation);
   void resident_flags(const ResidentOperation &operation);
   void resident_memory(Reg value, const ResidentOperation &operation, bool write);
   void resident_multiply(const ResidentOperation &operation, bool live);
-  void resident_operand(const ResidentOperation &operation);
+  void resident_operand(const ResidentOperation &operation, Reg value = Reg::x1);
   void advance(unsigned amount);
   void add_word(Reg target, Reg source, int amount);
   void mask(Reg target, Reg source, std::uint32_t bits);
@@ -113,6 +116,8 @@ private:
   void math(const Instruction &operation);
   void divide(MathOp operation);
   void state_byte(StateField field, Byte value);
+  Reg resident_counter_ = Reg::zr;
+  bool resident_index_elided_ = false;
   bool swapped_d_ = false;
   const Byte *resident_base_ = nullptr;
   Code code_;
