@@ -81,6 +81,7 @@ private:
   [[nodiscard]] bool resident_fast(const ResidentOperation &operation);
   void resident_calculate(const ResidentOperation &operation);
   void resident_flags(const ResidentOperation &operation);
+  void resident_value(Reg value, unsigned slot, bool read);
   void resident_memory(Reg value, const ResidentOperation &operation, bool write);
   void resident_multiply(const ResidentOperation &operation, bool live);
   void resident_operand(const ResidentOperation &operation, Reg value = Reg::x1);
@@ -120,6 +121,7 @@ private:
   void math(const Instruction &operation);
   void divide(MathOp operation);
   void state_byte(StateField field, Byte value);
+  unsigned resident_gpr_slots_ = 0;
   Reg resident_counter_ = Reg::zr;
   const ResidentOperation *resident_sum_ = nullptr;
   bool resident_sum_live_ = false;

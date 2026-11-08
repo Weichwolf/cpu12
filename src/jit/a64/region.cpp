@@ -94,6 +94,7 @@ std::vector<Byte> Emitter::resident_region(const ResidentRegion &region,
                                            const std::span<const Byte> general) {
   auto combined = counted_region(region);
   if (!combined) { return {general.begin(), general.end()}; }
+  resident_gpr_slots_ = 4;
   Label fallback;
   resident_grant(*combined, {}, fallback);
   begin(true);

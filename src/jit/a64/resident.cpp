@@ -148,6 +148,17 @@ void Emitter::resident_indexed_grant(const ResidentPlan &plan, Label &general) {
   code_.bind(admitted);
 }
 
+void Emitter::resident_value(const Reg value, const unsigned slot, const bool read) {
+  constexpr std::array cache{Reg::x7, Reg::x8, Reg::x9, Reg::x10, Reg::x11};
+  if (slot <= resident_gpr_slots_) {
+    const auto cached = cache.at(slot - 1);
+    code_.move(read ? value : cached, read ? cached : value, Width::w32);
+  } else {
+    constexpr unsigned vector_slot_bias = 15;
+    code_.scalar_move(value, slot + vector_slot_bias, !read);
+  }
+}
+
 void Emitter::resident_memory(const Reg value,
                               const ResidentOperation &operation,
                               const bool write) {
@@ -173,7 +184,6 @@ void Emitter::resident_memory(const Reg value,
 
 void Emitter::resident_operand(const ResidentOperation &operation, const Reg value) {
   const auto &instruction = operation.instruction;
-  constexpr unsigned vector_slot_bias = 15;
   if (instruction.addressing == Addressing::indexed) {
     code_.load(value, Reg::x7, 0, Access::half);
     code_.reverse_half(value, value);
@@ -182,7 +192,7 @@ void Emitter::resident_operand(const ResidentOperation &operation, const Reg val
   } else if (operation.cached_operand) {
     code_.move(value, Reg::x8, Width::w32);
   } else if (operation.value_slot != 0 && !operation.fill_value) {
-    code_.scalar_move(value, operation.value_slot + vector_slot_bias, false);
+    resident_value(value, operation.value_slot, true);
   } else if (operation.forwarded_word != 0) {
     constexpr std::array words{Reg::zr, x, y, d, Reg::zr, stack};
     code_.extract(value, words.at(operation.forwarded_word), operation.forwarded_shift, word_bits);
@@ -193,7 +203,7 @@ void Emitter::resident_operand(const ResidentOperation &operation, const Reg val
     if (instruction.word) { code_.reverse_half(value, value); }
   }
   if (operation.value_slot != 0 && operation.fill_value) {
-    code_.scalar_move(value, operation.value_slot + vector_slot_bias, true);
+    resident_value(value, operation.value_slot, false);
   }
 }
 
@@ -297,8 +307,7 @@ void Emitter::resident_store(const ResidentOperation &operation) {
   resident_memory(instruction.word ? Reg::x3 : value, operation, true);
   if (operation.cache_store && value != Reg::x8) { code_.move(Reg::x8, value, Width::w32); }
   if (operation.value_slot != 0 && operation.fill_value) {
-    constexpr unsigned vector_slot_bias = 15;
-    code_.scalar_move(value, operation.value_slot + vector_slot_bias, true);
+    resident_value(value, operation.value_slot, false);
   }
 }
 
@@ -382,8 +391,7 @@ void Emitter::resident_body(const ResidentPlan &plan, const bool live) {
       resident_operation(operation, live);
     } else if (operation.value_slot != 0 && operation.fill_value) {
       load_target(Reg::x1, operation.instruction);
-      constexpr unsigned vector_slot_bias = 15;
-      code_.scalar_move(Reg::x1, operation.value_slot + vector_slot_bias, true);
+      resident_value(Reg::x1, operation.value_slot, false);
     }
   }
 }
@@ -422,6 +430,7 @@ void Emitter::resident_prepare(const ResidentPlan &plan) {
 std::vector<Byte> Emitter::resident(const ResidentPlan &plan,
                                     const std::span<const BlockInstruction> suffix,
                                     const std::span<const Byte> general) {
+  resident_gpr_slots_ = plan.loop ? 0U : 5U;
   Label fallback;
   resident_grant(plan, suffix, fallback);
   begin(true);
