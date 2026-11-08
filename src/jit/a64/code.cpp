@@ -117,16 +117,22 @@ void Code::subtract(const Reg target,
        (reg(source) << register_shift) | reg(target));
 }
 
-void Code::insert(const Reg target, const Reg source, const unsigned first, const unsigned count) {
+void Code::insert(const Reg target,
+                  const Reg source,
+                  const unsigned first,
+                  const unsigned count,
+                  const Width width) {
   read_register(source);
   read_register(target);
   write_register(target);
 
-  constexpr unsigned bits = 32;
+  const auto bits = bit_count(width);
   if (count == 0 || first >= bits || count > bits - first) {
     throw std::invalid_argument("Invalid A64 insertion extent");
   }
-  constexpr std::uint32_t opcode = 0x33000000;
+  constexpr std::uint32_t narrow = 0x33000000;
+  constexpr std::uint32_t full = 0xb3400000;
+  const auto opcode = width == Width::x64 ? full : narrow;
   word(opcode | (((bits - first) % bits) << operand_shift) | ((count - 1) << immediate_shift) |
        (reg(source) << register_shift) | reg(target));
 }
@@ -194,12 +200,12 @@ void Code::shift(const Shift operation,
   }
 }
 
-void Code::reverse_half(const Reg target, const Reg source) {
+void Code::reverse_half(const Reg target, const Reg source, const Width width) {
   read_register(source);
   write_register(target);
 
   constexpr std::uint32_t opcode = 0x5ac00400;
-  word(opcode | (reg(source) << register_shift) | reg(target));
+  word(wide(width) | opcode | (reg(source) << register_shift) | reg(target));
 }
 
 void Code::memory(const Reg value,
@@ -281,6 +287,17 @@ void Code::compare(const Reg source, const std::uint16_t value, const Width widt
   constexpr std::uint32_t opcode = 0x7100001f;
   word(wide(width) | opcode | (std::uint32_t{value} << immediate_shift) |
        (reg(source) << register_shift));
+}
+
+void Code::compare_if(const Reg left,
+                      const Reg right,
+                      const Condition condition,
+                      const Width width) {
+  read_register(left);
+  read_register(right);
+  constexpr std::uint32_t opcode = 0x7a400000;
+  word(wide(width) | opcode | (reg(right) << operand_shift) |
+       (static_cast<unsigned>(condition) << condition_shift) | (reg(left) << register_shift));
 }
 
 void Code::select(const Reg target,

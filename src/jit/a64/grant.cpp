@@ -52,9 +52,7 @@ void Emitter::resident_grant(const ResidentPlan &plan,
     code_.subtract(Reg::x12, Reg::x12, static_cast<std::uint16_t>(plan.backedge_instructions));
   }
   code_.constant(Reg::x17, suffix.size());
-  code_.alu(Alu::add, Reg::x9, Reg::x12, Reg::x17);
-  code_.compare(Reg::x2, Reg::x9);
-  code_.branch_far(Condition::no_carry, general);
+  code_.alu(Alu::add, Reg::x15, Reg::x12, Reg::x17);
   const auto extra = instruction_timing(plan.operations.back().instruction).taken_extra;
   const auto repeat_extra = plan.backedge_instructions != 0 ? plan.backedge_cycles : extra;
   code_.constant(Reg::x17, base_cycles(plan) + repeat_extra);
@@ -68,9 +66,6 @@ void Emitter::resident_grant(const ResidentPlan &plan,
   }
   code_.load(Reg::x14, Reg::x1, progress_offset, Access::doubleword);
   code_.load(Reg::x9, Reg::x1, offsetof(NativeContext, cycle_deadline), Access::doubleword);
-  code_.compare(Reg::x9, Reg::x14, Width::x64);
-  code_.branch_far(Condition::no_carry, general);
-  code_.alu(Alu::subtract, Reg::x9, Reg::x9, Reg::x14, Width::x64);
   unsigned suffix_cycles = 0;
   for (const auto &operation : suffix) {
     const auto timing = instruction_timing(operation.instruction);
@@ -78,7 +73,9 @@ void Emitter::resident_grant(const ResidentPlan &plan,
   }
   code_.constant(Reg::x17, suffix_cycles);
   code_.alu(Alu::add, Reg::x10, Reg::x13, Reg::x17, Width::x64);
-  code_.compare(Reg::x9, Reg::x10, Width::x64);
+  code_.alu(Alu::add_flags, Reg::x10, Reg::x14, Reg::x10, Width::x64);
+  code_.compare_if(Reg::x2, Reg::x15, Condition::no_carry);
+  code_.compare_if(Reg::x9, Reg::x10, Condition::carry, Width::x64);
   code_.branch_far(Condition::no_carry, general);
   if (!plan.indexed_regions.empty()) { resident_indexed_grant(plan, general); }
 }

@@ -86,11 +86,29 @@ void Emitter::resident_region_cache(const ResidentPlan &plan) {
     resident_words_.push_back(operation.pointer);
     const auto first =
         std::ranges::find(plan.operations, operation.pointer, &ResidentOperation::pointer);
-    if (first->instruction.kind != Kind::store) {
+    if (first->initial_load && first->instruction.word) {
+      load_target(target, first->instruction);
+    } else if (first->instruction.kind != Kind::store) {
       resident_memory(target, operation, false);
       code_.reverse_half(target, target);
     }
   }
+}
+
+void Emitter::resident_writeback(const RegionExit exit) {
+  const auto store = [this](const Byte *pointer) {
+    const ResidentOperation operation{.instruction = {.kind = Kind::store, .word = true},
+                                      .pointer = pointer};
+    code_.reverse_half(Reg::x3, resident_word(operation));
+    resident_memory(Reg::x3, operation, true);
+  };
+  for (const auto *pointer : head_stores_) { store(pointer); }
+  Label complete;
+  if (exit == RegionExit::head && !tail_stores_.empty()) {
+    code_.branch_zero_far(Reg::x11, complete);
+  }
+  for (const auto *pointer : tail_stores_) { store(pointer); }
+  code_.bind(complete);
 }
 
 Reg Emitter::resident_compare(const ResidentOperation &operation) {
@@ -126,7 +144,10 @@ void Emitter::resident_compare_flags(const ResidentOperation &operation, const R
   }
 }
 
-void Emitter::resident_region_exit(const ResidentRegion &region, const RegionExit exit) {
+void Emitter::resident_region_exit(const ResidentRegion &region,
+                                   const RegionExit exit,
+                                   const Publication publication) {
+  resident_writeback(exit);
   const auto count = region.head.operations.size() + region.tail.operations.size();
   const bool head = exit == RegionExit::head;
   const auto &last = head ? region.head.operations.back() : region.tail.operations.back();
@@ -147,7 +168,9 @@ void Emitter::resident_region_exit(const ResidentRegion &region, const RegionExi
     code_.subtract(Reg::x13, Reg::x13, static_cast<std::uint16_t>(extra), Width::x64);
   }
   code_.alu(Alu::add, Reg::x14, Reg::x14, Reg::x13, Width::x64);
-  code_.store(Reg::x14, context, progress_offset, Access::doubleword);
+  if (publication == Publication::immediate) {
+    code_.store(Reg::x14, context, progress_offset, Access::doubleword);
+  }
   const auto &tail = region.tail.operations.back();
   code_.constant(pc,
                  exit == RegionExit::budget
@@ -219,6 +242,7 @@ Reg Emitter::resident_region_tail(const ResidentRegion &region,
 std::vector<Byte> Emitter::resident_region(const ResidentRegion &region,
                                            const std::span<const Byte> general,
                                            const std::span<const BlockInstruction> terminal) {
+  resident_inputs(region.head);
   auto combined = region.head;
   combined.operations.insert(
       combined.operations.end(), region.tail.operations.begin(), region.tail.operations.end());
@@ -241,10 +265,11 @@ std::vector<Byte> Emitter::resident_region(const ResidentRegion &region,
   } else {
     resident_region_grant(region, terminal, fallback);
   }
-  begin(false);
+  begin(EntryMode::resident);
   if (!counted) { code_.move(remaining, Reg::x11, Width::w32); }
   resident_prepare(combined);
   resident_region_cache(combined);
+  resident_region_stores(combined, region.head.operations.size());
   code_.constant(Reg::x11, 0);
   auto prefix = region.head;
   prefix.operations.resize(prefix.operations.size() - 2);
@@ -260,11 +285,12 @@ std::vector<Byte> Emitter::resident_region(const ResidentRegion &region,
   if (form == TailForm::comparison) {
     resident_compare_flags(region.tail.operations[region.tail.operations.size() - 2], tail_source);
   }
-  resident_region_exit(region, RegionExit::tail);
+  const auto publication = terminal.empty() ? Publication::immediate : Publication::deferred;
+  resident_region_exit(region, RegionExit::tail, publication);
   code_.branch(labels.terminal);
   code_.bind(labels.head);
   resident_compare_flags(guard, head_source);
-  resident_region_exit(region, RegionExit::head);
+  resident_region_exit(region, RegionExit::head, publication);
   code_.branch(labels.terminal);
   if (!counted) {
     code_.bind(labels.budget);
@@ -279,7 +305,7 @@ std::vector<Byte> Emitter::resident_region(const ResidentRegion &region,
   code_.bind(labels.terminal);
   if (swapped_d_) { code_.reverse_half(d, d); }
   swapped_d_ = false;
-  if (!terminal.empty()) { sequence(terminal, Admission::reserved); }
+  resident_suffix(terminal);
   code_.bind(labels.complete);
   static_cast<void>(finish());
   code_.bind(fallback);

@@ -104,7 +104,7 @@ public:
   void alu(Alu operation, Reg target, Reg left, Reg right, Width width = Width::w32);
   void add(Reg target, Reg source, std::uint16_t value, Width width = Width::w32);
   void subtract(Reg target, Reg source, std::uint16_t value, Width width = Width::w32);
-  void insert(Reg target, Reg source, unsigned first, unsigned count);
+  void insert(Reg target, Reg source, unsigned first, unsigned count, Width width = Width::w32);
   void scalar_move(Reg value, unsigned vector, bool to_vector);
   void extract(Reg target,
                Reg source,
@@ -113,7 +113,7 @@ public:
                Width width = Width::w32,
                bool sign = false);
   void shift(Shift operation, Reg target, Reg source, unsigned count, Width width = Width::w32);
-  void reverse_half(Reg target, Reg source);
+  void reverse_half(Reg target, Reg source, Width width = Width::w32);
   void load(Reg target, Reg base, std::size_t offset, Access access = Access::word);
   void store(Reg source, Reg base, std::size_t offset, Access access = Access::word);
   void multiply(Reg target, Reg left, Reg right, Width width = Width::w32);
@@ -121,6 +121,7 @@ public:
   void multiply_subtract(Reg target, Reg left, Reg right, Reg minuend, Width width = Width::w32);
   void compare(Reg left, Reg right, Width width = Width::w32);
   void compare(Reg source, std::uint16_t value, Width width = Width::w32);
+  void compare_if(Reg left, Reg right, Condition condition, Width width = Width::w32);
   void select(Reg target, Reg left, Reg right, Condition condition, Width width = Width::w32);
   void set(Reg target, Condition condition);
   void branch(Label &label);

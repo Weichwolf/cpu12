@@ -34,7 +34,7 @@ constexpr unsigned frame_bytes = 9, stack_bytes = 16;
 struct Form {
   bool memory = false, y = false, increment = false, clobber = false, byte_store = false;
   bool compare_tail = false;
-  bool stack_loaded = false, reread = false;
+  bool stack_loaded = false, reread = false, overlap_read = false;
   Opcode backedge = Opcode::bne_relative;
 };
 
@@ -59,7 +59,7 @@ void append(std::vector<Byte> &code, const Opcode opcode, const Address operand)
 Program program(const Form form, const Opcode guard, const bool stop = false) {
   Program result{.code = {}, .guard = guard, .stop = stop};
   auto &code = result.code;
-  append(code, Opcode::ldd_extended, data);
+  append(code, Opcode::ldd_extended, static_cast<Address>(data + (form.overlap_read ? 1U : 0U)));
   append(code,
          form.reread ? Opcode::addd_extended : Opcode::addd_immediate,
          form.reread ? data : bias);
@@ -216,7 +216,7 @@ void instruction(Snapshot &snapshot, const Form form, const Program &code) {
   auto &state = snapshot.registers;
   const auto pc = state.pc;
   if (pc == entry) {
-    state.d = word(snapshot, 0);
+    state.d = word(snapshot, static_cast<unsigned>(form.overlap_read));
     transfer(state, state.d);
     state.pc += 3;
   } else if (pc == entry + 3) {
@@ -812,6 +812,7 @@ int main() {
     constexpr std::array forms{
         Form{},
         Form{.reread = true},
+        Form{.reread = true, .overlap_read = true},
         Form{.memory = true, .y = true, .reread = true},
         Form{.memory = true, .y = true},
         Form{.increment = true},

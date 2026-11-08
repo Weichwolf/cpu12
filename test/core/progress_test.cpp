@@ -186,6 +186,104 @@ void owner_boundaries() {
   }
 }
 
+struct FrameOwner {
+  Core *core = nullptr;
+  std::uint64_t expected = 0;
+  unsigned writes = 0, refuse = 0;
+  bool valid = true;
+
+  bool record() noexcept {
+    valid &= core->progress().estimated_cycles == expected;
+    return ++writes != refuse;
+  }
+
+  static bool word(void *owner, const WordWrite access) noexcept {
+    auto &self = *static_cast<FrameOwner *>(owner);
+    self.valid &= self.writes < 4 && access.address == stack - ((self.writes + 1) * 2);
+    return self.record();
+  }
+
+  static bool byte(void *owner, const ByteWrite access) noexcept {
+    auto &self = *static_cast<FrameOwner *>(owner);
+    self.valid &= self.writes == 4 && access.address == stack - 9;
+    return self.record();
+  }
+};
+
+struct TerminalTiming {
+  unsigned instructions, cycles;
+  bool stop = false;
+};
+
+void terminal_progress_case(std::span<Byte> program, const TerminalTiming timing) {
+  constexpr unsigned frame_writes = 5;
+  for (unsigned refuse = 0; refuse <= frame_writes; ++refuse) {
+    FrameOwner owner{.refuse = refuse};
+    Io io{.owner = &owner, .write = FrameOwner::byte, .write_word = FrameOwner::word};
+    Core core(Memory::window({.first = entry, .bytes = program, .writable = false}), &io);
+    owner.core = &core;
+    for (unsigned warm = 0; warm < 2; ++warm) {
+      core.set_registers({.pc = entry, .x = 3, .sp = stack});
+      owner.expected = core.progress().estimated_cycles + timing.cycles;
+      owner.writes = 0;
+      owner.valid = true;
+      const auto result = core.run();
+      const bool accepted = refuse == 0;
+      const auto cost = timing.stop ? 8U : 7U;
+      const auto terminal_cycles = accepted ? cost : 0U;
+      require(
+          owner.valid && owner.writes == (accepted ? frame_writes : refuse) &&
+              result.retired == timing.instructions + (accepted ? 1U : 0U) &&
+              result.fault == (accepted ? Fault::none : Fault::memory_write) &&
+              core.progress().estimated_cycles == owner.expected + terminal_cycles,
+          "Every frame callback sees preceding cycles; rejected frames charge no terminal cycles");
+    }
+  }
+}
+
+void disabled_terminal_progress(std::span<Byte> program, const TerminalTiming timing) {
+  FrameOwner owner;
+  Io io{.owner = &owner, .write = FrameOwner::byte, .write_word = FrameOwner::word};
+  Core core(Memory::window({.first = entry, .bytes = program, .writable = false}), &io);
+  owner.core = &core;
+  constexpr Byte disabled_stop = 0x80;
+  core.set_registers({.pc = entry, .x = 3, .sp = stack, .ccr = disabled_stop});
+  const auto result = core.run(timing.instructions + 1);
+  require(result.fault == Fault::none && result.retired == timing.instructions + 1 &&
+              result.state == ExecutionState::running && owner.writes == 0 &&
+              core.progress().estimated_cycles == timing.cycles + 2,
+          "Disabled joined STOP charges two cycles without executing any frame access");
+}
+
+void terminal_progress() {
+  constexpr auto loop =
+      isa::program(isa::dex, isa::opcode<Opcode::bne_relative>(), std::array<Byte, 1>{0xfd});
+  constexpr auto region = isa::program(isa::opcode<Opcode::ldd_immediate>(),
+                                       std::array<Byte, 2>{0, 1},
+                                       isa::opcode<Opcode::cpd_immediate>(),
+                                       std::array<Byte, 2>{0, 0},
+                                       isa::opcode<Opcode::beq_relative>(),
+                                       std::array<Byte, 1>{6},
+                                       isa::opcode<Opcode::addd_immediate>(),
+                                       std::array<Byte, 2>{0, 1},
+                                       isa::dex,
+                                       isa::opcode<Opcode::bne_relative>(),
+                                       std::array<Byte, 1>{0xf2});
+  auto loop_wait = isa::program(loop, isa::wai);
+  auto loop_stop = isa::program(loop, isa::stop);
+  auto region_wait = isa::program(region, isa::wai);
+  auto region_stop = isa::program(region, isa::stop);
+  constexpr unsigned count = 3;
+  terminal_progress_case(loop_wait, {.instructions = 2 * count, .cycles = (4 * count) - 2});
+  terminal_progress_case(loop_stop,
+                         {.instructions = 2 * count, .cycles = (4 * count) - 2, .stop = true});
+  terminal_progress_case(region_wait, {.instructions = 6 * count, .cycles = (11 * count) - 2});
+  terminal_progress_case(region_stop,
+                         {.instructions = 6 * count, .cycles = (11 * count) - 2, .stop = true});
+  disabled_terminal_progress(loop_stop, {.instructions = 2 * count, .cycles = (4 * count) - 2});
+  disabled_terminal_progress(region_stop, {.instructions = 6 * count, .cycles = (11 * count) - 2});
+}
+
 void deadlines() {
   constexpr auto loop =
       isa::program(isa::nop, isa::opcode<Opcode::bra_relative>(), std::array<Byte, 1>{0xfd});
@@ -303,6 +401,7 @@ int main() {
     region();
     branches();
     owner_boundaries();
+    terminal_progress();
     deadlines();
     loop_deadlines();
     interrupt_boundaries();

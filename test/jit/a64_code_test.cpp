@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <exception>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <vector>
 #if defined(__aarch64__)
@@ -66,12 +67,20 @@ void encodings() {
   constexpr std::uint16_t radius = 1024;
   code.compare(Reg::x21, radius);
   code.compare(Reg::x3, maximum_immediate, Width::x64);
-  constexpr std::array<std::uint32_t, 32> expected{
+  code.compare_if(Reg::x2, Reg::x15, Condition::no_carry);
+  code.compare_if(Reg::x9, Reg::x10, Condition::carry, Width::x64);
+  code.insert(Reg::x0, Reg::x22, 16, 16, Width::x64);
+  code.insert(Reg::x0, Reg::x23, 32, 16, Width::x64);
+  constexpr unsigned return_position = 48;
+  code.insert(Reg::x0, Reg::x1, return_position, 16, Width::x64);
+  code.reverse_half(Reg::x0, Reg::x0, Width::x64);
+  constexpr std::array<std::uint32_t, 38> expected{
       0x0b020020, 0x6b020020, 0x0a220020, 0x53185c20, 0x53087c20, 0x13087c20, 0x13812020,
       0x5ac00420, 0x13001c20, 0x39401420, 0x79400c20, 0xf9400420, 0xa9bf53f3, 0xa8c153f3,
       0x1a9f17e0, 0x1a820020, 0xd53b4200, 0xd51b4200, 0x1b027c20, 0x1ac20c20, 0x1ac20820,
       0x1b028c20, 0xd63f0200, 0xd65f03c0, 0x33181c55, 0x33003c20, 0x51000420, 0xd13ffc62,
-      0x1e270050, 0x1e260202, 0x711002bf, 0xf13ffc7f};
+      0x1e270050, 0x1e260202, 0x711002bf, 0xf13ffc7f, 0x7a4f3040, 0xfa4a2120, 0xb3703ec0,
+      0xb3603ee0, 0xb3503c20, 0xdac00400};
   for (std::size_t index = 0; index < expected.size(); ++index) {
     require(instruction(code, index) == expected[index], "A64 encoding differs from ISA reference");
   }
@@ -148,6 +157,38 @@ asm(".text\n"
     "br x16\n");
 #endif
 
+void conditional_comparisons() {
+  cpu12::detail::ExecutableArena arena;
+  constexpr auto maximum = std::numeric_limits<std::uint64_t>::max();
+  constexpr std::array<std::uint64_t, 3> deadlines{0, 5, maximum};
+  constexpr std::array<std::uint64_t, 4> starts{0, 1, maximum - 5, maximum};
+  constexpr std::array<std::uint64_t, 3> charges{0, 1, 10};
+  constexpr unsigned required = 2;
+  for (const unsigned budget : {0U, 1U, 2U, 3U}) {
+    for (const auto deadline : deadlines) {
+      Code code;
+      code.constant(Reg::x3, budget);
+      code.constant(Reg::x4, required);
+      code.constant(Reg::x5, deadline);
+      code.alu(Alu::add_flags, Reg::x2, Reg::x0, Reg::x1, Width::x64);
+      code.compare_if(Reg::x3, Reg::x4, Condition::no_carry);
+      code.compare_if(Reg::x5, Reg::x2, Condition::carry, Width::x64);
+      code.set(Reg::x0, Condition::carry);
+      code.return_();
+      const auto *entry = arena.append(code.bytes());
+      for (const auto start : starts) {
+        for (const auto charge : charges) {
+          const bool admitted =
+              budget >= required && charge <= deadline && start <= deadline - charge;
+          require(cpu12_a64_test_enter(entry, start, charge) == std::uint64_t{admitted},
+                  "Conditional A64 admission must reject budget, deadline and addition overflow "
+                  "independently");
+        }
+      }
+    }
+  }
+}
+
 void execute() {
   cpu12::detail::ExecutableArena arena;
   Code code;
@@ -187,6 +228,7 @@ int main() {
     far_fixups();
 #if defined(__aarch64__)
     execute();
+    conditional_comparisons();
 #endif
     std::cout << "A64 encoding and branch checks passed.\n";
   } catch (const std::exception &error) {

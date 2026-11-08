@@ -55,10 +55,15 @@ std::vector<BlockInstruction> loop_tail(const std::span<const BlockInstruction> 
 void Emitter::clock(const unsigned cycles) {
   if (cycles == 0) { return; }
   constexpr auto offset = offsetof(NativeContext, progress) + offsetof(Progress, estimated_cycles);
-  code_.load(Reg::x9, context, offset, Access::doubleword);
+  auto source = pending_progress_;
+  if (source == Reg::zr) {
+    code_.load(Reg::x9, context, offset, Access::doubleword);
+    source = Reg::x9;
+  }
   code_.constant(Reg::x10, cycles);
-  code_.alu(Alu::add, Reg::x9, Reg::x9, Reg::x10, Width::x64);
+  code_.alu(Alu::add, Reg::x9, source, Reg::x10, Width::x64);
   code_.store(Reg::x9, context, offset, Access::doubleword);
+  pending_progress_ = Reg::zr;
 }
 
 void Emitter::commit(const unsigned instructions,
@@ -69,6 +74,35 @@ void Emitter::commit(const unsigned instructions,
   code_.constant(Reg::x17, instructions);
   code_.alu(Alu::add, retired, retired, Reg::x17);
   if (admission == Admission::checked) { code_.alu(Alu::subtract, remaining, remaining, Reg::x17); }
+}
+
+void Emitter::commit_owner(const Instruction &instruction,
+                           const Progress elapsed,
+                           const Admission admission) {
+  if (instruction.kind == Kind::stop) {
+    commit(1, {}, admission);
+    const auto timing = instruction_timing(instruction);
+    code_.load(
+        Reg::x9, context, offsetof(NativeContext, cpu) + offsetof(State, execution), Access::byte);
+    code_.compare(Reg::x9, static_cast<std::uint16_t>(ExecutionState::stopped));
+    code_.constant(Reg::x10, timing.base + timing.taken_extra);
+    code_.constant(Reg::x17, timing.base);
+    code_.select(Reg::x10, Reg::x10, Reg::x17, Condition::equal, Width::x64);
+    constexpr auto offset =
+        offsetof(NativeContext, progress) + offsetof(Progress, estimated_cycles);
+    auto source = pending_progress_;
+    if (source == Reg::zr) {
+      code_.load(Reg::x9, context, offset, Access::doubleword);
+      source = Reg::x9;
+    }
+    code_.alu(Alu::add, Reg::x9, source, Reg::x10, Width::x64);
+    code_.store(Reg::x9, context, offset, Access::doubleword);
+    pending_progress_ = Reg::zr;
+  } else {
+    commit(1, elapsed, admission);
+    control_clock(instruction);
+  }
+  yield_boundary();
 }
 
 void Emitter::control_clock(const Instruction &instruction) {
@@ -147,11 +181,9 @@ void Emitter::sequence(const std::span<const BlockInstruction> operations,
     ++count;
     cycles += instruction_timing(item.instruction).base;
     if (owner) {
-      commit(count, {.estimated_cycles = cycles}, admission);
-      control_clock(item.instruction);
+      commit_owner(item.instruction, {.estimated_cycles = cycles}, admission);
       count = 0;
       cycles = 0;
-      yield_boundary();
     }
   }
   if (pending_pc) { code_.constant(pc, following(operations.back())); }
@@ -159,6 +191,7 @@ void Emitter::sequence(const std::span<const BlockInstruction> operations,
   commit(count, {.estimated_cycles = cycles}, admission);
   if (count != 0) { control_clock(operations.back().instruction); }
   const auto &last = operations.back();
+  if (may_access_owner(last.instruction, memory_)) { return; }
   const bool boundary = last.instruction.kind == Kind::wait || last.instruction.kind == Kind::stop;
   code_.constant(Reg::x17,
                  std::uint32_t{last.pc} |
@@ -172,7 +205,7 @@ std::vector<Byte> Emitter::block(const std::span<const BlockInstruction> operati
   if (operations.empty()) { throw std::invalid_argument("Cannot emit an empty A64 block"); }
   const auto tail = loop_tail(operations, memory_);
   const bool cyclic = !tail.empty() || target(operations.back()) == operations.front().pc;
-  begin(true);
+  begin(EntryMode::block);
   const auto &last = operations.back();
   const bool boundary = last.instruction.kind == Kind::wait || last.instruction.kind == Kind::stop;
   code_.constant(Reg::x17,

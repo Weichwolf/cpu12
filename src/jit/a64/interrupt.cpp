@@ -6,6 +6,7 @@
 #include "instruction.hpp"
 #include "jit/a64/code.hpp"
 #include "jit/a64/emitter.hpp"
+#include "runtime.hpp"
 
 #include <algorithm>
 #include <array>
@@ -21,7 +22,7 @@ struct FramePart {
   bool word = true;
 };
 
-constexpr unsigned frame_bytes = 9, frame_pivot = 8;
+constexpr unsigned frame_bytes = 9;
 constexpr std::array frame_parts{FramePart{.source = pc, .position = 2},
                                  FramePart{.source = y, .position = 4},
                                  FramePart{.source = x, .position = 6},
@@ -29,17 +30,10 @@ constexpr std::array frame_parts{FramePart{.source = pc, .position = 2},
                                  FramePart{.source = ccr, .position = 9, .word = false}};
 }
 
-Reg Emitter::frame_value(const Reg source,
-                         const bool word,
-                         const Byte next_pc,
-                         const FrameOrder order) {
+Reg Emitter::frame_value(const Reg source, const bool word, const Byte next_pc) {
   auto value = source;
   if (source == pc) {
-    if (order == FrameOrder::native) {
-      code_.add(Reg::x0, pc, next_pc);
-    } else {
-      add_word(Reg::x0, pc, next_pc);
-    }
+    add_word(Reg::x0, pc, next_pc);
     value = Reg::x0;
   } else {
     const auto dirty =
@@ -56,8 +50,7 @@ Reg Emitter::frame_value(const Reg source,
       value = Reg::x0;
     }
   }
-  const bool reverse = order == FrameOrder::native ? source != d : source == d;
-  if (word && reverse) {
+  if (word && source == d) {
     code_.reverse_half(Reg::x0, value);
     value = Reg::x0;
   }
@@ -65,15 +58,16 @@ Reg Emitter::frame_value(const Reg source,
 }
 
 void Emitter::frame_ram(const Byte next_pc) {
-  for (const auto part : frame_parts) {
-    const auto value = frame_value(part.source, part.word, next_pc, FrameOrder::native);
-    if (part.word) {
-      code_.store(value, Reg::x11, frame_pivot - part.position, Access::half);
-    } else {
-      code_.subtract(Reg::x11, Reg::x11, 1, Width::x64);
-      code_.store(value, Reg::x11, 0, Access::byte);
-    }
-  }
+  // D retains native byte order while the other three words use bus byte order.
+  code_.reverse_half(Reg::x0, d);
+  code_.insert(Reg::x0, x, word_bits, word_bits, Width::x64);
+  code_.insert(Reg::x0, y, 2 * word_bits, word_bits, Width::x64);
+  code_.add(Reg::x1, pc, next_pc);
+  code_.insert(Reg::x0, Reg::x1, 3 * word_bits, word_bits, Width::x64);
+  code_.reverse_half(Reg::x0, Reg::x0, Width::x64);
+  code_.store(Reg::x0, Reg::x11, 0, Access::doubleword);
+  code_.subtract(Reg::x11, Reg::x11, 1, Width::x64);
+  code_.store(ccr, Reg::x11, 0, Access::byte);
 }
 
 void Emitter::frame_admission(const Byte next_pc, Label &complete) {
@@ -109,18 +103,26 @@ void Emitter::frame_admission(const Byte next_pc, Label &complete) {
 void Emitter::stack_context(const Byte next_pc) {
   Label complete;
   frame_admission(next_pc, complete);
+  constexpr auto progress_offset =
+      offsetof(NativeContext, progress) + offsetof(Progress, estimated_cycles);
+  if (pending_progress_ != Reg::zr) {
+    code_.store(pending_progress_, context, progress_offset, Access::doubleword);
+  }
   for (const auto part : frame_parts) {
     add_word(Reg::x9, stack, -static_cast<int>(part.position));
     const auto value = frame_value(part.source, part.word, next_pc);
     if (value != Reg::x0) { code_.move(Reg::x0, value, Width::w32); }
     data_access({.word = part.word, .write = true});
   }
+  if (pending_progress_ != Reg::zr) {
+    code_.load(pending_progress_, context, progress_offset, Access::doubleword);
+  }
   code_.bind(complete);
 }
 
 std::vector<Byte>
 Emitter::interrupt(const InterruptRequest request, const InterruptFrame frame, const Byte next_pc) {
-  begin(false);
+  begin(EntryMode::single);
   code_.constant(Reg::x9, request.vector);
   data_access({.word = true});
   code_.store(Reg::x1, Reg::sp, 16);
@@ -183,7 +185,7 @@ void Emitter::wait(const Instruction &operation) {
 }
 
 std::vector<Byte> Emitter::wake() {
-  begin(false);
+  begin(EntryMode::single);
   add_word(stack, stack, 9);
   state_byte(StateField::execution, static_cast<Byte>(ExecutionState::running));
   return finish();

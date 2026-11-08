@@ -31,6 +31,11 @@ Alu resident_alu(const Kind kind) {
   return Alu::bit_and;
 }
 
+bool joined_terminal(const std::span<const BlockInstruction> ending) {
+  return ending.size() == 1 && (ending.front().instruction.kind == Kind::stop ||
+                                ending.front().instruction.kind == Kind::wait);
+}
+
 bool independent_counter(const ResidentPlan &plan, const unsigned word) {
   return std::ranges::all_of(plan.operations, [word](const auto &operation) {
     const auto &instruction = operation.instruction;
@@ -141,13 +146,33 @@ void Emitter::resident_operand(const ResidentOperation &operation, const Reg val
   }
 }
 
+bool Emitter::resident_product(const ResidentPlan &plan, const std::size_t index, const bool live) {
+  if (index + 2 >= plan.operations.size()) { return false; }
+  const auto &left = plan.operations[index];
+  const auto &right = plan.operations[index + 1];
+  const auto &product = plan.operations[index + 2];
+  if (left.instruction.kind != Kind::load || !left.instruction.word ||
+      left.instruction.target != WordTarget::d || right.instruction.kind != Kind::load ||
+      !right.instruction.word || right.instruction.target != WordTarget::y ||
+      product.instruction.kind != Kind::multiply_divide || left.flags != 0 || right.flags != 0 ||
+      left.branch_flags || right.branch_flags) {
+    return false;
+  }
+  const auto first = resident_word(left);
+  const auto second = resident_word(right);
+  if (first == Reg::zr || second == Reg::zr) { return false; }
+  resident_multiply(product, live, first == second, {first, second});
+  return true;
+}
+
 void Emitter::resident_multiply(const ResidentOperation &operation,
                                 const bool live,
-                                const bool square) {
+                                const bool square,
+                                const std::array<Reg, 2> inputs) {
   d_word_ = false;
   const bool sign = operation.instruction.math == MathOp::multiply_signed;
-  code_.extract(Reg::x0, d, 0, word_bits, Width::w32, sign);
-  if (!square) { code_.extract(Reg::x1, y, 0, word_bits, Width::w32, sign); }
+  code_.extract(Reg::x0, inputs[0], 0, word_bits, Width::w32, sign);
+  if (!square) { code_.extract(Reg::x1, inputs[1], 0, word_bits, Width::w32, sign); }
   code_.multiply(d, Reg::x0, square ? Reg::x0 : Reg::x1);
   code_.extract(y, d, word_bits, word_bits);
   const auto changed = live ? operation.flags : 0;
@@ -162,7 +187,9 @@ void Emitter::resident_multiply(const ResidentOperation &operation,
   code_.move(ccr, Reg::x4, Width::w32);
 }
 
-void Emitter::resident_operation(const ResidentOperation &operation, const bool live) {
+void Emitter::resident_operation(const ResidentOperation &operation,
+                                 const bool live,
+                                 const StoreMode storage) {
   const auto &instruction = operation.instruction;
   const auto kind = instruction.kind;
   const auto changed = live ? operation.flags : 0;
@@ -182,18 +209,19 @@ void Emitter::resident_operation(const ResidentOperation &operation, const bool 
     return;
   }
   if (kind == Kind::register_operation) {
-    auto source = d;
-    if (changed != 0 || !d_word_) {
+    if (changed == 0) {
+      code_.shift(Shift::left, d, d, 1);
+      d_word_ = false;
+    } else {
       load_target(Reg::x0, instruction);
-      source = Reg::x0;
+      code_.shift(Shift::left, Reg::x2, Reg::x0, 1);
+      store_target(Reg::x2, instruction);
+      d_word_ = true;
     }
-    code_.shift(Shift::left, Reg::x2, source, 1);
-    store_target(Reg::x2, instruction);
-    d_word_ = true;
   } else if (kind == Kind::store) {
     auto value = operation;
     if (!live) { value.flags = 0; }
-    resident_store(value);
+    resident_store(value, storage);
   } else {
     if ((kind == Kind::compare || kind == Kind::bit_test) && changed == 0) { return; }
     auto value = operation;
@@ -234,7 +262,11 @@ void Emitter::resident_update(const ResidentOperation &operation, const bool liv
   }
 }
 
-void Emitter::resident_store(const ResidentOperation &operation) {
+void Emitter::resident_store(const ResidentOperation &operation, const StoreMode storage) {
+  if (storage == StoreMode::elided && operation.flags == 0 && !operation.cache_store &&
+      operation.value_slot == 0 && resident_word(operation) == Reg::zr) {
+    return;
+  }
   const auto &instruction = operation.instruction;
   auto value = Reg::x2;
   const bool sum = resident_sum_live_ && instruction.word && instruction.target == WordTarget::d;
@@ -248,8 +280,14 @@ void Emitter::resident_store(const ResidentOperation &operation) {
   } else {
     load_target(value, instruction);
   }
-  if (instruction.word) { code_.reverse_half(Reg::x3, value); }
-  resident_memory(instruction.word ? Reg::x3 : value, operation, true);
+  if (storage == StoreMode::write && !resident_deferred(operation)) {
+    if (instruction.word) { code_.reverse_half(Reg::x3, value); }
+    resident_memory(instruction.word ? Reg::x3 : value, operation, true);
+  }
+  resident_cache_store(operation, value);
+}
+
+void Emitter::resident_cache_store(const ResidentOperation &operation, const Reg value) {
   if (operation.cache_store && value != Reg::x8) { code_.move(Reg::x8, value, Width::w32); }
   const auto cached = resident_word(operation);
   if (cached != Reg::zr) {
@@ -274,13 +312,15 @@ bool Emitter::resident_fast(const ResidentOperation &operation) {
   }
   const bool low = instruction.word || instruction.accumulator_b != swapped_d_;
   if (!low || (kind != Kind::add && kind != Kind::subtract)) { return false; }
-  const auto target = instruction.word ? word_target(instruction.target) : d;
+  const auto source = instruction.word ? word_target(instruction.target) : d;
+  const bool wide_d = instruction.word && instruction.target == WordTarget::d;
+  const auto target = wide_d ? d : Reg::x2;
   constexpr unsigned maximum_immediate = 4095;
   if (instruction.addressing == Addressing::immediate && instruction.operand <= maximum_immediate) {
     if (kind == Kind::add) {
-      code_.add(Reg::x2, target, instruction.operand);
+      code_.add(target, source, instruction.operand);
     } else {
-      code_.subtract(Reg::x2, target, instruction.operand);
+      code_.subtract(target, source, instruction.operand);
     }
   } else {
     auto operand = resident_word(operation);
@@ -288,10 +328,13 @@ bool Emitter::resident_fast(const ResidentOperation &operation) {
       resident_operand(operation);
       operand = Reg::x1;
     }
-    code_.alu(kind == Kind::add ? Alu::add : Alu::subtract, Reg::x2, target, operand);
+    code_.alu(kind == Kind::add ? Alu::add : Alu::subtract, target, source, operand);
   }
-  store_target(Reg::x2, instruction);
-  if (instruction.word && instruction.target == WordTarget::d) { d_word_ = true; }
+  if (wide_d) {
+    d_word_ = false;
+  } else {
+    store_target(target, instruction);
+  }
   return true;
 }
 
@@ -343,14 +386,19 @@ void Emitter::resident_flags(const ResidentOperation &operation) {
 void Emitter::resident_body(const ResidentPlan &plan, const bool live) {
   resident_sum_live_ = false;
   d_word_ = false;
+  const auto stores = resident_stores(plan);
   for (std::size_t index = 0; index < plan.operations.size(); ++index) {
     const auto &operation = plan.operations[index];
+    if (resident_product(plan, index, live)) {
+      index += 2;
+      continue;
+    }
     if (resident_square_input(plan, index)) {
       resident_multiply(plan.operations[++index], live, true);
       continue;
     }
     if (!operation.initial_load) {
-      resident_operation(operation, live);
+      resident_operation(operation, live, stores[index]);
     } else if (resident_word(operation) == Reg::zr && operation.value_slot != 0 &&
                operation.fill_value) {
       load_target(Reg::x1, operation.instruction);
@@ -395,19 +443,32 @@ void Emitter::resident_prepare(const ResidentPlan &plan) {
   }
 }
 
+void Emitter::resident_suffix(const std::span<const BlockInstruction> operations) {
+  if (operations.empty()) { return; }
+  if (joined_terminal(operations)) {
+    pending_progress_ = Reg::x14;
+  } else {
+    code_.extract(d, d, 0, word_bits);
+  }
+  sequence(operations, Admission::reserved);
+}
+
 std::vector<Byte> Emitter::resident(const ResidentPlan &plan,
                                     const std::span<const BlockInstruction> suffix,
                                     const std::span<const Byte> general,
                                     const ResidentMode mode,
                                     const std::span<const BlockInstruction> terminal) {
+  resident_inputs(plan);
   resident_gpr_slots_ = plan.loop ? 0U : 5U;
+  const auto ending = terminal.empty() ? suffix : terminal;
+  const bool joined = joined_terminal(ending);
   Label fallback;
   if (mode == ResidentMode::bounded) {
     resident_bounded_grant(plan, fallback);
   } else {
     resident_grant(plan, terminal.empty() ? suffix : terminal, fallback);
   }
-  begin(false);
+  begin(EntryMode::resident);
   resident_prepare(plan);
   if (plan.loop) {
     Label repeat;
@@ -447,7 +508,7 @@ std::vector<Byte> Emitter::resident(const ResidentPlan &plan,
     code_.alu(Alu::subtract, Reg::x13, Reg::x13, Reg::x17, Width::x64);
   }
   code_.alu(Alu::add, Reg::x14, Reg::x14, Reg::x13, Width::x64);
-  code_.store(Reg::x14, context, progress_offset, Access::doubleword);
+  if (!joined) { code_.store(Reg::x14, context, progress_offset, Access::doubleword); }
   if (!plan.loop) { control_clock(last.instruction); }
   const auto location = mode == ResidentMode::bounded && plan.backedge_instructions != 0
                             ? plan.backedge_exit
@@ -458,8 +519,8 @@ std::vector<Byte> Emitter::resident(const ResidentPlan &plan,
   code_.store(Reg::x17, Reg::sp, location_offset);
   if (swapped_d_) { code_.reverse_half(d, d); }
   swapped_d_ = false;
-  if (!suffix.empty()) { sequence(suffix, Admission::reserved); }
-  if (!terminal.empty()) { sequence(terminal, Admission::reserved); }
+  resident_suffix(suffix);
+  resident_suffix(terminal);
   static_cast<void>(finish());
   code_.bind(fallback);
   code_.append(general);

@@ -8,6 +8,7 @@
 
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <exception>
 #include <iostream>
 #include <span>
@@ -214,6 +215,119 @@ void nonlinear_loop() {
   }
 }
 
+template <isa::Opcode opcode> void divide_boundary() {
+  constexpr auto program = isa::program(isa::opcode<opcode>(), isa::idiv, isa::nop);
+  constexpr auto operation =
+      opcode == isa::Opcode::emuls ? math::Operation::emuls : math::Operation::emul;
+  constexpr std::array<Address, 4> divisors{1, 3, 7, marker_x};
+  Device device(program);
+  const auto before = device.ram;
+  for (const Byte flags : {Byte{0}, Byte{0xff}}) {
+    for (const auto left : values) {
+      for (const auto right : values) {
+        for (const auto divisor : divisors) {
+          const Registers initial{
+              .pc = entry, .d = left, .x = divisor, .y = right, .sp = stack, .ccr = flags};
+          const auto product =
+              math::multiply({.operation = operation, .before = initial}).registers;
+          auto quotient = product;
+          quotient.x = static_cast<Address>(product.d / divisor);
+          quotient.d = static_cast<Address>(product.d % divisor);
+          constexpr Byte divide_retained = 0xf8;
+          quotient.ccr =
+              static_cast<Byte>((product.ccr & divide_retained) | (quotient.x == 0 ? 4U : 0U));
+          quotient.pc += isa::idiv.size();
+          auto final = quotient;
+          ++final.pc;
+          const std::array trace{initial, product, quotient, final};
+          for (unsigned grant = 1; grant < trace.size(); ++grant) {
+            device.check(initial, grant, trace[grant]);
+            require(device.ram == before, "Resident/divide boundaries preserve all guest RAM");
+            ++checked;
+          }
+        }
+      }
+    }
+  }
+}
+
+struct CachedInput {
+  Address left, right, count;
+  Byte flags;
+};
+
+template <isa::Opcode opcode> Registers cached_result(const CachedInput point, const Address end) {
+  auto left = point.left;
+  std::uint64_t product = 0;
+  for (unsigned index = 0; index < point.count; ++index) {
+    if constexpr (opcode == isa::Opcode::emuls) {
+      product =
+          static_cast<std::uint64_t>(math::signed_word(left) * math::signed_word(point.right)) &
+          math::long_mask;
+    } else {
+      product = std::uint64_t{left} * point.right;
+    }
+    left = static_cast<Address>((product + 1) & mask);
+  }
+  return {.pc = end,
+          .d = left,
+          .x = 0,
+          .y = static_cast<Address>(product >> math::word_bits),
+          .sp = stack,
+          .ccr = static_cast<Byte>((point.flags & retained) | zero |
+                                   (left >= sign ? negative : 0U) | (left == 0 ? carry : 0U))};
+}
+
+template <isa::Opcode opcode> void cached_products() {
+  constexpr Address cached_data = 0x4000;
+  constexpr Address stale_d = 0xa55a;
+  constexpr Address stale_y = 0x9876;
+  constexpr auto head = isa::program(isa::opcode<isa::Opcode::ldd_extended>(),
+                                     std::array<Byte, 2>{0x40, 0},
+                                     isa::opcode<isa::Opcode::ldy_extended>(),
+                                     std::array<Byte, 2>{0x40, 2},
+                                     isa::opcode<opcode>(),
+                                     isa::opcode<isa::Opcode::cpd_immediate>(),
+                                     std::array<Byte, 2>{0, 0},
+                                     isa::opcode<isa::Opcode::bcs_relative>(),
+                                     std::array<Byte, 1>{9});
+  constexpr auto tail = isa::program(isa::opcode<isa::Opcode::addd_immediate>(),
+                                     std::array<Byte, 2>{0, 1},
+                                     isa::opcode<isa::Opcode::std_extended>(),
+                                     std::array<Byte, 2>{0x40, 0},
+                                     isa::dex,
+                                     isa::opcode<isa::Opcode::bne_relative>());
+  constexpr std::array<Byte, 1> back{
+      static_cast<Byte>(byte_mask + 1U - (head.size() + tail.size() + 1))};
+  constexpr auto program = isa::program(head, tail, back, isa::nop);
+  const auto put = [](auto &ram, const Address at, const Address value) {
+    ram[at] = static_cast<Byte>(value >> 8U);
+    ram[at + 1] = static_cast<Byte>(value & byte_mask);
+  };
+  Device device(program);
+  for (const Byte flags : {Byte{0}, Byte{byte_mask}}) {
+    for (const auto left : values) {
+      for (const auto right : values) {
+        for (const Address count : {Address{1}, Address{3}}) {
+          put(device.ram, cached_data, left);
+          put(device.ram, cached_data + 2, right);
+          const auto expected =
+              cached_result<opcode>({.left = left, .right = right, .count = count, .flags = flags},
+                                    static_cast<Address>(entry + program.size()));
+          auto expected_ram = device.ram;
+          put(expected_ram, cached_data, expected.d);
+          const Registers initial{
+              .pc = entry, .d = stale_d, .x = count, .y = stale_y, .sp = stack, .ccr = flags};
+          device.check(initial, (9U * count) + 1U, expected);
+          require(device.ram == expected_ram,
+                  "Cached signed/unsigned products retain all final RAM and register effects");
+          ++checked;
+        }
+      }
+    }
+  }
+}
+
 enum class Square : Byte { same, overlap, live_flags };
 constexpr Address square_data = 0x4000, square_alias = 0x5000;
 constexpr Address square_d = 0x1357, square_y = 0x2468;
@@ -340,6 +454,10 @@ template <isa::Opcode opcode, Square form> void squares() {
 
 int main() {
   try {
+    cached_products<isa::Opcode::emul>();
+    cached_products<isa::Opcode::emuls>();
+    divide_boundary<isa::Opcode::emul>();
+    divide_boundary<isa::Opcode::emuls>();
     products<isa::Opcode::emul, Form::plain>();
     products<isa::Opcode::emuls, Form::plain>();
     products<isa::Opcode::emul, Form::shifted>();

@@ -46,17 +46,19 @@ constexpr std::array fields{std::pair{pc, offsetof(Registers, pc)},
 constexpr std::size_t location_offset = 24;
 }
 
-Code Emitter::prologue(const std::uint32_t used) {
+Code Emitter::prologue(const std::uint32_t used) const {
   Code entry;
   entry.push(Reg::fp, Reg::lr);
   entry.add(Reg::fp, Reg::sp, 0, Width::x64);
   for (const auto &[first, second] : saved(used)) { entry.push(first, second); }
-  entry.push(Reg::zr, Reg::x17);
-  entry.push(Reg::zr, Reg::x17);
+  constexpr unsigned local_bytes = 32;
+  entry.subtract(Reg::sp, Reg::sp, local_bytes, Width::x64);
   entry.move(registers, Reg::x0);
   entry.move(context, Reg::x1);
   for (const auto &[reg, offset] : fields) {
-    if ((used & bit(reg)) != 0) { entry.load(reg, registers, offset, Access::half); }
+    if ((used & input_registers_ & bit(reg)) != 0) {
+      entry.load(reg, registers, offset, Access::half);
+    }
   }
   if ((used & bit(ccr)) != 0) {
     entry.load(ccr, registers, offsetof(Registers, ccr), Access::byte);
@@ -64,10 +66,12 @@ Code Emitter::prologue(const std::uint32_t used) {
   return entry;
 }
 
-void Emitter::begin(const bool bounded) {
+void Emitter::begin(const EntryMode mode) {
   begin_offset_ = code_.size();
+  // Admitted resident paths define retirement and the exit before any possible fault.
+  if (mode == EntryMode::resident) { return; }
   code_.constant(retired, 0);
-  if (bounded) { code_.move(remaining, Reg::x2, Width::w32); }
+  if (mode == EntryMode::block) { code_.move(remaining, Reg::x2, Width::w32); }
   code_.store(Reg::zr, Reg::sp, location_offset, Access::word);
 }
 
@@ -94,8 +98,8 @@ std::vector<Byte> Emitter::finish() {
   code_.load(Reg::x1, Reg::sp, location_offset);
   const auto used = code_.used_registers() | bit(registers) | bit(context);
   const auto preserved = saved(used);
-  code_.pop(Reg::zr, Reg::x17);
-  code_.pop(Reg::zr, Reg::x17);
+  constexpr unsigned local_bytes = 32;
+  code_.add(Reg::sp, Reg::sp, local_bytes, Width::x64);
   for (const auto &[first, second] : std::views::reverse(preserved)) { code_.pop(first, second); }
   code_.pop(Reg::fp, Reg::lr);
   code_.return_();
@@ -220,7 +224,7 @@ void Emitter::operation(const Instruction &instruction) {
 }
 
 std::vector<Byte> Emitter::instruction(const Instruction &operation) {
-  begin(false);
+  begin(EntryMode::single);
   location(operation);
   this->operation(operation);
   code_.add(retired, retired, 1);

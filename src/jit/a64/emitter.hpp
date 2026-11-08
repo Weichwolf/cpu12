@@ -25,8 +25,10 @@ inline constexpr unsigned flag_c = 1, flag_v = 2, flag_z = 4, flag_n = 8, flag_i
 
 inline constexpr std::array region_values{Reg::x7, Reg::x8, Reg::x9, Reg::x10, Reg::x12, Reg::x13};
 
+enum class EntryMode : std::uint8_t { single, block, resident };
 enum class Admission : std::uint8_t { checked, reserved };
-enum class FrameOrder : std::uint8_t { bus, native };
+enum class Publication : std::uint8_t { immediate, deferred };
+enum class StoreMode : std::uint8_t { write, elided };
 enum class ResidentMode : std::uint8_t { complete, bounded };
 enum class RegionExit : std::uint8_t { head, tail, budget };
 
@@ -73,8 +75,8 @@ public:
   [[nodiscard]] std::vector<Byte> wake();
 
 private:
-  void begin(bool bounded);
-  [[nodiscard]] static Code prologue(std::uint32_t used);
+  void begin(EntryMode mode);
+  [[nodiscard]] Code prologue(std::uint32_t used) const;
   void publish();
   void publish_flags();
   [[nodiscard]] std::vector<Byte> finish();
@@ -84,11 +86,17 @@ private:
                 Admission admission = Admission::checked);
   void commit(unsigned instructions, Progress elapsed, Admission admission = Admission::checked);
   void clock(unsigned cycles);
+  void commit_owner(const Instruction &instruction, Progress elapsed, Admission admission);
   void control_clock(const Instruction &instruction);
   void yield_boundary();
   void resident_region_cache(const ResidentPlan &plan);
+  void resident_region_stores(const ResidentPlan &plan, std::size_t head);
+  [[nodiscard]] bool resident_deferred(const ResidentOperation &operation) const;
+  void resident_writeback(RegionExit exit);
   [[nodiscard]] Reg resident_word(const ResidentOperation &operation) const;
-  void resident_region_exit(const ResidentRegion &region, RegionExit exit);
+  void resident_region_exit(const ResidentRegion &region,
+                            RegionExit exit,
+                            Publication publication = Publication::immediate);
   [[nodiscard]] Reg
   resident_region_tail(const ResidentRegion &region, RegionLabels &labels, bool counted);
   [[nodiscard]] Reg resident_compare(const ResidentOperation &operation);
@@ -103,17 +111,27 @@ private:
                       Label &general);
   void resident_indexed_grant(const ResidentPlan &plan, Label &general);
   void resident_prepare(const ResidentPlan &plan);
+  void resident_inputs(const ResidentPlan &plan);
   void resident_accumulate(const ResidentOperation &operation, bool live);
   void resident_update(const ResidentOperation &operation, bool live);
-  void resident_store(const ResidentOperation &operation);
+  [[nodiscard]] std::vector<StoreMode> resident_stores(const ResidentPlan &plan) const;
+  void resident_store(const ResidentOperation &operation, StoreMode storage);
+  void resident_cache_store(const ResidentOperation &operation, Reg value);
   void resident_body(const ResidentPlan &plan, bool live);
-  void resident_operation(const ResidentOperation &operation, bool live);
+  void resident_suffix(std::span<const BlockInstruction> operations);
+  void resident_operation(const ResidentOperation &operation,
+                          bool live,
+                          StoreMode storage = StoreMode::write);
   [[nodiscard]] bool resident_fast(const ResidentOperation &operation);
   void resident_calculate(const ResidentOperation &operation);
   void resident_flags(const ResidentOperation &operation);
   void resident_value(Reg value, unsigned slot, bool read);
   void resident_memory(Reg value, const ResidentOperation &operation, bool write);
-  void resident_multiply(const ResidentOperation &operation, bool live, bool square = false);
+  [[nodiscard]] bool resident_product(const ResidentPlan &plan, std::size_t index, bool live);
+  void resident_multiply(const ResidentOperation &operation,
+                         bool live,
+                         bool square = false,
+                         std::array<Reg, 2> inputs = {d, y});
   void resident_operand(const ResidentOperation &operation, Reg value = Reg::x1);
   void advance(unsigned amount);
   void add_word(Reg target, Reg source, int amount);
@@ -146,8 +164,7 @@ private:
   void move(const Instruction &operation);
   void stack_operation(const Instruction &operation);
   void subroutine(const Instruction &operation);
-  [[nodiscard]] Reg
-  frame_value(Reg source, bool word, Byte next_pc, FrameOrder order = FrameOrder::bus);
+  [[nodiscard]] Reg frame_value(Reg source, bool word, Byte next_pc);
   void frame_ram(Byte next_pc);
   void frame_admission(Byte next_pc, Label &complete);
   void stack_context(Byte next_pc);
@@ -157,10 +174,12 @@ private:
   void divide(MathOp operation);
   void state_byte(StateField field, Byte value);
   EmissionOptions policy_;
+  std::uint32_t input_registers_ = ~std::uint32_t{0};
   std::size_t begin_offset_ = 0;
-  std::vector<const Byte *> resident_words_;
+  std::vector<const Byte *> resident_words_, head_stores_, tail_stores_;
   bool d_word_ = false;
   unsigned resident_gpr_slots_ = 0;
+  Reg pending_progress_ = Reg::zr;
   Reg resident_counter_ = Reg::zr;
   const ResidentOperation *resident_sum_ = nullptr;
   bool resident_sum_live_ = false;

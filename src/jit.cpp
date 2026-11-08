@@ -85,6 +85,17 @@ struct Mapping {
   std::unordered_map<std::uint64_t, Entry> blocks;
   std::array<std::unique_ptr<NativePage>, native_page_entries> pages;
   NativeIndex native_regions{};
+  unsigned native_entries = 0;
+
+  [[nodiscard]] NativeResult run(const void *entry,
+                                 Registers &registers,
+                                 NativeContext &context,
+                                 const std::uint32_t budget) const noexcept {
+#if defined(__aarch64__) && (defined(__APPLE__) || defined(__linux__))
+    if (native_entries == 1) { return enter_block(entry, registers, context, budget); }
+#endif
+    return enter_blocks(entry, registers, context, budget, native_regions);
+  }
 
   [[nodiscard]] bool matches(const Memory &requested) const noexcept {
     const auto regions = requested.regions();
@@ -116,7 +127,8 @@ public:
     }
     (*mapping.pages[address >> native_page_shift])[address & page_mask] = entry;
     ++statistics.compiled_entries;
-    const auto result = enter_blocks(entry, registers, context, budget, mapping.native_regions);
+    ++mapping.native_entries;
+    const auto result = mapping.run(entry, registers, context, budget);
     return result;
   }
 };
@@ -203,7 +215,7 @@ Jit::run_block(const std::uint32_t budget, Registers &registers, NativeContext &
   auto &page = mapping.native_regions[address >> native_page_shift];
   const auto *entry = page != nullptr ? page[address & page_mask] : nullptr;
   if (entry == nullptr) { return impl_->run_cold(budget, registers, context); }
-  const auto result = enter_blocks(entry, registers, context, budget, mapping.native_regions);
+  const auto result = mapping.run(entry, registers, context, budget);
   return result;
 }
 
