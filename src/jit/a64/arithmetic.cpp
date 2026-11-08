@@ -20,7 +20,7 @@ void Emitter::flags(const unsigned bits, const Flags policy) {
     code_.shift(Shift::left, Reg::x5, Reg::x5, 2);
     code_.alu(Alu::bit_or, Reg::x4, Reg::x4, Reg::x5);
   }
-  if (policy.arithmetic) {
+  if (policy.arithmetic && (policy.changed & flag_v) != 0) {
     code_.alu(Alu::bit_xor, Reg::x5, Reg::x0, Reg::x1);
     if (!policy.subtract) {
       code_.constant(Reg::x17, word_mask);

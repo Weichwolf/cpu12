@@ -7,6 +7,7 @@
 #include "instruction.hpp"
 #include "jit/a64/code.hpp"
 #include "jit/a64/emitter.hpp"
+#include "jit/resident.hpp"
 #include "runtime.hpp"
 
 #include <cstddef>
@@ -178,6 +179,16 @@ std::vector<Byte> Emitter::block(const std::span<const BlockInstruction> operati
       code_.branch(repeat);
     }
   }
-  return finish();
+  auto general = finish();
+  auto prefix = operations;
+  const auto kind = prefix.back().instruction.kind;
+  if (prefix.size() > 1 && (kind == Kind::stop || kind == Kind::wait || kind == Kind::jump)) {
+    prefix = prefix.first(prefix.size() - 1);
+  }
+  if (const auto plan = resident_plan(prefix, memory_);
+      plan && plan->indexed_regions.empty() && (!cyclic || plan->loop)) {
+    return Emitter(memory_).resident(*plan, operations.subspan(prefix.size()), general);
+  }
+  return general;
 }
 }

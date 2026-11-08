@@ -6,6 +6,7 @@
 #include "jit/a64/code.hpp"
 #include "jit/block.hpp"
 #include "jit/interrupt.hpp"
+#include "jit/resident.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -46,6 +47,9 @@ public:
 
   [[nodiscard]] std::vector<Byte> instruction(const Instruction &operation);
   [[nodiscard]] std::vector<Byte> block(std::span<const BlockInstruction> operations);
+  [[nodiscard]] std::vector<Byte> resident(const ResidentPlan &plan,
+                                           std::span<const BlockInstruction> suffix,
+                                           std::span<const Byte> general);
   [[nodiscard]] std::vector<Byte>
   interrupt(InterruptRequest request, InterruptFrame frame, Byte next_pc);
   [[nodiscard]] std::vector<Byte> wake();
@@ -61,6 +65,14 @@ private:
   void clock(unsigned cycles);
   void control_clock(const Instruction &instruction);
   void yield_boundary();
+  void resident_grant(const ResidentPlan &plan,
+                      std::span<const BlockInstruction> suffix,
+                      Label &general);
+  void resident_body(const ResidentPlan &plan, bool live);
+  void resident_operation(const ResidentOperation &operation, bool live);
+  void resident_calculate(const ResidentOperation &operation);
+  void resident_flags(const ResidentOperation &operation);
+  void resident_operand(const ResidentOperation &operation);
   void advance(unsigned amount);
   void add_word(Reg target, Reg source, int amount);
   void mask(Reg target, Reg source, std::uint32_t bits);
