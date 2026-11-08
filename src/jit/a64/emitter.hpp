@@ -68,10 +68,14 @@ private:
   void resident_grant(const ResidentPlan &plan,
                       std::span<const BlockInstruction> suffix,
                       Label &general);
+  void resident_prepare(const ResidentPlan &plan);
+  void resident_store(const ResidentOperation &operation);
   void resident_body(const ResidentPlan &plan, bool live);
   void resident_operation(const ResidentOperation &operation, bool live);
   void resident_calculate(const ResidentOperation &operation);
   void resident_flags(const ResidentOperation &operation);
+  void resident_memory(Reg value, const ResidentOperation &operation, bool write);
+  void resident_multiply(const ResidentOperation &operation, bool live);
   void resident_operand(const ResidentOperation &operation);
   void advance(unsigned amount);
   void add_word(Reg target, Reg source, int amount);
@@ -109,6 +113,8 @@ private:
   void math(const Instruction &operation);
   void divide(MathOp operation);
   void state_byte(StateField field, Byte value);
+  bool swapped_d_ = false;
+  const Byte *resident_base_ = nullptr;
   Code code_;
   const Memory &memory_;
   Label failure_, done_;

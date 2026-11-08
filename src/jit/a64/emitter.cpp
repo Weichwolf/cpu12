@@ -92,8 +92,15 @@ void Emitter::mask(const Reg target, const Reg source, const std::uint32_t bits)
 }
 
 void Emitter::add_word(const Reg target, const Reg source, const int amount) {
-  code_.constant(Reg::x17, static_cast<Address>(amount));
-  code_.alu(Alu::add, target, source, Reg::x17);
+  constexpr int maximum = 0xfff;
+  if (amount >= 0 && amount <= maximum) {
+    code_.add(target, source, static_cast<std::uint16_t>(amount));
+  } else if (amount < 0 && amount >= -maximum) {
+    code_.subtract(target, source, static_cast<std::uint16_t>(-amount));
+  } else {
+    code_.constant(Reg::x17, static_cast<Address>(amount));
+    code_.alu(Alu::add, target, source, Reg::x17);
+  }
   code_.extract(target, target, 0, word_bits);
 }
 
@@ -114,7 +121,7 @@ Reg Emitter::index_base(const IndexBase base) {
 void Emitter::load_target(const Reg target, const Instruction &operation) {
   code_.extract(target,
                 operation.word ? word_target(operation.target) : d,
-                operation.word || operation.accumulator_b ? 0U : byte_bits,
+                operation.word || operation.accumulator_b != swapped_d_ ? 0U : byte_bits,
                 operation.word ? word_bits : byte_bits);
 }
 
@@ -122,10 +129,7 @@ void Emitter::store_target(const Reg value, const Instruction &operation) {
   if (operation.word) {
     code_.extract(word_target(operation.target), value, 0, word_bits);
   } else {
-    code_.extract(Reg::x6, value, 0, byte_bits);
-    mask(d, d, operation.accumulator_b ? byte_mask << byte_bits : byte_mask);
-    if (!operation.accumulator_b) { code_.shift(Shift::left, Reg::x6, Reg::x6, byte_bits); }
-    code_.alu(Alu::bit_or, d, d, Reg::x6);
+    code_.insert(d, value, operation.accumulator_b != swapped_d_ ? 0U : byte_bits, byte_bits);
   }
 }
 

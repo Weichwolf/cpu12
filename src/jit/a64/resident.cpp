@@ -10,6 +10,7 @@
 #include "jit/block.hpp"
 #include "runtime.hpp"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <span>
@@ -74,15 +75,67 @@ void Emitter::resident_grant(const ResidentPlan &plan,
   code_.branch_far(Condition::no_carry, general);
 }
 
+void Emitter::resident_memory(const Reg value,
+                              const ResidentOperation &operation,
+                              const bool write) {
+  const auto address = reinterpret_cast<std::uintptr_t>(operation.pointer);
+  const auto base = reinterpret_cast<std::uintptr_t>(resident_base_);
+  const auto scale = operation.instruction.word ? 2U : 1U;
+  constexpr std::uintptr_t maximum_offset = 4095;
+  const bool relative =
+      address >= base && address - base <= maximum_offset * scale && (address - base) % scale == 0;
+  auto pointer = Reg::x16;
+  const std::size_t offset = relative ? static_cast<std::size_t>(address - base) : 0;
+  if (!relative) {
+    pointer = Reg::x15;
+    code_.constant(pointer, address);
+  }
+  const auto access = operation.instruction.word ? Access::half : Access::byte;
+  if (write) {
+    code_.store(value, pointer, offset, access);
+  } else {
+    code_.load(value, pointer, offset, access);
+  }
+}
+
 void Emitter::resident_operand(const ResidentOperation &operation) {
   const auto &instruction = operation.instruction;
-  if (operation.pointer == nullptr) {
+  constexpr unsigned vector_slot_bias = 15;
+  if (operation.cached_operand) {
+    code_.move(Reg::x1, Reg::x8, Width::w32);
+  } else if (operation.value_slot != 0 && !operation.fill_value) {
+    code_.scalar_move(Reg::x1, operation.value_slot + vector_slot_bias, false);
+  } else if (operation.forwarded_word != 0) {
+    constexpr std::array words{Reg::zr, x, y, d, Reg::zr, stack};
+    code_.extract(
+        Reg::x1, words.at(operation.forwarded_word), operation.forwarded_shift, word_bits);
+  } else if (operation.pointer == nullptr) {
     code_.constant(Reg::x1, instruction.operand);
-    return;
+  } else {
+    resident_memory(Reg::x1, operation, false);
+    if (instruction.word) { code_.reverse_half(Reg::x1, Reg::x1); }
   }
-  code_.constant(Reg::x15, reinterpret_cast<std::uintptr_t>(operation.pointer));
-  code_.load(Reg::x1, Reg::x15, 0, instruction.word ? Access::half : Access::byte);
-  if (instruction.word) { code_.reverse_half(Reg::x1, Reg::x1); }
+  if (operation.value_slot != 0 && operation.fill_value) {
+    code_.scalar_move(Reg::x1, operation.value_slot + vector_slot_bias, true);
+  }
+}
+
+void Emitter::resident_multiply(const ResidentOperation &operation, const bool live) {
+  const bool sign = operation.instruction.math == MathOp::multiply_signed;
+  code_.extract(Reg::x0, d, 0, word_bits, Width::w32, sign);
+  code_.extract(Reg::x1, y, 0, word_bits, Width::w32, sign);
+  code_.multiply(d, Reg::x0, Reg::x1);
+  code_.extract(y, d, word_bits, word_bits);
+  const auto changed = live ? operation.flags : 0;
+  if (changed == 0) { return; }
+  code_.move(Reg::x2, d, Width::w32);
+  flags(2 * word_bits, {.changed = changed & ~flag_c});
+  if ((changed & flag_c) != 0) {
+    mask(Reg::x4, Reg::x4, byte_mask ^ flag_c);
+    code_.extract(Reg::x5, d, word_bits - 1, 1);
+    code_.alu(Alu::bit_or, Reg::x4, Reg::x4, Reg::x5);
+  }
+  code_.move(ccr, Reg::x4, Width::w32);
 }
 
 void Emitter::resident_operation(const ResidentOperation &operation, const bool live) {
@@ -98,32 +151,47 @@ void Emitter::resident_operation(const ResidentOperation &operation, const bool 
     add_word(word_target(instruction.target), word_target(instruction.target), increment ? 1 : -1);
     code_.move(Reg::x2, word_target(instruction.target), Width::w32);
   } else if (kind == Kind::multiply_divide) {
-    math(instruction);
+    resident_multiply(operation, live);
     return;
   } else if (kind == Kind::register_operation) {
     load_target(Reg::x0, instruction);
     code_.shift(Shift::left, Reg::x2, Reg::x0, 1);
     store_target(Reg::x2, instruction);
   } else if (kind == Kind::store) {
-    load_target(Reg::x2, instruction);
-    code_.constant(Reg::x15, reinterpret_cast<std::uintptr_t>(operation.pointer));
-    if (instruction.word) { code_.reverse_half(Reg::x3, Reg::x2); }
-    code_.store(instruction.word ? Reg::x3 : Reg::x2,
-                Reg::x15,
-                0,
-                instruction.word ? Access::half : Access::byte);
+    resident_store(operation);
   } else {
     if ((kind == Kind::compare || kind == Kind::bit_test) && changed == 0) { return; }
-    resident_calculate(operation);
+    auto value = operation;
+    if (!live) { value.flags = 0; }
+    resident_calculate(value);
   }
   if (changed != 0) { resident_flags(operation); }
+}
+
+void Emitter::resident_store(const ResidentOperation &operation) {
+  const auto &instruction = operation.instruction;
+  load_target(Reg::x2, instruction);
+  if (instruction.word) { code_.reverse_half(Reg::x3, Reg::x2); }
+  resident_memory(instruction.word ? Reg::x3 : Reg::x2, operation, true);
+  if (operation.cache_store) { code_.move(Reg::x8, Reg::x2, Width::w32); }
+  if (operation.value_slot != 0 && operation.fill_value) {
+    constexpr unsigned vector_slot_bias = 15;
+    code_.scalar_move(Reg::x2, operation.value_slot + vector_slot_bias, true);
+  }
 }
 
 void Emitter::resident_calculate(const ResidentOperation &operation) {
   const auto &instruction = operation.instruction;
   const auto kind = instruction.kind;
   resident_operand(operation);
-  load_target(Reg::x0, instruction);
+  const bool byte_low = !instruction.word && instruction.accumulator_b != swapped_d_;
+  if (kind != Kind::load) {
+    if (operation.flags == 0 && (instruction.word || byte_low)) {
+      code_.move(Reg::x0, instruction.word ? word_target(instruction.target) : d, Width::w32);
+    } else {
+      load_target(Reg::x0, instruction);
+    }
+  }
   if (kind == Kind::load) {
     code_.move(Reg::x2, Reg::x1, Width::w32);
   } else {
@@ -159,7 +227,33 @@ void Emitter::resident_flags(const ResidentOperation &operation) {
 }
 
 void Emitter::resident_body(const ResidentPlan &plan, const bool live) {
-  for (const auto &operation : plan.operations) { resident_operation(operation, live); }
+  for (const auto &operation : plan.operations) {
+    if (!operation.initial_load) { resident_operation(operation, live); }
+  }
+}
+
+void Emitter::resident_prepare(const ResidentPlan &plan) {
+  swapped_d_ = plan.swapped_d;
+  if (swapped_d_) { code_.reverse_half(d, d); }
+  resident_base_ = plan.base;
+  for (const auto &operation : plan.operations) {
+    if (operation.pointer != nullptr && reinterpret_cast<std::uintptr_t>(operation.pointer) <
+                                            reinterpret_cast<std::uintptr_t>(resident_base_)) {
+      resident_base_ = operation.pointer;
+    }
+  }
+  if (resident_base_ != nullptr) {
+    code_.constant(Reg::x16, reinterpret_cast<std::uintptr_t>(resident_base_));
+  }
+  for (auto operation : plan.operations) {
+    operation.flags = 0;
+    if (operation.initial_load) { resident_operation(operation, false); }
+    if (operation.cached_operand) {
+      operation.cached_operand = false;
+      resident_operand(operation);
+      code_.move(Reg::x8, Reg::x1, Width::w32);
+    }
+  }
 }
 
 std::vector<Byte> Emitter::resident(const ResidentPlan &plan,
@@ -168,6 +262,7 @@ std::vector<Byte> Emitter::resident(const ResidentPlan &plan,
   Label fallback;
   resident_grant(plan, suffix, fallback);
   begin(true);
+  resident_prepare(plan);
   if (plan.loop) {
     Label repeat;
     Label final;
@@ -207,6 +302,8 @@ std::vector<Byte> Emitter::resident(const ResidentPlan &plan,
                  std::uint32_t{last.pc} |
                      (std::uint32_t{last.instruction.opcode} << native_opcode_shift));
   code_.store(Reg::x17, Reg::sp, location_offset);
+  if (swapped_d_) { code_.reverse_half(d, d); }
+  swapped_d_ = false;
   if (!suffix.empty()) { sequence(suffix); }
   static_cast<void>(finish());
   code_.bind(fallback);

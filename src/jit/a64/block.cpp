@@ -186,7 +186,7 @@ std::vector<Byte> Emitter::block(const std::span<const BlockInstruction> operati
     prefix = prefix.first(prefix.size() - 1);
   }
   if (const auto plan = resident_plan(prefix, memory_);
-      plan && plan->indexed_regions.empty() && (!cyclic || plan->loop)) {
+      plan && plan->indexed_regions.empty() && (tail.empty() || plan->loop)) {
     return Emitter(memory_).resident(*plan, operations.subspan(prefix.size()), general);
   }
   return general;

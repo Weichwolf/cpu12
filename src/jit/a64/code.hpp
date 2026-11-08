@@ -97,6 +97,9 @@ public:
   void move(Reg target, Reg source, Width width = Width::x64);
   void alu(Alu operation, Reg target, Reg left, Reg right, Width width = Width::w32);
   void add(Reg target, Reg source, std::uint16_t value, Width width = Width::w32);
+  void subtract(Reg target, Reg source, std::uint16_t value, Width width = Width::w32);
+  void insert(Reg target, Reg source, unsigned first, unsigned count);
+  void scalar_move(Reg value, unsigned vector, bool to_vector);
   void extract(Reg target,
                Reg source,
                unsigned first,

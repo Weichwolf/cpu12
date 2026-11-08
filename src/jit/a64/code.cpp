@@ -75,6 +75,36 @@ void Code::add(const Reg target, const Reg source, const std::uint16_t value, co
        (reg(source) << register_shift) | reg(target));
 }
 
+void Code::subtract(const Reg target,
+                    const Reg source,
+                    const std::uint16_t value,
+                    const Width width) {
+  constexpr unsigned maximum = 0xfff;
+  if (value > maximum) { throw std::invalid_argument("A64 subtract immediate exceeds 12 bits"); }
+  constexpr std::uint32_t opcode = 0x51000000;
+  word(wide(width) | opcode | (std::uint32_t{value} << immediate_shift) |
+       (reg(source) << register_shift) | reg(target));
+}
+
+void Code::insert(const Reg target, const Reg source, const unsigned first, const unsigned count) {
+  constexpr unsigned bits = 32;
+  if (count == 0 || first >= bits || count > bits - first) {
+    throw std::invalid_argument("Invalid A64 insertion extent");
+  }
+  constexpr std::uint32_t opcode = 0x33000000;
+  word(opcode | (((bits - first) % bits) << operand_shift) | ((count - 1) << immediate_shift) |
+       (reg(source) << register_shift) | reg(target));
+}
+
+void Code::scalar_move(const Reg value, const unsigned vector, const bool to_vector) {
+  constexpr unsigned vector_registers = 32;
+  if (vector >= vector_registers) { throw std::invalid_argument("Invalid A64 vector register"); }
+  constexpr std::uint32_t to_scalar = 0x1e270000;
+  constexpr std::uint32_t from_scalar = 0x1e260000;
+  word(to_vector ? to_scalar | (reg(value) << register_shift) | vector
+                 : from_scalar | (vector << register_shift) | reg(value));
+}
+
 void Code::extract(const Reg target,
                    const Reg source,
                    const unsigned first,

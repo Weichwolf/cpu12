@@ -55,11 +55,19 @@ void encodings() {
   code.multiply_subtract(Reg::x0, Reg::x1, Reg::x2, Reg::x3);
   code.call(Reg::x16);
   code.return_();
-  constexpr std::array<std::uint32_t, 24> expected{
+  code.insert(Reg::x21, Reg::x2, 8, 8);
+  code.insert(Reg::x0, Reg::x1, 0, 16);
+  code.subtract(Reg::x0, Reg::x1, 1);
+  constexpr std::uint16_t maximum_immediate = 4095;
+  code.subtract(Reg::x2, Reg::x3, maximum_immediate, Width::x64);
+  code.scalar_move(Reg::x2, 16, true);
+  code.scalar_move(Reg::x2, 16, false);
+  constexpr std::array<std::uint32_t, 30> expected{
       0x0b020020, 0x6b020020, 0x0a220020, 0x53185c20, 0x53087c20, 0x13087c20,
       0x13812020, 0x5ac00420, 0x13001c20, 0x39401420, 0x79400c20, 0xf9400420,
       0xa9bf53f3, 0xa8c153f3, 0x1a9f17e0, 0x1a820020, 0xd53b4200, 0xd51b4200,
-      0x1b027c20, 0x1ac20c20, 0x1ac20820, 0x1b028c20, 0xd63f0200, 0xd65f03c0};
+      0x1b027c20, 0x1ac20c20, 0x1ac20820, 0x1b028c20, 0xd63f0200, 0xd65f03c0,
+      0x33181c55, 0x33003c20, 0x51000420, 0xd13ffc62, 0x1e270050, 0x1e260202};
   for (std::size_t index = 0; index < expected.size(); ++index) {
     require(instruction(code, index) == expected[index], "A64 encoding differs from ISA reference");
   }
