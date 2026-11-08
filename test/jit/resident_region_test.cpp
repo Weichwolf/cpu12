@@ -34,7 +34,7 @@ constexpr unsigned frame_bytes = 9, stack_bytes = 16;
 struct Form {
   bool memory = false, y = false, increment = false, clobber = false, byte_store = false;
   bool compare_tail = false;
-  bool stack_loaded = false;
+  bool stack_loaded = false, reread = false;
   Opcode backedge = Opcode::bne_relative;
 };
 
@@ -60,7 +60,9 @@ Program program(const Form form, const Opcode guard, const bool stop = false) {
   Program result{.code = {}, .guard = guard, .stop = stop};
   auto &code = result.code;
   append(code, Opcode::ldd_extended, data);
-  append(code, Opcode::addd_immediate, bias);
+  append(code,
+         form.reread ? Opcode::addd_extended : Opcode::addd_immediate,
+         form.reread ? data : bias);
   append(code,
          form.memory ? Opcode::cpd_extended : Opcode::cpd_immediate,
          form.memory ? data + 6 : limit);
@@ -218,7 +220,7 @@ void instruction(Snapshot &snapshot, const Form form, const Program &code) {
     transfer(state, state.d);
     state.pc += 3;
   } else if (pc == entry + 3) {
-    state.d = arithmetic(state, bias);
+    state.d = arithmetic(state, form.reread ? word(snapshot, 0) : bias);
     state.pc += 3;
   } else if (pc == entry + head_compare) {
     static_cast<void>(arithmetic(state, form.memory ? word(snapshot, 6) : limit, true));
@@ -809,6 +811,8 @@ int main() {
     const auto readonly = readonly_d_cases();
     constexpr std::array forms{
         Form{},
+        Form{.reread = true},
+        Form{.memory = true, .y = true, .reread = true},
         Form{.memory = true, .y = true},
         Form{.increment = true},
         Form{.memory = true, .clobber = true},

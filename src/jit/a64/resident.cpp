@@ -378,7 +378,13 @@ void Emitter::resident_flags(const ResidentOperation &operation) {
 void Emitter::resident_body(const ResidentPlan &plan, const bool live) {
   resident_sum_live_ = false;
   for (const auto &operation : plan.operations) {
-    if (!operation.initial_load) { resident_operation(operation, live); }
+    if (!operation.initial_load) {
+      resident_operation(operation, live);
+    } else if (operation.value_slot != 0 && operation.fill_value) {
+      load_target(Reg::x1, operation.instruction);
+      constexpr unsigned vector_slot_bias = 15;
+      code_.scalar_move(Reg::x1, operation.value_slot + vector_slot_bias, true);
+    }
   }
 }
 
