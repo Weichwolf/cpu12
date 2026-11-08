@@ -256,6 +256,14 @@ void Code::reverse_half(const Reg target, const Reg source, const Width width) {
   word(wide(width) | opcode | (reg(source) << register_shift) | reg(target));
 }
 
+void Code::reverse_bytes(const Reg target, const Reg source, const Width width) {
+  read_register(source);
+  write_register(target);
+  constexpr std::uint32_t narrow = 0x5ac00800;
+  constexpr std::uint32_t full = 0xdac00c00;
+  word((width == Width::x64 ? full : narrow) | (reg(source) << register_shift) | reg(target));
+}
+
 void Code::memory(const Reg value,
                   const Reg base,
                   const std::size_t offset,

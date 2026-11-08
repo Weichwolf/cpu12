@@ -97,9 +97,17 @@ void Emitter::resident_value(const Reg value, const unsigned slot, const bool re
 void Emitter::resident_memory(const Reg value,
                               const ResidentOperation &operation,
                               const bool write) {
+  resident_memory(
+      value, operation, write, operation.instruction.word ? Access::half : Access::byte);
+}
+
+void Emitter::resident_memory(const Reg value,
+                              const ResidentOperation &operation,
+                              const bool write,
+                              const Access access) {
   const auto address = reinterpret_cast<std::uintptr_t>(operation.pointer);
   const auto base = reinterpret_cast<std::uintptr_t>(resident_base_);
-  const auto scale = operation.instruction.word ? 2U : 1U;
+  const auto scale = 1U << static_cast<unsigned>(access);
   constexpr std::uintptr_t maximum_offset = 4095;
   const bool relative =
       address >= base && address - base <= maximum_offset * scale && (address - base) % scale == 0;
@@ -109,7 +117,6 @@ void Emitter::resident_memory(const Reg value,
     pointer = Reg::x15;
     code_.constant(pointer, address);
   }
-  const auto access = operation.instruction.word ? Access::half : Access::byte;
   if (write) {
     code_.store(value, pointer, offset, access);
   } else {
@@ -117,11 +124,50 @@ void Emitter::resident_memory(const Reg value,
   }
 }
 
+bool Emitter::resident_pair(const Byte *first, const Byte *second) const {
+  const auto address = reinterpret_cast<std::uintptr_t>(first);
+  const auto next = reinterpret_cast<std::uintptr_t>(second);
+  if (first == nullptr || next <= address || next - address != 2) { return false; }
+  constexpr unsigned bytes = 4;
+  return std::ranges::any_of(memory_.regions(), [address](const auto &region) {
+    const auto base = reinterpret_cast<std::uintptr_t>(region.bytes.data());
+    return region.writable && region.known.empty() && region.bytes.size() >= bytes &&
+           address >= base && address - base <= region.bytes.size() - bytes;
+  });
+}
+
+bool Emitter::resident_product_store(const ResidentPlan &plan,
+                                     const std::size_t index,
+                                     const std::span<const StoreMode> stores,
+                                     const bool live) {
+  if (index == 0 || index + 1 >= plan.operations.size()) { return false; }
+  const auto &product = plan.operations[index - 1].instruction;
+  if (product.kind != Kind::multiply_divide ||
+      (product.math != MathOp::multiply_unsigned && product.math != MathOp::multiply_signed)) {
+    return false;
+  }
+  const auto &high = plan.operations[index];
+  const auto &low = plan.operations[index + 1];
+  const auto eligible = [this, live](const auto &operation) {
+    return operation.instruction.kind == Kind::store && operation.instruction.word &&
+           (!live || operation.flags == 0) && operation.value_slot == 0 && !operation.cache_store &&
+           resident_word(operation) == Reg::zr && !resident_deferred(operation);
+  };
+  if (!eligible(high) || !eligible(low) || high.instruction.target != WordTarget::y ||
+      low.instruction.target != WordTarget::d || stores[index] != StoreMode::write ||
+      stores[index + 1] != StoreMode::write || !resident_pair(high.pointer, low.pointer)) {
+    return false;
+  }
+  code_.reverse_bytes(Reg::x3, d);
+  resident_memory(Reg::x3, high, true, Access::word);
+  return true;
+}
+
 void Emitter::resident_operand(const ResidentOperation &operation, const Reg value) {
   const auto &instruction = operation.instruction;
   const auto cached = resident_word(operation);
   if (cached != Reg::zr) {
-    code_.move(value, cached, Width::w32);
+    code_.extract(value, cached, 0, word_bits);
   } else if (instruction.addressing == Addressing::indexed) {
     code_.load(value, Reg::x7, 0, Access::half);
     code_.reverse_half(value, value);
@@ -145,7 +191,10 @@ void Emitter::resident_operand(const ResidentOperation &operation, const Reg val
   }
 }
 
-bool Emitter::resident_product(const ResidentPlan &plan, const std::size_t index, const bool live) {
+bool Emitter::resident_product(const ResidentPlan &plan,
+                               const std::size_t index,
+                               const bool live,
+                               const std::span<const StoreMode> stores) {
   if (index + 2 >= plan.operations.size()) { return false; }
   const auto &left = plan.operations[index];
   const auto &right = plan.operations[index + 1];
@@ -160,20 +209,31 @@ bool Emitter::resident_product(const ResidentPlan &plan, const std::size_t index
   const auto first = resident_word(left);
   const auto second = resident_word(right);
   if (first == Reg::zr || second == Reg::zr) { return false; }
-  resident_multiply(product, live, first == second, {first, second});
+  resident_multiply(product,
+                    live,
+                    first == second,
+                    {first, second},
+                    resident_y_live(plan, index + 2, live, stores));
   return true;
 }
 
 void Emitter::resident_multiply(const ResidentOperation &operation,
                                 const bool live,
                                 const bool square,
-                                const std::array<Reg, 2> inputs) {
+                                const std::array<Reg, 2> inputs,
+                                const bool publish_y) {
   d_word_ = false;
   const bool sign = operation.instruction.math == MathOp::multiply_signed;
-  code_.extract(Reg::x0, inputs[0], 0, word_bits, Width::w32, sign);
-  if (!square) { code_.extract(Reg::x1, inputs[1], 0, word_bits, Width::w32, sign); }
-  code_.multiply(d, Reg::x0, square ? Reg::x0 : Reg::x1);
-  code_.extract(y, d, word_bits, word_bits);
+  const auto operand = [this, sign](const Reg source, const Reg scratch) {
+    const auto cached = std::span(region_values).first(resident_words_.size());
+    if (sign && std::ranges::find(cached, source) != cached.end()) { return source; }
+    code_.extract(scratch, source, 0, word_bits, Width::w32, sign);
+    return scratch;
+  };
+  const auto first = operand(inputs[0], Reg::x0);
+  const auto second = square ? first : operand(inputs[1], Reg::x1);
+  code_.multiply(d, first, second);
+  if (publish_y) { code_.extract(y, d, word_bits, word_bits); }
   const auto changed = live ? operation.flags : 0;
   if (changed == 0) { return; }
   code_.move(Reg::x2, d, Width::w32);
@@ -254,7 +314,16 @@ void Emitter::resident_update(const ResidentOperation &operation, const bool liv
     }
     return;
   }
-  add_word(word_target(instruction.target), word_target(instruction.target), increment ? 1 : -1);
+  const auto target = word_target(instruction.target);
+  if (target == region_counter_) {
+    if (increment) {
+      code_.add(target, target, 1);
+    } else {
+      code_.subtract(target, target, 1);
+    }
+  } else {
+    add_word(target, target, increment ? 1 : -1);
+  }
   if (changed != 0) {
     code_.move(Reg::x2, word_target(instruction.target), Width::w32);
     resident_flags(operation);
@@ -290,11 +359,7 @@ void Emitter::resident_cache_store(const ResidentOperation &operation, const Reg
   if (operation.cache_store && value != Reg::x8) { code_.move(Reg::x8, value, Width::w32); }
   const auto cached = resident_word(operation);
   if (cached != Reg::zr) {
-    if (value != d || d_word_) {
-      code_.move(cached, value, Width::w32);
-    } else {
-      code_.extract(cached, value, 0, word_bits);
-    }
+    code_.extract(cached, value, 0, word_bits, Width::w32, true);
   } else if (operation.value_slot != 0 && operation.fill_value) {
     resident_value(value, operation.value_slot, false);
   }
@@ -388,12 +453,18 @@ void Emitter::resident_body(const ResidentPlan &plan, const bool live) {
   const auto stores = resident_stores(plan);
   for (std::size_t index = 0; index < plan.operations.size(); ++index) {
     const auto &operation = plan.operations[index];
-    if (resident_product(plan, index, live)) {
+    if (!resident_words_.empty() && resident_product(plan, index, live, stores)) {
       index += 2;
       continue;
     }
     if (resident_square_input(plan, index)) {
-      resident_multiply(plan.operations[++index], live, true);
+      ++index;
+      resident_multiply(
+          plan.operations[index], live, true, {d, y}, resident_y_live(plan, index, live, stores));
+      continue;
+    }
+    if (resident_product_store(plan, index, stores, live)) {
+      ++index;
       continue;
     }
     if (!operation.initial_load) {
@@ -492,10 +563,12 @@ std::vector<Byte> Emitter::resident(const ResidentPlan &plan,
     code_.extract(x, x, 0, word_bits);
   }
   const auto &last = plan.operations.back();
-  code_.constant(pc,
-                 mode == ResidentMode::bounded
-                     ? plan.operations.front().pc
-                     : static_cast<Address>(last.pc + last.instruction.length));
+  if (!terminal_exit_) {
+    code_.constant(pc,
+                   mode == ResidentMode::bounded
+                       ? plan.operations.front().pc
+                       : static_cast<Address>(last.pc + last.instruction.length));
+  }
   if (!plan.loop && last.instruction.kind == Kind::branch && last.instruction.condition != 1) {
     if (last.instruction.condition == 0) {
       advance(last.instruction.operand);

@@ -79,13 +79,16 @@ void encodings() {
   code.constant(Reg::x5, shifted_word, Width::w32);
   code.constant(Reg::x6, top_word);
   code.constant(Reg::x7, 0, Width::w32);
-  constexpr std::array<std::uint32_t, 41> expected{
+  code.reverse_bytes(Reg::x4, Reg::x5);
+  code.reverse_bytes(Reg::x6, Reg::x7, Width::x64);
+  constexpr std::array<std::uint32_t, 43> expected{
       0x0b020020, 0x6b020020, 0x0a220020, 0x53185c20, 0x53087c20, 0x13087c20, 0x13812020,
       0x5ac00420, 0x13001c20, 0x39401420, 0x79400c20, 0xf9400420, 0xa9bf53f3, 0xa8c153f3,
       0x1a9f17e0, 0x1a820020, 0xd53b4200, 0xd51b4200, 0x1b027c20, 0x1ac20c20, 0x1ac20820,
       0x1b028c20, 0xd63f0200, 0xd65f03c0, 0x33181c55, 0x33003c20, 0x51000420, 0xd13ffc62,
       0x1e270050, 0x1e260202, 0x711002bf, 0xf13ffc7f, 0x7a4f3040, 0xfa4a2120, 0xb3703ec0,
-      0xb3603ee0, 0xb3503c20, 0xdac00400, 0x52a00025, 0xd2e00026, 0x52800007};
+      0xb3603ee0, 0xb3503c20, 0xdac00400, 0x52a00025, 0xd2e00026, 0x52800007, 0x5ac008a4,
+      0xdac00ce6};
   for (std::size_t index = 0; index < expected.size(); ++index) {
     require(instruction(code, index) == expected[index], "A64 encoding differs from ISA reference");
   }

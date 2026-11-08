@@ -102,6 +102,7 @@ void Emitter::ram_access(const Ram ram, const DataAccess access, const MemoryExi
 }
 
 void Emitter::bus_access(const DataAccess access) {
+  if (terminal_exit_) { code_.constant(pc, terminal_exit_->pc); }
   publish();
   if (access.write) { code_.extract(Reg::x2, Reg::x0, 0, access.word ? word_bits : byte_bits); }
   code_.move(Reg::x0, context);

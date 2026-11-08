@@ -88,6 +88,7 @@ private:
                 Admission admission = Admission::checked);
   void commit(unsigned instructions, Progress elapsed, Admission admission = Admission::checked);
   void clock(unsigned cycles);
+  void clock(unsigned cycles, Reg source);
   void commit_owner(const Instruction &instruction, Progress elapsed, Admission admission);
   void control_clock(const Instruction &instruction);
   void yield_boundary();
@@ -129,11 +130,25 @@ private:
   void resident_flags(const ResidentOperation &operation);
   void resident_value(Reg value, unsigned slot, bool read);
   void resident_memory(Reg value, const ResidentOperation &operation, bool write);
-  [[nodiscard]] bool resident_product(const ResidentPlan &plan, std::size_t index, bool live);
+  void resident_memory(Reg value, const ResidentOperation &operation, bool write, Access access);
+  [[nodiscard]] bool resident_pair(const Byte *first, const Byte *second) const;
+  [[nodiscard]] bool resident_product_store(const ResidentPlan &plan,
+                                            std::size_t index,
+                                            std::span<const StoreMode> stores,
+                                            bool live);
+  [[nodiscard]] bool resident_product(const ResidentPlan &plan,
+                                      std::size_t index,
+                                      bool live,
+                                      std::span<const StoreMode> stores);
+  [[nodiscard]] bool resident_y_live(const ResidentPlan &plan,
+                                     std::size_t index,
+                                     bool live,
+                                     std::span<const StoreMode> stores) const;
   void resident_multiply(const ResidentOperation &operation,
                          bool live,
                          bool square = false,
-                         std::array<Reg, 2> inputs = {d, y});
+                         std::array<Reg, 2> inputs = {d, y},
+                         bool publish_y = true);
   void resident_operand(const ResidentOperation &operation, Reg value = Reg::x1);
   void advance(unsigned amount);
   void add_word(Reg target, Reg source, int amount);
@@ -185,6 +200,7 @@ private:
   unsigned resident_gpr_slots_ = 0;
   Reg pending_progress_ = Reg::zr;
   Reg resident_counter_ = Reg::zr;
+  Reg region_counter_ = Reg::zr;
   const ResidentOperation *resident_sum_ = nullptr;
   bool resident_sum_live_ = false;
   bool resident_index_elided_ = false;

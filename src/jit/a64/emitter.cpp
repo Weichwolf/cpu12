@@ -159,6 +159,10 @@ void Emitter::add_word(const Reg target, const Reg source, const int amount) {
 
 void Emitter::advance(const unsigned amount) {
   if (!policy_.advance_pc) { return; }
+  if (terminal_exit_) {
+    code_.constant(pc, static_cast<Address>(terminal_exit_->pc + amount));
+    return;
+  }
   add_word(pc, pc, static_cast<int>(amount));
 }
 

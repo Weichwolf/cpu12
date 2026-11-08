@@ -54,16 +54,19 @@ std::vector<BlockInstruction> loop_tail(const std::span<const BlockInstruction> 
 
 void Emitter::clock(const unsigned cycles) {
   if (cycles == 0) { return; }
+  clock(cycles, pending_progress_);
+  pending_progress_ = Reg::zr;
+}
+
+void Emitter::clock(const unsigned cycles, Reg source) {
+  if (cycles == 0) { return; }
   constexpr auto offset = offsetof(NativeContext, progress) + offsetof(Progress, estimated_cycles);
-  auto source = pending_progress_;
   if (source == Reg::zr) {
     code_.load(Reg::x9, context, offset, Access::doubleword);
     source = Reg::x9;
   }
-  code_.constant(Reg::x10, cycles);
-  code_.alu(Alu::add, Reg::x9, source, Reg::x10, Width::x64);
+  code_.add(Reg::x9, source, cycles, Reg::x10, Width::x64);
   code_.store(Reg::x9, context, offset, Access::doubleword);
-  pending_progress_ = Reg::zr;
 }
 
 void Emitter::commit(const unsigned instructions,
@@ -71,15 +74,26 @@ void Emitter::commit(const unsigned instructions,
                      const Admission admission) {
   if (instructions == 0) { return; }
   clock(static_cast<unsigned>(elapsed.estimated_cycles));
-  code_.constant(Reg::x17, instructions);
-  code_.alu(Alu::add, retired, retired, Reg::x17);
-  if (admission == Admission::checked) { code_.alu(Alu::subtract, remaining, remaining, Reg::x17); }
+  constexpr unsigned maximum_immediate = 4095;
+  if (instructions <= maximum_immediate) {
+    const auto count = static_cast<std::uint16_t>(instructions);
+    code_.add(retired, retired, count);
+    if (admission == Admission::checked) { code_.subtract(remaining, remaining, count); }
+  } else {
+    code_.constant(Reg::x17, instructions);
+    code_.alu(Alu::add, retired, retired, Reg::x17);
+    if (admission == Admission::checked) {
+      code_.alu(Alu::subtract, remaining, remaining, Reg::x17);
+    }
+  }
 }
 
 void Emitter::commit_owner(const Instruction &instruction,
                            const Progress elapsed,
                            const Admission admission) {
-  if (instruction.kind == Kind::stop) {
+  if (terminal_exit_ && instruction.kind == Kind::stop) {
+    commit(1, {}, admission);
+  } else if (instruction.kind == Kind::stop) {
     commit(1, {}, admission);
     const auto timing = instruction_timing(instruction);
     code_.load(

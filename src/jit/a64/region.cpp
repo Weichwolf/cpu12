@@ -58,6 +58,17 @@ bool single_counter(const ResidentPlan &tail) {
          }) == 1;
 }
 
+bool isolated_counter(const ResidentPlan &plan, const WordTarget target) {
+  return std::ranges::all_of(plan.operations, [target](const auto &operation) {
+    const auto &instruction = operation.instruction;
+    const auto kind = instruction.kind;
+    if (instruction.addressing == Addressing::indexed) { return false; }
+    if (kind == Kind::multiply_divide) { return target != WordTarget::y; }
+    return kind == Kind::nop || kind == Kind::branch || kind == Kind::loop ||
+           kind == Kind::register_operation || instruction.target != target;
+  });
+}
+
 std::unordered_set<std::uintptr_t> blocked_words(const ResidentPlan &plan) {
   std::unordered_set<std::uintptr_t> result;
   result.reserve(plan.operations.size() * 2);
@@ -86,27 +97,38 @@ void Emitter::resident_region_cache(const ResidentPlan &plan) {
     const auto first =
         std::ranges::find(plan.operations, operation.pointer, &ResidentOperation::pointer);
     if (first->initial_load && first->instruction.word) {
-      load_target(target, first->instruction);
+      code_.extract(target, word_target(first->instruction.target), 0, word_bits, Width::w32, true);
     } else if (first->instruction.kind != Kind::store) {
       resident_memory(target, operation, false);
       code_.reverse_half(target, target);
+      code_.extract(target, target, 0, word_bits, Width::w32, true);
     }
   }
 }
 
 void Emitter::resident_writeback(const RegionExit exit) {
-  const auto store = [this](const Byte *pointer) {
-    const ResidentOperation operation{.instruction = {.kind = Kind::store, .word = true},
-                                      .pointer = pointer};
-    code_.reverse_half(Reg::x3, resident_word(operation));
-    resident_memory(Reg::x3, operation, true);
+  const auto store = [this](const std::span<const Byte *const> pointers) {
+    for (std::size_t index = 0; index < pointers.size(); ++index) {
+      const ResidentOperation operation{.instruction = {.kind = Kind::store, .word = true},
+                                        .pointer = pointers[index]};
+      const auto first = resident_word(operation);
+      if (index + 1 < pointers.size() && resident_pair(pointers[index], pointers[index + 1])) {
+        const ResidentOperation next{.instruction = {.word = true}, .pointer = pointers[++index]};
+        code_.insert(first, resident_word(next), word_bits, word_bits);
+        code_.reverse_half(Reg::x3, first);
+        resident_memory(Reg::x3, operation, true, Access::word);
+      } else {
+        code_.reverse_half(Reg::x3, first);
+        resident_memory(Reg::x3, operation, true);
+      }
+    }
   };
-  for (const auto *pointer : head_stores_) { store(pointer); }
+  store(head_stores_);
   Label complete;
   if (exit == RegionExit::head && !tail_stores_.empty()) {
     code_.branch_zero_far(Reg::x11, complete);
   }
-  for (const auto *pointer : tail_stores_) { store(pointer); }
+  store(tail_stores_);
   code_.bind(complete);
 }
 
@@ -146,6 +168,12 @@ void Emitter::resident_compare_flags(const ResidentOperation &operation, const R
 void Emitter::resident_region_exit(const ResidentRegion &region,
                                    const RegionExit exit,
                                    const Publication publication) {
+  if (region_counter_ != Reg::zr && exit == RegionExit::head) {
+    const auto &update = region.tail.operations[region.tail.operations.size() - 2].instruction;
+    const auto operation =
+        update.operation == RegisterOp::index_increment ? Alu::add : Alu::subtract;
+    code_.alu(operation, Reg::x11, Reg::x11, region_counter_);
+  }
   resident_writeback(exit);
   const auto count = region.head.operations.size() + region.tail.operations.size();
   const bool head = exit == RegionExit::head;
@@ -167,10 +195,12 @@ void Emitter::resident_region_exit(const ResidentRegion &region,
     code_.store(Reg::x14, context, progress_offset, Access::doubleword);
   }
   const auto &tail = region.tail.operations.back();
-  code_.constant(pc,
-                 exit == RegionExit::budget
-                     ? region.head.operations.front().pc
-                     : static_cast<Address>(tail.pc + tail.instruction.length));
+  if (!terminal_exit_) {
+    code_.constant(pc,
+                   exit == RegionExit::budget
+                       ? region.head.operations.front().pc
+                       : static_cast<Address>(tail.pc + tail.instruction.length));
+  }
   record_exit({.pc = last.pc, .opcode = last.instruction.opcode});
 }
 
@@ -207,13 +237,18 @@ Reg Emitter::resident_region_tail(const ResidentRegion &region,
   const bool increment = guard.instruction.operation == RegisterOp::index_increment;
   const auto limit = counted && increment ? word_mask : 1U;
   const auto counter = counted ? word_target(guard.instruction.target) : remaining;
-  if (limit == 1) {
-    code_.compare(counter, 1);
+  if (region_counter_ != Reg::zr && increment) {
+    code_.add(Reg::x17, counter, 1);
+    code_.branch_zero_far(Reg::x17, labels.final_tail);
   } else {
-    code_.constant(Reg::x17, limit);
-    code_.compare(counter, Reg::x17);
+    if (limit == 1) {
+      code_.compare(counter, 1);
+    } else {
+      code_.constant(Reg::x17, limit);
+      code_.compare(counter, Reg::x17);
+    }
+    code_.branch_far(Condition::equal, labels.final_tail);
   }
-  code_.branch_far(Condition::equal, labels.final_tail);
   if (form == TailForm::counter && !counted) {
     const auto &update = guard.instruction;
     code_.constant(Reg::x17, update.operation == RegisterOp::index_increment ? word_mask : 1U);
@@ -222,12 +257,12 @@ Reg Emitter::resident_region_tail(const ResidentRegion &region,
                      labels.final_tail);
   }
   resident_body(tail, false);
-  code_.add(Reg::x11, Reg::x11, 1);
+  if (region_counter_ == Reg::zr) { code_.add(Reg::x11, Reg::x11, 1); }
   if (!counted) { code_.subtract(remaining, remaining, 1); }
   code_.branch(labels.repeat);
   code_.bind(labels.final_tail);
   resident_body(tail, true);
-  code_.add(Reg::x11, Reg::x11, 1);
+  if (region_counter_ == Reg::zr) { code_.add(Reg::x11, Reg::x11, 1); }
   if (counted) {
     code_.branch(labels.tail);
   } else {
@@ -251,12 +286,16 @@ std::vector<Byte> Emitter::resident_region(const ResidentRegion &region,
       cycles(region.tail) >=
           instruction_timing(region.head.operations.back().instruction).taken_extra;
   resident_gpr_slots_ = 0;
+  const auto &update = region.tail.operations[region.tail.operations.size() - 2].instruction;
   Label fallback;
   if (counted) {
     terminal_exit_ =
         ExitLocation{.pc = terminal.front().pc, .opcode = terminal.front().instruction.opcode};
     auto admission = combined;
-    const auto &update = region.tail.operations[region.tail.operations.size() - 2].instruction;
+    if (isolated_counter(combined, update.target)) {
+      region_counter_ = word_target(update.target);
+      input_registers_ &= ~(1U << static_cast<unsigned>(region_counter_));
+    }
     admission.loop = true;
     admission.counter_offset =
         update.target == WordTarget::x ? offsetof(Registers, x) : offsetof(Registers, y);
@@ -266,11 +305,18 @@ std::vector<Byte> Emitter::resident_region(const ResidentRegion &region,
     resident_region_grant(region, terminal, fallback);
   }
   begin(EntryMode::resident);
+  if (region_counter_ != Reg::zr) {
+    if (update.operation == RegisterOp::index_increment) {
+      code_.alu(Alu::subtract, region_counter_, Reg::zr, Reg::x11);
+    } else {
+      code_.move(region_counter_, Reg::x11, Width::w32);
+    }
+  }
   if (!counted) { code_.move(remaining, Reg::x11, Width::w32); }
   resident_prepare(combined);
   resident_region_cache(combined);
   resident_region_stores(combined, region.head.operations.size());
-  code_.constant(Reg::x11, 0);
+  if (region_counter_ == Reg::zr) { code_.constant(Reg::x11, 0); }
   auto prefix = region.head;
   prefix.operations.resize(prefix.operations.size() - 2);
   const auto &guard = region.head.operations[region.head.operations.size() - 2];

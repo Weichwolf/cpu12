@@ -6,6 +6,7 @@
 #include "observed_core.hpp"
 #include "resident_fixture.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -450,12 +451,179 @@ template <isa::Opcode opcode, Square form> void squares() {
     }
   }
 }
+
+void packed_case(Device &device,
+                 const math::Operation operation,
+                 const std::array<Byte, address_bytes> &before,
+                 const Registers initial,
+                 const bool divided) {
+  constexpr Address data = 0x4000;
+  std::array<Registers, 6> trace{};
+  trace[0] = initial;
+  trace[1] = math::multiply({.operation = operation, .before = trace[0]}).registers;
+  trace[2] = transfer(trace[1], trace[1].y);
+  trace[3] = transfer(trace[2], trace[2].d);
+  const auto window =
+      static_cast<Address>(((unsigned{trace[1].y} & byte_mask) << 8U) | (trace[1].d >> 8U));
+  trace[4] = transfer(trace[3], window);
+  trace[4].d = window;
+  trace[5] = trace[4];
+  ++trace[5].pc;
+  for (unsigned grant = 1; grant < trace.size(); ++grant) {
+    auto expected = before;
+    if (grant >= 2) {
+      expected[data] = static_cast<Byte>(trace[1].y >> 8U);
+      expected[data + 1] = static_cast<Byte>(trace[1].y & byte_mask);
+    }
+    if (grant >= 3) {
+      expected[data + 2] = static_cast<Byte>(trace[1].d >> 8U);
+      expected[data + 3] = static_cast<Byte>(trace[1].d & byte_mask);
+    }
+    device.ram = before;
+    device.core.set_registers(trace[0]);
+    const auto result = device.core.run(grant);
+    const auto actual = device.core.registers();
+    const bool refused = divided && grant >= 4;
+    const unsigned completed = refused ? 3U : grant;
+    const auto at = refused ? trace[3].pc : trace[grant - 1].pc;
+    RunResult wanted{.retired = completed, .pc = at, .opcode = before[at]};
+    if (refused) {
+      wanted.fault = Fault::memory_read;
+      wanted.address = data + 1;
+      wanted.access_size = 2;
+    }
+    if (result != wanted || actual != trace[completed]) {
+      std::cerr << "packed opcode=" << static_cast<unsigned>(operation) << " grant=" << grant
+                << " input=" << initial.d << ',' << initial.y << " flags=" << unsigned{initial.ccr}
+                << " actual=" << actual.pc << ',' << actual.d << ',' << actual.y << ','
+                << unsigned{actual.ccr} << " expected=" << trace[completed].pc << ','
+                << trace[completed].d << ',' << trace[completed].y << ','
+                << unsigned{trace[completed].ccr} << " retired=" << result.retired
+                << " fault=" << static_cast<unsigned>(result.fault) << " at=" << result.pc
+                << " opcode=" << unsigned{result.opcode} << '\n';
+    }
+    require(result == wanted && actual == trace[completed],
+            "Product stores retain independent full state at every original instruction");
+    require(device.ram == expected,
+            "Product stores and overlapping reads preserve exact RAM across region edges");
+    ++checked;
+  }
+}
+
+template <isa::Opcode opcode> void packed_products() {
+  constexpr auto program = isa::program(isa::opcode<opcode>(),
+                                        isa::opcode<isa::Opcode::sty_extended>(),
+                                        std::array<Byte, 2>{0x40, 0},
+                                        isa::opcode<isa::Opcode::std_extended>(),
+                                        std::array<Byte, 2>{0x40, 2},
+                                        isa::opcode<isa::Opcode::ldd_extended>(),
+                                        std::array<Byte, 2>{0x40, 1},
+                                        isa::nop);
+  constexpr Address data = 0x4000;
+  constexpr auto operation =
+      opcode == isa::Opcode::emuls ? math::Operation::emuls : math::Operation::emul;
+  Device device(program);
+  const auto before = device.ram;
+  const std::array split{
+      device.regions[0],
+      device.regions[1],
+      Ram{.first = device.regions[2].first,
+          .bytes = std::span(device.ram)
+                       .subspan(device.regions[2].first, data + 2U - device.regions[2].first)},
+      Ram{.first = data + 2, .bytes = std::span(device.ram).subspan(data + 2)}};
+  for (const bool divided : {false, true}) {
+    device.core.set_memory(Memory::mapped(divided ? std::span<const Ram>{split}
+                                                  : std::span<const Ram>{device.regions}));
+    for (const Byte flags : {Byte{0}, Byte{byte_mask}}) {
+      for (const auto left : values) {
+        for (const auto right : values) {
+          packed_case(
+              device,
+              operation,
+              before,
+              {.pc = entry, .d = left, .x = marker_x, .y = right, .sp = stack, .ccr = flags},
+              divided);
+        }
+      }
+    }
+  }
+}
+
+template <isa::Opcode counter> void counter_wrap() {
+  constexpr unsigned loop_bytes = 14;
+  constexpr unsigned tail_bytes = 6;
+  constexpr unsigned instructions_per_iteration = 6;
+  constexpr unsigned frame_bytes = 9;
+  constexpr Address data = 0x4000;
+  constexpr bool x_counter = counter == isa::Opcode::dex || counter == isa::Opcode::inx;
+  constexpr auto program = isa::program(isa::opcode<isa::Opcode::ldd_extended>(),
+                                        std::array<Byte, 2>{0x40, 0},
+                                        isa::opcode<isa::Opcode::cpd_immediate>(),
+                                        std::array<Byte, 2>{0, 1},
+                                        isa::opcode<isa::Opcode::bhs_relative>(),
+                                        std::array<Byte, 1>{tail_bytes},
+                                        isa::opcode<isa::Opcode::addd_immediate>(),
+                                        std::array<Byte, 2>{0, 0},
+                                        isa::opcode<counter>(),
+                                        isa::opcode<isa::Opcode::bne_relative>(),
+                                        std::array<Byte, 1>{256 - loop_bytes},
+                                        isa::wai);
+  Device device(program);
+  const auto pristine = device.ram;
+  for (const bool early : {false, true}) {
+    for (const Byte flags : {Byte{0}, Byte{byte_mask}}) {
+      auto before = pristine;
+      before[data + 1] = static_cast<Byte>(early);
+      const Registers initial{.pc = entry,
+                              .d = square_d,
+                              .x = static_cast<Address>(x_counter ? 0 : marker_x),
+                              .y = static_cast<Address>(x_counter ? marker_x : 0),
+                              .sp = stack,
+                              .ccr = flags};
+      auto expected = initial;
+      expected.pc = static_cast<Address>(entry + program.size());
+      expected.sp -= frame_bytes;
+      expected.d = static_cast<Address>(early);
+      expected.ccr = static_cast<Byte>((flags & retained) | zero);
+      const std::array<Byte, frame_bytes> frame{expected.ccr,
+                                                static_cast<Byte>(expected.d & byte_mask),
+                                                static_cast<Byte>(expected.d >> 8U),
+                                                static_cast<Byte>(expected.x >> 8U),
+                                                static_cast<Byte>(expected.x & byte_mask),
+                                                static_cast<Byte>(expected.y >> 8U),
+                                                static_cast<Byte>(expected.y & byte_mask),
+                                                static_cast<Byte>(expected.pc >> 8U),
+                                                static_cast<Byte>(expected.pc & byte_mask)};
+      auto expected_ram = before;
+      std::ranges::copy(frame, expected_ram.begin() + expected.sp);
+      constexpr unsigned budget = (instructions_per_iteration * (mask + 1U)) + 1U;
+      const unsigned retired = early ? 4U : budget;
+      const RunResult wanted{.retired = retired,
+                             .state = ExecutionState::waiting,
+                             .pc = static_cast<Address>(expected.pc - isa::wai.size()),
+                             .opcode = isa::wai[0]};
+      device.ram = before;
+      device.core.set_registers(initial);
+      const auto result = device.core.run(budget);
+      require(
+          result == wanted && device.core.registers() == expected && device.ram == expected_ram,
+          "A zero X/Y counter wraps through exactly 65536 tails or remains zero at a head exit");
+      ++checked;
+    }
+  }
+}
 }
 
 int main() {
   try {
     cached_products<isa::Opcode::emul>();
     cached_products<isa::Opcode::emuls>();
+    packed_products<isa::Opcode::emul>();
+    packed_products<isa::Opcode::emuls>();
+    counter_wrap<isa::Opcode::dex>();
+    counter_wrap<isa::Opcode::dey>();
+    counter_wrap<isa::Opcode::inx>();
+    counter_wrap<isa::Opcode::iny>();
     divide_boundary<isa::Opcode::emul>();
     divide_boundary<isa::Opcode::emuls>();
     products<isa::Opcode::emul, Form::plain>();

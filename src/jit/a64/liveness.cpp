@@ -9,11 +9,35 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <span>
 #include <unordered_set>
 #include <utility>
 #include <vector>
 
 namespace cpu12::detail::a64 {
+bool Emitter::resident_y_live(const ResidentPlan &plan,
+                              const std::size_t index,
+                              const bool live,
+                              const std::span<const StoreMode> stores) const {
+  for (auto at = index + 1; at < plan.operations.size(); ++at) {
+    const auto &operation = plan.operations[at];
+    const auto &instruction = operation.instruction;
+    const auto kind = instruction.kind;
+    if (kind == Kind::nop || kind == Kind::branch) { continue; }
+    if (instruction.addressing == Addressing::indexed || operation.forwarded_word == 2 ||
+        operation.initial_load || kind == Kind::multiply_divide) {
+      return true;
+    }
+    if (!instruction.word || instruction.target != WordTarget::y) { continue; }
+    if (kind == Kind::load) { return false; }
+    const bool dead_store = kind == Kind::store && stores[at] == StoreMode::elided &&
+                            (!live || operation.flags == 0) && !operation.cache_store &&
+                            resident_word(operation) == Reg::zr && operation.value_slot == 0;
+    if (!dead_store) { return true; }
+  }
+  return true;
+}
+
 void Emitter::resident_inputs(const ResidentPlan &plan) {
   constexpr unsigned d_bit = 1U << 3U;
   constexpr unsigned y_bit = 1U << 2U;

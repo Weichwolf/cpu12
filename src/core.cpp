@@ -145,7 +145,8 @@ public:
     return result;
   }
 
-  template <bool Timed> RunResult run_native(const std::uint32_t instruction_budget) {
+  template <bool Timed>
+  [[gnu::always_inline]] RunResult run_native(const std::uint32_t instruction_budget) {
     RunResult result;
     bool suffix = false;
     for (std::uint32_t retired = 0; retired < instruction_budget;) {

@@ -3,6 +3,7 @@
 
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
+#include "cycles.hpp"
 #include "instruction.hpp"
 #include "jit/a64/code.hpp"
 #include "jit/a64/emitter.hpp"
@@ -33,7 +34,11 @@ constexpr std::array frame_parts{FramePart{.source = pc, .position = 2},
 Reg Emitter::frame_value(const Reg source, const bool word, const Byte next_pc) {
   auto value = source;
   if (source == pc) {
-    add_word(Reg::x0, pc, next_pc);
+    if (terminal_exit_) {
+      code_.constant(Reg::x0, static_cast<Address>(terminal_exit_->pc + next_pc));
+    } else {
+      add_word(Reg::x0, pc, next_pc);
+    }
     value = Reg::x0;
   } else {
     const auto dirty =
@@ -62,7 +67,11 @@ void Emitter::frame_ram(const Byte next_pc) {
   code_.reverse_half(Reg::x0, d);
   code_.insert(Reg::x0, x, word_bits, word_bits, Width::x64);
   code_.insert(Reg::x0, y, 2 * word_bits, word_bits, Width::x64);
-  code_.add(Reg::x1, pc, next_pc);
+  if (terminal_exit_) {
+    code_.constant(Reg::x1, static_cast<Address>(terminal_exit_->pc + next_pc));
+  } else {
+    code_.add(Reg::x1, pc, next_pc);
+  }
   code_.insert(Reg::x0, Reg::x1, 3 * word_bits, word_bits, Width::x64);
   code_.reverse_half(Reg::x0, Reg::x0, Width::x64);
   code_.store(Reg::x0, Reg::x11, 0, Access::doubleword);
@@ -168,15 +177,28 @@ void Emitter::return_interrupt() {
 
 void Emitter::wait(const Instruction &operation) {
   Label complete;
+  Label enabled;
+  const bool clocked = terminal_exit_ && operation.kind == Kind::stop;
+  const auto progress = pending_progress_;
   if (operation.kind == Kind::stop) {
     code_.extract(Reg::x5, ccr, 7, 1);
-    code_.branch_zero_far(Reg::x5, complete, Width::w32, true);
+    code_.branch_zero_far(Reg::x5, clocked ? enabled : complete, Width::w32, !clocked);
+    if (clocked) {
+      clock(instruction_timing(operation).base, progress);
+      code_.branch(complete);
+      code_.bind(enabled);
+    }
   }
   stack_context(operation.length);
   add_word(stack, stack, -9);
   state_byte(StateField::execution,
              static_cast<Byte>(operation.kind == Kind::stop ? ExecutionState::stopped
                                                             : ExecutionState::waiting));
+  if (clocked) {
+    const auto timing = instruction_timing(operation);
+    clock(timing.base + timing.taken_extra, progress);
+    pending_progress_ = Reg::zr;
+  }
   code_.bind(complete);
   advance(operation.length);
 }
