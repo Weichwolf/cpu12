@@ -98,12 +98,16 @@ public:
   [[nodiscard]] std::uint32_t written_registers() const noexcept { return written_; }
 
   void splice(std::size_t offset, std::span<const std::uint8_t> bytes);
+  void align(unsigned alignment, std::size_t offset = 0);
   void append(std::span<const std::uint8_t> bytes);
   void constant(Reg target, std::uint64_t value, Width width = Width::x64);
   void move(Reg target, Reg source, Width width = Width::x64);
   void alu(Alu operation, Reg target, Reg left, Reg right, Width width = Width::w32);
   void add(Reg target, Reg source, std::uint16_t value, Width width = Width::w32);
+  void add(Reg target, Reg source, std::uint64_t value, Reg temporary, Width width = Width::w32);
   void subtract(Reg target, Reg source, std::uint16_t value, Width width = Width::w32);
+  void
+  subtract(Reg target, Reg source, std::uint64_t value, Reg temporary, Width width = Width::w32);
   void insert(Reg target, Reg source, unsigned first, unsigned count, Width width = Width::w32);
   void scalar_move(Reg value, unsigned vector, bool to_vector);
   void extract(Reg target,
@@ -117,6 +121,8 @@ public:
   void load(Reg target, Reg base, std::size_t offset, Access access = Access::word);
   void store(Reg source, Reg base, std::size_t offset, Access access = Access::word);
   void multiply(Reg target, Reg left, Reg right, Width width = Width::w32);
+  void
+  multiply(Reg target, Reg source, std::uint64_t factor, Reg temporary, Width width = Width::w32);
   void divide(Reg target, Reg left, Reg right, bool sign, Width width = Width::w32);
   void multiply_subtract(Reg target, Reg left, Reg right, Reg minuend, Width width = Width::w32);
   void compare(Reg left, Reg right, Width width = Width::w32);
@@ -145,6 +151,8 @@ private:
   void reference(Label &label, unsigned bits, bool conditional = false);
   void patch(Reference reference, std::size_t target);
   void memory(Reg value, Reg base, std::size_t offset, Access access, bool read);
+  void
+  adjust(Reg target, Reg source, std::uint64_t value, Reg temporary, Width width, bool negative);
   std::uint32_t read_ = 0, written_ = 0;
   std::vector<std::uint8_t> bytes_;
 };

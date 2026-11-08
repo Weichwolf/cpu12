@@ -44,6 +44,7 @@ constexpr std::array fields{std::pair{pc, offsetof(Registers, pc)},
                             std::pair{y, offsetof(Registers, y)},
                             std::pair{stack, offsetof(Registers, sp)}};
 constexpr std::size_t location_offset = 24;
+constexpr unsigned local_bytes = 32;
 }
 
 Code Emitter::prologue(const std::uint32_t used) const {
@@ -51,8 +52,7 @@ Code Emitter::prologue(const std::uint32_t used) const {
   entry.push(Reg::fp, Reg::lr);
   entry.add(Reg::fp, Reg::sp, 0, Width::x64);
   for (const auto &[first, second] : saved(used)) { entry.push(first, second); }
-  constexpr unsigned local_bytes = 32;
-  entry.subtract(Reg::sp, Reg::sp, local_bytes, Width::x64);
+  if (!terminal_exit_) { entry.subtract(Reg::sp, Reg::sp, local_bytes, Width::x64); }
   entry.move(registers, Reg::x0);
   entry.move(context, Reg::x1);
   for (const auto &[reg, offset] : fields) {
@@ -86,24 +86,33 @@ void Emitter::publish() {
 }
 
 std::vector<Byte> Emitter::finish() {
-  code_.branch(done_);
+  if (!terminal_exit_) { code_.branch(done_); }
   code_.bind(failure_);
-  code_.load(Reg::x1, Reg::sp, location_offset);
-  code_.constant(Reg::x17, native_boundary_mask);
-  code_.alu(Alu::bit_or, Reg::x1, Reg::x1, Reg::x17);
-  code_.store(Reg::x1, Reg::sp, location_offset);
+  if (!terminal_exit_) {
+    code_.load(Reg::x1, Reg::sp, location_offset);
+    code_.constant(Reg::x17, native_boundary_mask);
+    code_.alu(Alu::bit_or, Reg::x1, Reg::x1, Reg::x17);
+    code_.store(Reg::x1, Reg::sp, location_offset);
+  }
   code_.bind(done_);
   publish();
   code_.move(Reg::x0, retired);
-  code_.load(Reg::x1, Reg::sp, location_offset);
+  if (terminal_exit_) {
+    code_.constant(Reg::x1,
+                   std::uint32_t{terminal_exit_->pc} |
+                       (std::uint32_t{terminal_exit_->opcode} << native_opcode_shift) |
+                       native_boundary_mask);
+  } else {
+    code_.load(Reg::x1, Reg::sp, location_offset);
+  }
   const auto used = code_.used_registers() | bit(registers) | bit(context);
   const auto preserved = saved(used);
-  constexpr unsigned local_bytes = 32;
-  code_.add(Reg::sp, Reg::sp, local_bytes, Width::x64);
+  if (!terminal_exit_) { code_.add(Reg::sp, Reg::sp, local_bytes, Width::x64); }
   for (const auto &[first, second] : std::views::reverse(preserved)) { code_.pop(first, second); }
   code_.pop(Reg::fp, Reg::lr);
   code_.return_();
-  const auto entry = prologue(used);
+  auto entry = prologue(used);
+  if (loop_offset_) { entry.align(16, *loop_offset_); }
   code_.splice(begin_offset_, entry.bytes());
   return code_.bytes();
 }
@@ -113,12 +122,21 @@ void Emitter::publish_flags() {
 }
 
 void Emitter::location(const Instruction &operation) {
+  if (terminal_exit_) { return; }
   const bool boundary = operation.kind == Kind::wait || operation.kind == Kind::stop;
   code_.constant(Reg::x17,
                  (std::uint32_t{operation.opcode} << native_opcode_shift) |
                      (boundary ? native_boundary_mask : 0U));
   code_.alu(Alu::bit_or, Reg::x4, pc, Reg::x17);
   code_.store(Reg::x4, Reg::sp, location_offset);
+}
+
+void Emitter::record_exit(const ExitLocation location) {
+  if (terminal_exit_) { return; }
+  code_.constant(Reg::x17,
+                 std::uint32_t{location.pc} |
+                     (std::uint32_t{location.opcode} << native_opcode_shift));
+  code_.store(Reg::x17, Reg::sp, location_offset);
 }
 
 void Emitter::mask(const Reg target, const Reg source, const std::uint32_t bits) {

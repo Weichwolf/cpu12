@@ -19,7 +19,6 @@
 
 namespace cpu12::detail::a64 {
 namespace {
-constexpr unsigned location_offset = 24;
 constexpr auto progress_offset =
     offsetof(NativeContext, progress) + offsetof(Progress, estimated_cycles);
 
@@ -462,6 +461,10 @@ std::vector<Byte> Emitter::resident(const ResidentPlan &plan,
   resident_gpr_slots_ = plan.loop ? 0U : 5U;
   const auto ending = terminal.empty() ? suffix : terminal;
   const bool joined = joined_terminal(ending);
+  if (joined && mode == ResidentMode::complete) {
+    terminal_exit_ =
+        ExitLocation{.pc = ending.front().pc, .opcode = ending.front().instruction.opcode};
+  }
   Label fallback;
   if (mode == ResidentMode::bounded) {
     resident_bounded_grant(plan, fallback);
@@ -475,6 +478,7 @@ std::vector<Byte> Emitter::resident(const ResidentPlan &plan,
     Label final;
     code_.subtract(Reg::x11, Reg::x11, 1);
     code_.branch_zero_far(Reg::x11, final);
+    loop_offset_ = code_.size();
     code_.bind(repeat);
     resident_body(plan, false);
     code_.subtract(Reg::x11, Reg::x11, 1);
@@ -510,13 +514,9 @@ std::vector<Byte> Emitter::resident(const ResidentPlan &plan,
   code_.alu(Alu::add, Reg::x14, Reg::x14, Reg::x13, Width::x64);
   if (!joined) { code_.store(Reg::x14, context, progress_offset, Access::doubleword); }
   if (!plan.loop) { control_clock(last.instruction); }
-  const auto location = mode == ResidentMode::bounded && plan.backedge_instructions != 0
-                            ? plan.backedge_exit
-                            : ExitLocation{.pc = last.pc, .opcode = last.instruction.opcode};
-  code_.constant(Reg::x17,
-                 std::uint32_t{location.pc} |
-                     (std::uint32_t{location.opcode} << native_opcode_shift));
-  code_.store(Reg::x17, Reg::sp, location_offset);
+  record_exit(mode == ResidentMode::bounded && plan.backedge_instructions != 0
+                  ? plan.backedge_exit
+                  : ExitLocation{.pc = last.pc, .opcode = last.instruction.opcode});
   if (swapped_d_) { code_.reverse_half(d, d); }
   swapped_d_ = false;
   resident_suffix(suffix);

@@ -12,6 +12,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -81,6 +82,7 @@ private:
   void publish_flags();
   [[nodiscard]] std::vector<Byte> finish();
   void location(const Instruction &operation);
+  void record_exit(ExitLocation location);
   void operation(const Instruction &instruction);
   void sequence(std::span<const BlockInstruction> operations,
                 Admission admission = Admission::checked);
@@ -174,6 +176,8 @@ private:
   void divide(MathOp operation);
   void state_byte(StateField field, Byte value);
   EmissionOptions policy_;
+  std::optional<ExitLocation> terminal_exit_;
+  std::optional<std::size_t> loop_offset_;
   std::uint32_t input_registers_ = ~std::uint32_t{0};
   std::size_t begin_offset_ = 0;
   std::vector<const Byte *> resident_words_, head_stores_, tail_stores_;

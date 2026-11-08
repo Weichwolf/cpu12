@@ -125,6 +125,7 @@ void Emitter::control_clock(const Instruction &instruction) {
 }
 
 void Emitter::yield_boundary() {
+  if (terminal_exit_) { return; }
   code_.load(Reg::x9, context, offsetof(NativeContext, yield_requested), Access::byte);
   Label proceed;
   code_.branch_zero_far(Reg::x9, proceed);

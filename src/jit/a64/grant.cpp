@@ -28,7 +28,6 @@ unsigned base_cycles(const ResidentPlan &plan) {
 }
 
 void Emitter::resident_trips(const ResidentPlan &plan) {
-  code_.constant(Reg::x11, 1);
   if (plan.loop) {
     code_.load(Reg::x11, Reg::x0, plan.counter_offset, Access::half);
     if (plan.increment) {
@@ -39,6 +38,8 @@ void Emitter::resident_trips(const ResidentPlan &plan) {
       code_.compare(Reg::x11, Reg::zr);
       code_.select(Reg::x11, Reg::x17, Reg::x11, Condition::equal);
     }
+  } else {
+    code_.constant(Reg::x11, 1);
   }
 }
 
@@ -46,20 +47,16 @@ void Emitter::resident_grant(const ResidentPlan &plan,
                              const std::span<const BlockInstruction> suffix,
                              Label &general) {
   resident_trips(plan);
-  code_.constant(Reg::x17, plan.operations.size() + plan.backedge_instructions);
-  code_.multiply(Reg::x12, Reg::x11, Reg::x17);
+  code_.multiply(Reg::x12, Reg::x11, plan.operations.size() + plan.backedge_instructions, Reg::x17);
   if (plan.backedge_instructions != 0) {
     code_.subtract(Reg::x12, Reg::x12, static_cast<std::uint16_t>(plan.backedge_instructions));
   }
-  code_.constant(Reg::x17, suffix.size());
-  code_.alu(Alu::add, Reg::x15, Reg::x12, Reg::x17);
+  code_.add(Reg::x15, Reg::x12, suffix.size(), Reg::x17);
   const auto extra = instruction_timing(plan.operations.back().instruction).taken_extra;
   const auto repeat_extra = plan.backedge_instructions != 0 ? plan.backedge_cycles : extra;
-  code_.constant(Reg::x17, base_cycles(plan) + repeat_extra);
-  code_.multiply(Reg::x13, Reg::x11, Reg::x17, Width::x64);
+  code_.multiply(Reg::x13, Reg::x11, base_cycles(plan) + repeat_extra, Reg::x17, Width::x64);
   if (plan.loop && extra != 0) {
-    code_.constant(Reg::x17, repeat_extra);
-    code_.alu(Alu::subtract, Reg::x13, Reg::x13, Reg::x17, Width::x64);
+    code_.subtract(Reg::x13, Reg::x13, repeat_extra, Reg::x17, Width::x64);
     if (plan.backedge_instructions != 0) {
       code_.add(Reg::x13, Reg::x13, static_cast<std::uint16_t>(extra), Width::x64);
     }
@@ -71,8 +68,7 @@ void Emitter::resident_grant(const ResidentPlan &plan,
     const auto timing = instruction_timing(operation.instruction);
     suffix_cycles += timing.base + timing.taken_extra;
   }
-  code_.constant(Reg::x17, suffix_cycles);
-  code_.alu(Alu::add, Reg::x10, Reg::x13, Reg::x17, Width::x64);
+  code_.add(Reg::x10, Reg::x13, suffix_cycles, Reg::x17, Width::x64);
   code_.alu(Alu::add_flags, Reg::x10, Reg::x14, Reg::x10, Width::x64);
   code_.compare_if(Reg::x2, Reg::x15, Condition::no_carry);
   code_.compare_if(Reg::x9, Reg::x10, Condition::carry, Width::x64);
@@ -126,10 +122,8 @@ void Emitter::resident_bounded_grant(const ResidentPlan &plan, Label &general) {
   code_.compare(Reg::x10, Reg::x11, Width::x64);
   code_.select(Reg::x11, Reg::x11, Reg::x10, Condition::carry, Width::x64);
   code_.branch_zero_far(Reg::x11, general);
-  code_.constant(Reg::x17, count);
-  code_.multiply(Reg::x12, Reg::x11, Reg::x17);
-  code_.constant(Reg::x17, cycles);
-  code_.multiply(Reg::x13, Reg::x11, Reg::x17, Width::x64);
+  code_.multiply(Reg::x12, Reg::x11, count, Reg::x17);
+  code_.multiply(Reg::x13, Reg::x11, cycles, Reg::x17, Width::x64);
   if (!plan.indexed_regions.empty()) { resident_indexed_grant(plan, general); }
 }
 

@@ -72,8 +72,7 @@ void Emitter::frame_ram(const Byte next_pc) {
 
 void Emitter::frame_admission(const Byte next_pc, Label &complete) {
   Label slow;
-  code_.constant(Reg::x17, frame_bytes);
-  code_.compare(stack, Reg::x17);
+  code_.compare(stack, frame_bytes);
   code_.branch_far(Condition::no_carry, slow);
   auto regions = std::vector(memory_.regions().begin(), memory_.regions().end());
   std::ranges::sort(regions, [](const auto &left, const auto &right) {
@@ -84,9 +83,7 @@ void Emitter::frame_admission(const Byte next_pc, Label &complete) {
       continue;
     }
     Label next;
-    code_.subtract(Reg::x9, stack, frame_bytes);
-    code_.constant(Reg::x17, region.first);
-    code_.alu(Alu::subtract, Reg::x9, Reg::x9, Reg::x17);
+    code_.subtract(Reg::x9, stack, unsigned{region.first} + frame_bytes, Reg::x17);
     code_.constant(Reg::x17, region.bytes.size() - frame_bytes);
     code_.compare(Reg::x9, Reg::x17);
     code_.branch_far(Condition::above, next);
@@ -172,7 +169,7 @@ void Emitter::return_interrupt() {
 void Emitter::wait(const Instruction &operation) {
   Label complete;
   if (operation.kind == Kind::stop) {
-    mask(Reg::x5, ccr, flag_s);
+    code_.extract(Reg::x5, ccr, 7, 1);
     code_.branch_zero_far(Reg::x5, complete, Width::w32, true);
   }
   stack_context(operation.length);

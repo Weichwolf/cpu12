@@ -74,13 +74,18 @@ void encodings() {
   constexpr unsigned return_position = 48;
   code.insert(Reg::x0, Reg::x1, return_position, 16, Width::x64);
   code.reverse_half(Reg::x0, Reg::x0, Width::x64);
-  constexpr std::array<std::uint32_t, 38> expected{
+  constexpr std::uint64_t shifted_word = 1U << 16U;
+  constexpr std::uint64_t top_word = std::uint64_t{1} << 48U;
+  code.constant(Reg::x5, shifted_word, Width::w32);
+  code.constant(Reg::x6, top_word);
+  code.constant(Reg::x7, 0, Width::w32);
+  constexpr std::array<std::uint32_t, 41> expected{
       0x0b020020, 0x6b020020, 0x0a220020, 0x53185c20, 0x53087c20, 0x13087c20, 0x13812020,
       0x5ac00420, 0x13001c20, 0x39401420, 0x79400c20, 0xf9400420, 0xa9bf53f3, 0xa8c153f3,
       0x1a9f17e0, 0x1a820020, 0xd53b4200, 0xd51b4200, 0x1b027c20, 0x1ac20c20, 0x1ac20820,
       0x1b028c20, 0xd63f0200, 0xd65f03c0, 0x33181c55, 0x33003c20, 0x51000420, 0xd13ffc62,
       0x1e270050, 0x1e260202, 0x711002bf, 0xf13ffc7f, 0x7a4f3040, 0xfa4a2120, 0xb3703ec0,
-      0xb3603ee0, 0xb3503c20, 0xdac00400};
+      0xb3603ee0, 0xb3503c20, 0xdac00400, 0x52a00025, 0xd2e00026, 0x52800007};
   for (std::size_t index = 0; index < expected.size(); ++index) {
     require(instruction(code, index) == expected[index], "A64 encoding differs from ISA reference");
   }
@@ -106,6 +111,18 @@ void fixups() {
     code.bind(end);
   } catch (const std::logic_error &) { rejected = true; }
   require(rejected, "A64 labels must not be rebound");
+}
+
+void alignment() {
+  Code code;
+  code.constant(Reg::x0, 1);
+  code.align(16, 8);
+  constexpr std::uint32_t nop = 0xd503201f;
+  require(code.size() == 8 && instruction(code, 1) == nop,
+          "A64 alignment must account for the final loop offset using executable NOPs");
+  const auto aligned = code.size();
+  code.align(16, 8);
+  require(code.size() == aligned, "Aligned A64 loops must not gain padding");
 }
 
 void far_fixups() {
@@ -189,6 +206,67 @@ void conditional_comparisons() {
   }
 }
 
+void scaled_products() {
+  cpu12::detail::ExecutableArena arena;
+  constexpr auto maximum = std::numeric_limits<std::uint64_t>::max();
+  constexpr std::array<std::uint64_t, 6> factors{0, 1, 32, 89, 65536, maximum};
+  constexpr std::array<std::uint64_t, 5> inputs{0, 1, 65535, 0x123456789abcdef, maximum};
+  for (const auto width : {Width::w32, Width::x64}) {
+    const auto mask = width == Width::w32 ? std::uint64_t{0xffffffff} : maximum;
+    for (const auto factor : factors) {
+      if (factor > mask) { continue; }
+      Code code;
+      code.multiply(Reg::x0, Reg::x0, factor, Reg::x3, width);
+      code.return_();
+      const auto *entry = arena.append(code.bytes());
+      for (const auto input : inputs) {
+        std::uint64_t expected = 0;
+        static_cast<void>(__builtin_mul_overflow(input, factor, &expected));
+        require(cpu12_a64_test_enter(entry, input, 0) == (expected & mask),
+                "A64 scaled products must preserve modular multiplication");
+      }
+    }
+  }
+}
+
+std::uint64_t adjusted(const std::uint64_t input, const std::uint64_t offset, const bool negative) {
+  std::uint64_t result = 0;
+  if (negative) {
+    static_cast<void>(__builtin_sub_overflow(input, offset, &result));
+  } else {
+    static_cast<void>(__builtin_add_overflow(input, offset, &result));
+  }
+  return result;
+}
+
+void adjusted_values() {
+  cpu12::detail::ExecutableArena arena;
+  constexpr auto maximum = std::numeric_limits<std::uint64_t>::max();
+  constexpr std::array<std::uint64_t, 6> offsets{0, 1, 4095, 4096, 65536, maximum};
+  constexpr std::array<std::uint64_t, 5> inputs{0, 1, 65535, 0x123456789abcdef, maximum};
+  for (const auto width : {Width::w32, Width::x64}) {
+    const auto mask = width == Width::w32 ? std::uint64_t{0xffffffff} : maximum;
+    for (const auto offset : offsets) {
+      if (offset > mask) { continue; }
+      for (const bool negative : {false, true}) {
+        Code code;
+        if (negative) {
+          code.subtract(Reg::x0, Reg::x0, offset, Reg::x3, width);
+        } else {
+          code.add(Reg::x0, Reg::x0, offset, Reg::x3, width);
+        }
+        code.return_();
+        const auto *entry = arena.append(code.bytes());
+        for (const auto input : inputs) {
+          const auto expected = adjusted(input, offset, negative);
+          require(cpu12_a64_test_enter(entry, input, 0) == (expected & mask),
+                  "A64 constant adjustments must preserve modular addition and subtraction");
+        }
+      }
+    }
+  }
+}
+
 void execute() {
   cpu12::detail::ExecutableArena arena;
   Code code;
@@ -225,10 +303,13 @@ int main() {
   try {
     encodings();
     fixups();
+    alignment();
     far_fixups();
 #if defined(__aarch64__)
     execute();
     conditional_comparisons();
+    scaled_products();
+    adjusted_values();
 #endif
     std::cout << "A64 encoding and branch checks passed.\n";
   } catch (const std::exception &error) {

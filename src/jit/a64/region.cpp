@@ -20,7 +20,6 @@
 
 namespace cpu12::detail::a64 {
 namespace {
-constexpr unsigned location_offset = 24;
 constexpr auto progress_offset =
     offsetof(NativeContext, progress) + offsetof(Progress, estimated_cycles);
 
@@ -155,15 +154,11 @@ void Emitter::resident_region_exit(const ResidentRegion &region,
   const auto full_cycles =
       cycles(region.head) + cycles(region.tail) +
       instruction_timing(region.tail.operations.back().instruction).taken_extra;
-  code_.constant(Reg::x17, count);
-  code_.multiply(retired, Reg::x11, Reg::x17);
-  code_.constant(Reg::x17, full_cycles);
-  code_.multiply(Reg::x13, Reg::x11, Reg::x17, Width::x64);
+  code_.multiply(retired, Reg::x11, count, Reg::x17);
+  code_.multiply(Reg::x13, Reg::x11, full_cycles, Reg::x17, Width::x64);
   if (head) {
-    code_.constant(Reg::x17, region.head.operations.size());
-    code_.alu(Alu::add, retired, retired, Reg::x17);
-    code_.constant(Reg::x17, cycles(region.head) + extra);
-    code_.alu(Alu::add, Reg::x13, Reg::x13, Reg::x17, Width::x64);
+    code_.add(retired, retired, region.head.operations.size(), Reg::x17);
+    code_.add(Reg::x13, Reg::x13, cycles(region.head) + extra, Reg::x17, Width::x64);
   } else if (exit == RegionExit::tail) {
     code_.subtract(Reg::x13, Reg::x13, static_cast<std::uint16_t>(extra), Width::x64);
   }
@@ -176,10 +171,7 @@ void Emitter::resident_region_exit(const ResidentRegion &region,
                  exit == RegionExit::budget
                      ? region.head.operations.front().pc
                      : static_cast<Address>(tail.pc + tail.instruction.length));
-  code_.constant(Reg::x17,
-                 std::uint32_t{last.pc} |
-                     (std::uint32_t{last.instruction.opcode} << native_opcode_shift));
-  code_.store(Reg::x17, Reg::sp, location_offset);
+  record_exit({.pc = last.pc, .opcode = last.instruction.opcode});
 }
 
 Reg Emitter::resident_region_tail(const ResidentRegion &region,
@@ -213,8 +205,14 @@ Reg Emitter::resident_region_tail(const ResidentRegion &region,
     return Reg::zr;
   }
   const bool increment = guard.instruction.operation == RegisterOp::index_increment;
-  code_.constant(Reg::x17, counted && increment ? word_mask : 1U);
-  code_.compare(counted ? word_target(guard.instruction.target) : remaining, Reg::x17);
+  const auto limit = counted && increment ? word_mask : 1U;
+  const auto counter = counted ? word_target(guard.instruction.target) : remaining;
+  if (limit == 1) {
+    code_.compare(counter, 1);
+  } else {
+    code_.constant(Reg::x17, limit);
+    code_.compare(counter, Reg::x17);
+  }
   code_.branch_far(Condition::equal, labels.final_tail);
   if (form == TailForm::counter && !counted) {
     const auto &update = guard.instruction;
@@ -255,6 +253,8 @@ std::vector<Byte> Emitter::resident_region(const ResidentRegion &region,
   resident_gpr_slots_ = 0;
   Label fallback;
   if (counted) {
+    terminal_exit_ =
+        ExitLocation{.pc = terminal.front().pc, .opcode = terminal.front().instruction.opcode};
     auto admission = combined;
     const auto &update = region.tail.operations[region.tail.operations.size() - 2].instruction;
     admission.loop = true;
@@ -276,6 +276,7 @@ std::vector<Byte> Emitter::resident_region(const ResidentRegion &region,
   const auto &guard = region.head.operations[region.head.operations.size() - 2];
   const auto &branch = region.head.operations.back().instruction;
   RegionLabels labels;
+  loop_offset_ = code_.size();
   code_.bind(labels.repeat);
   resident_body(prefix, true);
   const auto head_source = resident_compare(guard);

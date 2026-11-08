@@ -60,6 +60,15 @@ void Code::append(const std::span<const std::uint8_t> bytes) {
   bytes_.insert(bytes_.end(), bytes.begin(), bytes.end());
 }
 
+void Code::align(const unsigned alignment, const std::size_t offset) {
+  if (alignment < instruction_bytes || !std::has_single_bit(alignment) ||
+      offset % instruction_bytes != 0) {
+    throw std::invalid_argument("Invalid A64 code alignment");
+  }
+  constexpr std::uint32_t nop = 0xd503201f;
+  while ((size() + offset) % alignment != 0) { word(nop); }
+}
+
 void Code::constant(const Reg target, const std::uint64_t value, const Width width) {
   write_register(target);
 
@@ -70,11 +79,12 @@ void Code::constant(const Reg target, const std::uint64_t value, const Width wid
   constexpr std::uint32_t movk = 0x72800000;
   constexpr unsigned lane_shift = 21;
   constexpr unsigned half_mask = 0xffff;
-  for (unsigned lane = 0; lane < bit_count(width) / half_bits; ++lane) {
+  const auto first = value == 0 ? 0U : static_cast<unsigned>(std::countr_zero(value)) / half_bits;
+  for (unsigned lane = first; lane < bit_count(width) / half_bits; ++lane) {
     const auto part = static_cast<std::uint32_t>((value >> (lane * half_bits)) & half_mask);
-    if (lane != 0 && part == 0) { continue; }
-    word(wide(width) | (lane == 0 ? movz : movk) | (lane << lane_shift) | (part << register_shift) |
-         reg(target));
+    if (lane != first && part == 0) { continue; }
+    word(wide(width) | (lane == first ? movz : movk) | (lane << lane_shift) |
+         (part << register_shift) | reg(target));
   }
 }
 
@@ -115,6 +125,44 @@ void Code::subtract(const Reg target,
   constexpr std::uint32_t opcode = 0x51000000;
   word(wide(width) | opcode | (std::uint32_t{value} << immediate_shift) |
        (reg(source) << register_shift) | reg(target));
+}
+
+void Code::adjust(const Reg target,
+                  const Reg source,
+                  const std::uint64_t value,
+                  const Reg temporary,
+                  const Width width,
+                  const bool negative) {
+  constexpr unsigned maximum_immediate = 4095;
+  if (value <= maximum_immediate) {
+    if (negative) {
+      subtract(target, source, static_cast<std::uint16_t>(value), width);
+    } else {
+      add(target, source, static_cast<std::uint16_t>(value), width);
+    }
+  } else {
+    if (source == temporary) {
+      throw std::invalid_argument("A64 adjustment scratch aliases input");
+    }
+    constant(temporary, value, width);
+    alu(negative ? Alu::subtract : Alu::add, target, source, temporary, width);
+  }
+}
+
+void Code::add(const Reg target,
+               const Reg source,
+               const std::uint64_t value,
+               const Reg temporary,
+               const Width width) {
+  adjust(target, source, value, temporary, width, false);
+}
+
+void Code::subtract(const Reg target,
+                    const Reg source,
+                    const std::uint64_t value,
+                    const Reg temporary,
+                    const Width width) {
+  adjust(target, source, value, temporary, width, true);
 }
 
 void Code::insert(const Reg target,
@@ -250,6 +298,26 @@ void Code::multiply(const Reg target, const Reg left, const Reg right, const Wid
   constexpr std::uint32_t opcode = 0x1b007c00;
   word(wide(width) | opcode | (reg(right) << operand_shift) | (reg(left) << register_shift) |
        reg(target));
+}
+
+void Code::multiply(const Reg target,
+                    const Reg source,
+                    const std::uint64_t factor,
+                    const Reg temporary,
+                    const Width width) {
+  if (factor == 0) {
+    constant(target, 0, width);
+  } else if (factor == 1) {
+    move(target, source, width);
+  } else if (std::has_single_bit(factor)) {
+    shift(Shift::left, target, source, static_cast<unsigned>(std::countr_zero(factor)), width);
+  } else {
+    if (source == temporary) {
+      throw std::invalid_argument("A64 multiplier scratch aliases input");
+    }
+    constant(temporary, factor, width);
+    multiply(target, source, temporary, width);
+  }
 }
 
 void Code::divide(
