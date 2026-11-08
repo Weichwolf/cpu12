@@ -70,6 +70,7 @@ private:
                       Label &general);
   void resident_indexed_grant(const ResidentPlan &plan, Label &general);
   void resident_prepare(const ResidentPlan &plan);
+  void resident_accumulate(const ResidentOperation &operation, bool live);
   void resident_update(const ResidentOperation &operation, bool live);
   void resident_store(const ResidentOperation &operation);
   void resident_body(const ResidentPlan &plan, bool live);
@@ -117,6 +118,8 @@ private:
   void divide(MathOp operation);
   void state_byte(StateField field, Byte value);
   Reg resident_counter_ = Reg::zr;
+  const ResidentOperation *resident_sum_ = nullptr;
+  bool resident_sum_live_ = false;
   bool resident_index_elided_ = false;
   bool swapped_d_ = false;
   const Byte *resident_base_ = nullptr;

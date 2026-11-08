@@ -39,6 +39,37 @@ bool independent_counter(const ResidentPlan &plan, const unsigned word) {
            native_word(instruction) != word;
   });
 }
+
+const ResidentOperation *accumulation(const ResidentPlan &plan) {
+  if (!plan.loop) { return nullptr; }
+  constexpr unsigned word_d = 3;
+  const auto sum = std::ranges::find_if(
+      plan.operations, [](const auto &operation) { return operation.cached_operand; });
+  if (sum == plan.operations.end() || sum->instruction.kind != Kind::add ||
+      !sum->instruction.word || native_word(sum->instruction) != word_d) {
+    return nullptr;
+  }
+  const auto first = std::ranges::find_if(plan.operations, [](const auto &operation) {
+    const auto kind = operation.instruction.kind;
+    return kind != Kind::nop && kind != Kind::branch &&
+           native_word(operation.instruction) == word_d;
+  });
+  if (first == sum || first->instruction.kind != Kind::load || !first->instruction.word ||
+      first->initial_load) {
+    return nullptr;
+  }
+  const auto tail = std::span(plan.operations)
+                        .subspan(static_cast<std::size_t>(sum - plan.operations.begin()) + 1);
+  const bool stores = std::ranges::all_of(tail, [](const auto &operation) {
+    const auto &instruction = operation.instruction;
+    if (instruction.kind == Kind::nop || instruction.kind == Kind::branch) { return true; }
+    if (native_word(instruction) != word_d) { return !operation.cache_store; }
+    return instruction.kind == Kind::store && instruction.word && operation.value_slot == 0;
+  });
+  const bool retained =
+      std::ranges::any_of(tail, [](const auto &operation) { return operation.cache_store; });
+  return stores && retained ? &*sum : nullptr;
+}
 }
 
 void Emitter::resident_grant(const ResidentPlan &plan,
@@ -189,6 +220,10 @@ void Emitter::resident_operation(const ResidentOperation &operation, const bool 
   const auto kind = instruction.kind;
   const auto changed = live ? operation.flags : 0;
   if (kind == Kind::nop || kind == Kind::branch) { return; }
+  if (&operation == resident_sum_) {
+    resident_accumulate(operation, live);
+    return;
+  }
   if (kind == Kind::loop || (kind == Kind::register_operation &&
                              (instruction.operation == RegisterOp::index_increment ||
                               instruction.operation == RegisterOp::index_decrement))) {
@@ -204,13 +239,27 @@ void Emitter::resident_operation(const ResidentOperation &operation, const bool 
     code_.shift(Shift::left, Reg::x2, Reg::x0, 1);
     store_target(Reg::x2, instruction);
   } else if (kind == Kind::store) {
-    resident_store(operation);
+    auto value = operation;
+    if (!live) { value.flags = 0; }
+    resident_store(value);
   } else {
     if ((kind == Kind::compare || kind == Kind::bit_test) && changed == 0) { return; }
     auto value = operation;
     if (!live) { value.flags = 0; }
     resident_calculate(value);
   }
+  if (changed != 0) { resident_flags(operation); }
+}
+
+void Emitter::resident_accumulate(const ResidentOperation &operation, const bool live) {
+  const auto changed = live ? operation.flags : 0;
+  if (changed != 0) {
+    load_target(Reg::x0, operation.instruction);
+    code_.move(Reg::x1, Reg::x8, Width::w32);
+  }
+  code_.alu(Alu::add, Reg::x2, changed != 0 ? Reg::x0 : d, Reg::x8);
+  code_.extract(Reg::x8, Reg::x2, 0, word_bits);
+  resident_sum_live_ = true;
   if (changed != 0) { resident_flags(operation); }
 }
 
@@ -233,13 +282,23 @@ void Emitter::resident_update(const ResidentOperation &operation, const bool liv
 
 void Emitter::resident_store(const ResidentOperation &operation) {
   const auto &instruction = operation.instruction;
-  load_target(Reg::x2, instruction);
-  if (instruction.word) { code_.reverse_half(Reg::x3, Reg::x2); }
-  resident_memory(instruction.word ? Reg::x3 : Reg::x2, operation, true);
-  if (operation.cache_store) { code_.move(Reg::x8, Reg::x2, Width::w32); }
+  auto value = Reg::x2;
+  const bool sum = resident_sum_live_ && instruction.word && instruction.target == WordTarget::d;
+  if (sum) {
+    value = Reg::x8;
+    if (operation.flags != 0) { code_.move(Reg::x2, value, Width::w32); }
+  } else if (instruction.word && operation.flags == 0 && operation.value_slot == 0 &&
+             !operation.cache_store) {
+    value = word_target(instruction.target);
+  } else {
+    load_target(value, instruction);
+  }
+  if (instruction.word) { code_.reverse_half(Reg::x3, value); }
+  resident_memory(instruction.word ? Reg::x3 : value, operation, true);
+  if (operation.cache_store && value != Reg::x8) { code_.move(Reg::x8, value, Width::w32); }
   if (operation.value_slot != 0 && operation.fill_value) {
     constexpr unsigned vector_slot_bias = 15;
-    code_.scalar_move(Reg::x2, operation.value_slot + vector_slot_bias, true);
+    code_.scalar_move(value, operation.value_slot + vector_slot_bias, true);
   }
 }
 
@@ -317,12 +376,14 @@ void Emitter::resident_flags(const ResidentOperation &operation) {
 }
 
 void Emitter::resident_body(const ResidentPlan &plan, const bool live) {
+  resident_sum_live_ = false;
   for (const auto &operation : plan.operations) {
     if (!operation.initial_load) { resident_operation(operation, live); }
   }
 }
 
 void Emitter::resident_prepare(const ResidentPlan &plan) {
+  resident_sum_ = accumulation(plan);
   if (plan.loop) {
     const auto word = plan.counter_offset == offsetof(Registers, x) ? 1U : 2U;
     if (independent_counter(plan, word)) { resident_counter_ = word == 1 ? x : y; }
@@ -372,6 +433,7 @@ std::vector<Byte> Emitter::resident(const ResidentPlan &plan,
   }
   if (resident_counter_ != Reg::zr) { code_.constant(resident_counter_, 0); }
   resident_body(plan, true);
+  if (resident_sum_live_) { code_.move(d, Reg::x8, Width::w32); }
   if (resident_index_elided_) {
     code_.alu(Alu::add, x, x, Reg::x10);
     code_.extract(x, x, 0, word_bits);
