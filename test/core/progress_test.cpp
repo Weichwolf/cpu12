@@ -165,6 +165,64 @@ struct Owner {
   }
 };
 
+void memory_timing(const std::span<const Byte> program,
+                   const unsigned expected_cycles,
+                   const Byte expected_value,
+                   const Byte expected_flags) {
+  Device device(program);
+  constexpr Byte pattern = 0xa5;
+  constexpr Byte initial_flags = 0xff;
+  for (const bool horizon : {false, true}) {
+    device.ram[data] = pattern;
+    device.core.set_registers({.pc = entry, .x = data, .ccr = initial_flags});
+    const auto before = device.core.progress().estimated_cycles;
+    const auto result = horizon ? device.core.run_until(before + 1) : device.core.step();
+    require(result.fault == Fault::none && result.retired == 1 &&
+                device.core.progress().estimated_cycles - before == expected_cycles &&
+                device.ram[data] == expected_value && device.core.registers().ccr == expected_flags,
+            "Documented write-only and bit RMW timing preserves independent data and flag results");
+  }
+}
+
+void memory_control_timing() {
+  // S12CPUV2 Rev.4.0 CLR/BSET/BCLR access-detail rows. Both program alignments
+  // have these base counts; no derivative bus waits or pipeline interlocks.
+  constexpr auto clear_extended =
+      isa::program(isa::opcode<Opcode::clr_extended>(), std::array<Byte, 2>{0x40, 0});
+  constexpr auto clear_indexed =
+      isa::program(isa::opcode<Opcode::clr_indexed>(), std::array<Byte, 1>{0});
+  constexpr auto clear_9 =
+      isa::program(isa::opcode<Opcode::clr_indexed_9>(), std::array<Byte, 2>{0xe0, 0});
+  constexpr auto clear_16 =
+      isa::program(isa::opcode<Opcode::clr_indexed_16>(), std::array<Byte, 3>{0xe2, 0, 0});
+  constexpr auto set_extended =
+      isa::program(isa::opcode<Opcode::bset_extended>(), std::array<Byte, 3>{0x40, 0, 15});
+  constexpr auto unset_extended =
+      isa::program(isa::opcode<Opcode::bclr_extended>(), std::array<Byte, 3>{0x40, 0, 15});
+  constexpr auto set_indexed =
+      isa::program(isa::opcode<Opcode::bset_indexed>(), std::array<Byte, 2>{0, 15});
+  constexpr auto set_9 =
+      isa::program(isa::opcode<Opcode::bset_indexed_9>(), std::array<Byte, 3>{0xe0, 0, 15});
+  constexpr auto unset_9 =
+      isa::program(isa::opcode<Opcode::bclr_indexed_9>(), std::array<Byte, 3>{0xe0, 0, 15});
+  constexpr auto set_16 =
+      isa::program(isa::opcode<Opcode::bset_indexed_16>(), std::array<Byte, 4>{0xe2, 0, 0, 15});
+  constexpr Byte cleared = 0xf4;
+  constexpr Byte negative = 0xf9;
+  constexpr Byte set_value = 0xaf;
+  constexpr Byte unset_value = 0xa0;
+  memory_timing(clear_extended, 3, 0, cleared);
+  memory_timing(clear_indexed, 2, 0, cleared);
+  memory_timing(clear_9, 3, 0, cleared);
+  memory_timing(clear_16, 3, 0, cleared);
+  memory_timing(set_extended, 4, set_value, negative);
+  memory_timing(unset_extended, 4, unset_value, negative);
+  memory_timing(set_indexed, 4, set_value, negative);
+  memory_timing(set_9, 4, set_value, negative);
+  memory_timing(unset_9, 4, unset_value, negative);
+  memory_timing(set_16, 6, set_value, negative);
+}
+
 void owner_boundaries() {
   auto program = isa::program(isa::nop,
                               isa::nop,
@@ -402,6 +460,7 @@ int main() {
     branches();
     owner_boundaries();
     terminal_progress();
+    memory_control_timing();
     deadlines();
     loop_deadlines();
     interrupt_boundaries();

@@ -42,7 +42,8 @@ unsigned read_cycles(const Instruction &instruction) {
 
 unsigned memory_cycles(const Instruction &instruction) {
   const auto kind = instruction.kind;
-  if (kind == Kind::store) {
+  if (kind == Kind::store ||
+      (kind == Kind::memory_unary && instruction.operation == RegisterOp::clear)) {
     if (instruction.addressing == Addressing::direct) { return 2; }
     if (instruction.addressing == Addressing::extended) { return 3; }
     constexpr std::array cycles{2U, 3U, 3U, 4U, 4U};
@@ -53,6 +54,13 @@ unsigned memory_cycles(const Instruction &instruction) {
     if (instruction.addressing == Addressing::extended) { return 4; }
     constexpr std::array cycles{3U, 4U, 5U, 5U, 5U};
     return cycles.at(index_class(instruction.indexed));
+  }
+  if (kind == Kind::memory_bits) {
+    if (instruction.addressing != Addressing::indexed) { return 4; }
+    constexpr std::array cycles{4U, 4U, 6U, 0U, 0U};
+    const auto result = cycles.at(index_class(instruction.indexed));
+    if (result == 0) { throw std::logic_error("Indirect CPU12 bit operation"); }
+    return result;
   }
   if (instruction.addressing == Addressing::direct) { return 4; }
   if (instruction.addressing == Addressing::extended) { return 5; }
