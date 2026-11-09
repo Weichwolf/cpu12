@@ -6,13 +6,13 @@
 #include <cstdint>
 #include <exception>
 #include <iostream>
-#include <limits>
 #include <stdexcept>
 #include <vector>
 #if defined(__aarch64__)
 #include "jit/arena.hpp"
 
 #include <bit>
+#include <limits>
 #endif
 
 namespace {
