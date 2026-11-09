@@ -107,6 +107,37 @@ void precise_fault(const bool horizon) {
               device.core.progress() == Progress{.estimated_cycles = 2},
           "A latched native failure cannot replay preceding work");
 }
+
+void changing_capture() {
+  auto bytes = isa::program(isa::opcode<isa::Opcode::andcc_immediate>(), std::array<Byte, 1>{0x0f});
+  std::array<Byte, 2> known{1, 1};
+  Core core(Memory::window({.first = entry, .bytes = bytes, .known = known}));
+  constexpr Byte initial_flags = 0x8f;
+  constexpr Byte combined_flags = 0xaf;
+  const auto run = [&](const Byte expected) {
+    core.set_registers({.pc = entry, .sp = stack, .ccr = initial_flags});
+    const auto result = core.run(1);
+    require(result.fault == Fault::none && result.retired == 1 &&
+                core.registers().pc == entry + bytes.size() && core.registers().ccr == expected &&
+                core.registers().sp == stack,
+            "A previously unavailable native entry still captures current mutable bytes");
+  };
+  run(0x0f);
+  bytes[1] = initial_flags;
+  run(initial_flags);
+  const auto replacement = isa::opcode<isa::Opcode::orcc_immediate>();
+  bytes[0] = replacement[0];
+  bytes[1] = 0x20;
+  run(combined_flags);
+  known[1] = 0;
+  core.set_registers({.pc = entry, .sp = stack});
+  const auto failed = core.run(1);
+  require(failed.fault == Fault::instruction_fetch && failed.retired == 0 &&
+              failed.address == entry + 1 && core.registers().pc == entry,
+          "Remembering an unavailable entry cannot hide a newly unknown operand");
+  known[1] = 1;
+  run(combined_flags);
+}
 }
 
 int main() {
@@ -115,6 +146,7 @@ int main() {
     bounded_loop();
     precise_fault(false);
     precise_fault(true);
+    changing_capture();
     std::cout << "Native region length, reuse, bounded backedges and precise faults passed\n";
     return 0;
   } catch (const std::exception &error) {

@@ -15,6 +15,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bitset>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -86,6 +87,7 @@ struct Mapping {
   std::array<std::unique_ptr<NativePage>, native_page_entries> pages;
   NativeIndex native_regions{};
   unsigned native_entries = 0;
+  std::bitset<address_bytes> unavailable;
 
   [[nodiscard]] NativeResult run(const void *entry,
                                  Registers &registers,
@@ -116,7 +118,10 @@ public:
   run_cold(const std::uint32_t budget, Registers &registers, NativeContext &context) {
     auto &mapping = *current;
     const auto instructions = parse_block(mapping.memory, registers.pc);
-    if (instructions.empty()) { return std::nullopt; }
+    if (instructions.empty()) {
+      mapping.unavailable[registers.pc] = true;
+      return std::nullopt;
+    }
     const auto *entry = arena.append(emit_block(instructions, mapping.memory));
     const auto address = unsigned{registers.pc};
     auto &page = mapping.native_regions[address >> native_page_shift];
@@ -214,7 +219,10 @@ Jit::run_block(const std::uint32_t budget, Registers &registers, NativeContext &
   const auto address = unsigned{registers.pc};
   auto &page = mapping.native_regions[address >> native_page_shift];
   const auto *entry = page != nullptr ? page[address & page_mask] : nullptr;
-  if (entry == nullptr) { return impl_->run_cold(budget, registers, context); }
+  if (entry == nullptr) {
+    if (mapping.unavailable[address]) { return std::nullopt; }
+    return impl_->run_cold(budget, registers, context);
+  }
   const auto result = mapping.run(entry, registers, context, budget);
   return result;
 }
