@@ -5,7 +5,6 @@
 #include "preparation_memory.hpp"
 
 #include <array>
-#include <cstddef>
 #include <stdexcept>
 
 namespace cpu12::test {
