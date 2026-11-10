@@ -210,6 +210,32 @@ void Core::set_memory(const Memory memory) {
   impl_->jit.set_memory(memory);
 }
 
+PreparationReport Core::prepare(const std::span<const Address> established_entries) {
+  PreparationReport report;
+  if (impl_->active) {
+    report.failure = {.fault = Fault::reentrant,
+                      .state = impl_->context.cpu.execution,
+                      .pc = impl_->context.cpu.registers.pc};
+    return report;
+  }
+  if (!impl_->supported) {
+    report.failure = {.fault = Fault::unsupported_host,
+                      .state = impl_->context.cpu.execution,
+                      .pc = impl_->context.cpu.registers.pc};
+    return report;
+  }
+  impl_->active = true;
+  try {
+    report = impl_->jit.prepare(established_entries);
+  } catch (...) {
+    impl_->active = false;
+    throw;
+  }
+  impl_->active = false;
+  report.failure.state = impl_->context.cpu.execution;
+  return report;
+}
+
 RunResult Core::run_instruction(const std::span<const std::uint8_t> bytes) {
   RunResult result{.state = impl_->context.cpu.execution,
                    .pc = impl_->context.cpu.registers.pc,

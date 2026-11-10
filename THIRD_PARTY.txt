@@ -1,0 +1,8 @@
+Original CPU12 frontend, native emitters and integration: GPL-3.0-only (LICENSE).
+
+LLVM 19 runtime/compiler libraries:
+  LLVM Project contributors, Apache-2.0 WITH LLVM-exception.
+  https://llvm.org/
+  The complete packaged notice is retained in LICENSES/LLVM.txt.
+  Linked dynamically from the installed development package; no LLVM source is
+  built, patched or instrumented. Public CPU12 headers expose no LLVM types.

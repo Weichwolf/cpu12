@@ -5,7 +5,9 @@ macOS ARM64, GPL-3.0-only. See OBJECTIVE.md for complete-ISA acceptance.
 
 ## Build
 
-LLVM 19, CMake, Ninja, clang-format-19 and clang-tidy-19 are required.
+LLVM 19.1 development libraries, CMake, Ninja, clang-format-19 and clang-tidy-19
+are required. Linux packages include `llvm-19-dev`; Homebrew `llvm@19` contains
+the compiler, headers and shared library.
 
 ```sh
 cmake --preset release
@@ -23,6 +25,21 @@ for current macOS versions select the packaged current Clang sanitizer runtime:
 export LLVM19_RESOURCE_DIR="$("$(brew --prefix llvm)/bin/clang" -print-resource-dir)"
 cmake --preset strict
 ```
+
+## Preparation
+
+`Core::prepare(established_entries)` analyzes the bound immutable instruction view
+without executing guest instructions or changing State/Progress. It compiles
+supported operations through target-aware LLVM O3 and eagerly installs retained
+native entries. Current lowering covers immediate ADDD/SUBD/EORA, NOP and branches;
+unmigrated instructions and unknown edges remain explicit and use existing native
+execution. No public LLVM or backend selection is exposed.
+
+The report counts prepared and unresolved guest entry addresses, newly emitted
+native text bytes, and non-latching preparation diagnostics. Repeated preparation
+reuses code. New memory identities retain independent executable lifetimes.
+Call only on the inactive execution owner; rebinding and real I/O remain the
+consumer's responsibility.
 
 ## Use
 
@@ -67,3 +84,5 @@ CPU12_BENCH_FILTER; fixtures are in test/bench/.
 See doc/architecture.md and test/ for details.
 
 [License](LICENSE)
+
+LLVM dependency notices are retained in [THIRD_PARTY.txt](THIRD_PARTY.txt).

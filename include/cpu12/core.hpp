@@ -105,6 +105,11 @@ struct Statistics {
   std::uint64_t compiled_entries = 0;
 };
 
+struct PreparationReport {
+  std::uint64_t prepared_entries = 0, unresolved_entries = 0, native_bytes = 0;
+  RunResult failure;
+};
+
 // The board owns clocks, pending-source arbitration and acknowledgement. Native
 // faults latch until explicit register replacement or a recovered reset boundary.
 class Core {
@@ -121,6 +126,7 @@ public:
   void set_registers(Registers registers);
   // Explicit retirement-boundary remap; CPU state and previous translations remain intact.
   void set_memory(Memory memory);
+  [[nodiscard]] PreparationReport prepare(std::span<const Address> established_entries);
   [[nodiscard]] RunResult run_instruction(std::span<const std::uint8_t> bytes);
   [[nodiscard]] RunResult step();
   [[nodiscard]] EventResult reset(std::uint16_t vector) noexcept;

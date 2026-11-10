@@ -11,6 +11,9 @@
 #include "jit/block.hpp"
 #include "jit/emitter.hpp"
 #include "jit/interrupt.hpp"
+#include "jit/llvm/lift.hpp"
+#include "jit/llvm/program.hpp"
+#include "jit/preparation.hpp"
 #include "runtime.hpp"
 
 #include <algorithm>
@@ -20,6 +23,7 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <stdexcept>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -88,6 +92,20 @@ struct Mapping {
   NativeIndex native_regions{};
   unsigned native_entries = 0;
   std::bitset<address_bytes> unavailable;
+  std::bitset<address_bytes> prepared;
+  std::vector<std::unique_ptr<llvm19::Program>> programs;
+
+  void install(Address address, const void *entry) {
+    auto &page = native_regions[address >> native_page_shift];
+    if (page == nullptr) {
+      auto &owned = pages[address >> native_page_shift];
+      owned = std::make_unique<NativePage>();
+      page = owned->data();
+    }
+    auto &slot = (*pages[address >> native_page_shift])[address & page_mask];
+    if (slot == nullptr) { ++native_entries; }
+    slot = entry;
+  }
 
   [[nodiscard]] NativeResult run(const void *entry,
                                  Registers &registers,
@@ -123,16 +141,8 @@ public:
       return std::nullopt;
     }
     const auto *entry = arena.append(emit_block(instructions, mapping.memory));
-    const auto address = unsigned{registers.pc};
-    auto &page = mapping.native_regions[address >> native_page_shift];
-    if (page == nullptr) {
-      auto &owned = mapping.pages[address >> native_page_shift];
-      owned = std::make_unique<NativePage>();
-      page = owned->data();
-    }
-    (*mapping.pages[address >> native_page_shift])[address & page_mask] = entry;
+    mapping.install(registers.pc, entry);
     ++statistics.compiled_entries;
-    ++mapping.native_entries;
     const auto result = mapping.run(entry, registers, context, budget);
     return result;
   }
@@ -153,6 +163,40 @@ void Jit::set_memory(const Memory &memory) {
   auto *selected = mapping.get();
   impl_->mappings.push_back(std::move(mapping));
   impl_->current = selected;
+}
+
+PreparationReport Jit::prepare(const std::span<const Address> established_entries) {
+  auto *const mapping = impl_->current;
+  auto graph = preparation_graph(mapping->memory, established_entries);
+  PreparationReport report{.failure = graph.failure};
+  std::bitset<address_bytes> unresolved;
+  for (const auto address : graph.unresolved) { unresolved[address] = true; }
+  std::vector<BlockInstruction> instructions;
+  bool compile = false;
+  for (const auto &operation : graph.instructions) {
+    if (!llvm19::supports(operation.instruction)) {
+      unresolved[operation.pc] = true;
+      continue;
+    }
+    instructions.push_back(operation);
+    compile |= !mapping->prepared[operation.pc];
+  }
+  report.prepared_entries = instructions.size();
+  report.unresolved_entries = unresolved.count();
+  if (!compile) { return report; }
+  auto program = std::make_unique<llvm19::Program>(instructions);
+  if (impl_->current != mapping) {
+    throw std::logic_error("CPU12 binding changed during preparation");
+  }
+  const auto *entry = program->entry();
+  report.native_bytes = program->native_bytes();
+  mapping->programs.push_back(std::move(program));
+  ++impl_->statistics.compiled_entries;
+  for (const auto &operation : instructions) {
+    mapping->install(operation.pc, entry);
+    mapping->prepared[operation.pc] = true;
+  }
+  return report;
 }
 
 const Memory &Jit::memory() const noexcept {

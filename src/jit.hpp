@@ -16,6 +16,7 @@ public:
   explicit Jit(const Memory &ram);
   ~Jit();
   void set_memory(const Memory &memory);
+  [[nodiscard]] PreparationReport prepare(std::span<const Address> established_entries);
   [[nodiscard]] const Memory &memory() const noexcept;
   Jit(const Jit &) = delete;
   Jit &operator=(const Jit &) = delete;

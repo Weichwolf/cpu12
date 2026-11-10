@@ -78,6 +78,7 @@ add_library(cpu12_core STATIC
   src/bits.cpp
   src/move.cpp
   src/jit.cpp
+  src/jit/llvm/arithmetic.cpp src/jit/llvm/lift.cpp src/jit/llvm/program.cpp
   src/jit/block_parse.cpp src/jit/preparation.cpp
   src/jit/block_plan.cpp
   src/jit/arena.cpp
@@ -88,6 +89,7 @@ add_library(cpu12::core ALIAS cpu12_core)
 target_include_directories(cpu12_core PUBLIC include PRIVATE src)
 target_compile_features(cpu12_core PUBLIC cxx_std_23)
 target_link_libraries(cpu12_core PUBLIC cpu12_quality)
+include(cmake/Llvm.cmake)
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(arm64|aarch64)$")
   target_compile_options(cpu12_core PUBLIC $<$<CONFIG:Release>:-mcpu=native>)
 else()
@@ -175,6 +177,11 @@ if(BUILD_TESTING AND CPU12_BUILD_TESTING)
   add_executable(cpu12-word-window-test test/jit/word_window_test.cpp)
   target_link_libraries(cpu12-word-window-test PRIVATE cpu12::core)
   add_test(NAME word-windows-and-nzv COMMAND cpu12-word-window-test)
+  add_executable(cpu12-preparation-test test/jit/preparation_test.cpp)
+  target_include_directories(cpu12-preparation-test PRIVATE test/support)
+  target_link_libraries(cpu12-preparation-test PRIVATE cpu12::core)
+  add_test(NAME optimized-preparation COMMAND cpu12-preparation-test)
+  set_tests_properties(optimized-preparation PROPERTIES TIMEOUT 30)
   add_executable(cpu12-preparation-graph-test test/jit/preparation_graph_test.cpp)
   target_include_directories(cpu12-preparation-graph-test PRIVATE src test/support)
   target_link_libraries(cpu12-preparation-graph-test PRIVATE cpu12::core)
