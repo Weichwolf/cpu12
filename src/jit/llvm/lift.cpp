@@ -278,10 +278,13 @@ bool supports(const Instruction &instruction) noexcept {
            (instruction.target == WordTarget::x || instruction.target == WordTarget::y);
   }
   if (instruction.addressing != Addressing::immediate) { return false; }
-  if (instruction.kind == Kind::load) { return true; }
+  if (instruction.kind == Kind::load || instruction.kind == Kind::compare) { return true; }
   if (instruction.kind == Kind::add || instruction.kind == Kind::subtract) {
-    return instruction.word && instruction.target == WordTarget::d;
+    return !instruction.word || instruction.target == WordTarget::d;
   }
-  return instruction.kind == Kind::bit_xor && !instruction.word && !instruction.accumulator_b;
+  return !instruction.word &&
+         (instruction.kind == Kind::add_carry || instruction.kind == Kind::subtract_carry ||
+          instruction.kind == Kind::bit_and || instruction.kind == Kind::bit_or ||
+          instruction.kind == Kind::bit_xor || instruction.kind == Kind::bit_test);
 }
 }

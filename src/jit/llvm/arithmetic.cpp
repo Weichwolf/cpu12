@@ -13,6 +13,7 @@ namespace {
 constexpr unsigned word_bits = 16, byte_bits = 8;
 constexpr std::uint32_t word_mask = 0xffff, byte_mask = 0xff;
 constexpr std::uint32_t carry = 1, overflow = 2, zero = 4, negative = 8;
+constexpr std::uint32_t half = 0x20;
 
 LLVMValueRef flag(Builder &b, LLVMValueRef condition, const unsigned bit) {
   return b.CreateSelect(condition, b.getInt32(bit), b.getInt32(0));
@@ -44,8 +45,13 @@ LLVMValueRef &word(Values &values, const WordTarget target) {
   }
 }
 
-void load(Builder &b, Values &state, const Instruction instruction) {
-  auto *value = b.getInt32(instruction.operand);
+LLVMValueRef read(Builder &b, Values &state, const Instruction instruction) {
+  if (instruction.word) { return word(state, instruction.target); }
+  return instruction.accumulator_b ? b.CreateAnd(state.d, b.getInt32(byte_mask))
+                                   : b.CreateLShr(state.d, b.getInt32(byte_bits));
+}
+
+void write(Builder &b, Values &state, const Instruction instruction, LLVMValueRef value) {
   if (instruction.word) {
     word(state, instruction.target) = value;
   } else if (instruction.accumulator_b) {
@@ -54,12 +60,45 @@ void load(Builder &b, Values &state, const Instruction instruction) {
     state.d = b.CreateOr(b.CreateAnd(state.d, b.getInt32(byte_mask)),
                          b.CreateShl(value, b.getInt32(byte_bits)));
   }
-  state.ccr = flags(b,
-                    state.ccr,
-                    {.value = value,
-                     .carry_bit = b.CreateAnd(state.ccr, b.getInt32(carry)),
-                     .overflow_bit = b.getInt32(0),
-                     .width = instruction.word ? word_bits : byte_bits});
+}
+
+void arithmetic(Builder &b, Values &s, const Instruction instruction) {
+  const bool add = instruction.kind == Kind::add || instruction.kind == Kind::add_carry;
+  const bool with_carry =
+      instruction.kind == Kind::add_carry || instruction.kind == Kind::subtract_carry;
+  const auto width = instruction.word ? word_bits : byte_bits;
+  const auto mask = instruction.word ? word_mask : byte_mask;
+  auto *left = read(b, s, instruction);
+  auto *right = b.getInt32(instruction.operand);
+  auto *adjusted = with_carry ? b.CreateAdd(right, b.CreateAnd(s.ccr, b.getInt32(carry))) : right;
+  auto *wide = add ? b.CreateAdd(left, adjusted) : b.CreateSub(left, adjusted);
+  auto *result = b.CreateAnd(wide, b.getInt32(mask));
+  auto *c = flag(
+      b, add ? b.CreateICmpUGT(wide, b.getInt32(mask)) : b.CreateICmpULT(left, adjusted), carry);
+  auto *different = b.CreateXor(left, right);
+  auto *signs = b.CreateAnd(add ? b.CreateNot(different) : different, b.CreateXor(left, result));
+  auto *v = flag(b,
+                 b.CreateICmpNE(b.CreateAnd(signs, b.getInt32(1U << (width - 1))), b.getInt32(0)),
+                 overflow);
+  s.ccr = flags(b, s.ccr, {.value = result, .carry_bit = c, .overflow_bit = v, .width = width});
+  if (add && !instruction.word) {
+    auto *h = b.CreateAnd(b.CreateXor(different, result), b.getInt32(16));
+    s.ccr =
+        b.CreateOr(b.CreateAnd(s.ccr, b.getInt32(byte_mask ^ half)), b.CreateShl(h, b.getInt32(1)));
+  }
+  if (instruction.kind != Kind::compare) { write(b, s, instruction, result); }
+}
+
+LLVMValueRef logical(Builder &b, Values &s, const Instruction instruction) {
+  auto *right = b.getInt32(instruction.operand);
+  auto *left = read(b, s, instruction);
+  if (instruction.kind == Kind::load) { return right; }
+  if (instruction.kind == Kind::bit_and || instruction.kind == Kind::bit_test) {
+    return b.CreateAnd(left, right);
+  }
+  if (instruction.kind == Kind::bit_or) { return b.CreateOr(left, right); }
+  if (instruction.kind == Kind::bit_xor) { return b.CreateXor(left, right); }
+  throw std::logic_error("Invalid CPU12 LLVM logical instruction");
 }
 
 }
@@ -75,49 +114,23 @@ void lower(Builder &b, Values &s, const Instruction instruction) {
                        flag(b, b.CreateICmpEQ(value, b.getInt32(0)), zero));
     return;
   }
-  if (instruction.addressing != cpu12::detail::Addressing::immediate) {
+  if (instruction.addressing != Addressing::immediate) {
     throw std::runtime_error("LLVM lowering requires an established immediate operand");
   }
-  if (instruction.kind == Kind::load) {
-    load(b, s, instruction);
+  if (instruction.kind == Kind::add || instruction.kind == Kind::add_carry ||
+      instruction.kind == Kind::subtract || instruction.kind == Kind::subtract_carry ||
+      instruction.kind == Kind::compare) {
+    arithmetic(b, s, instruction);
     return;
   }
-  const auto operand = instruction.operand;
-  if ((instruction.kind == Kind::add || instruction.kind == Kind::subtract) && instruction.word) {
-    auto *left = s.d;
-    auto *right = b.getInt32(operand);
-    const bool subtract = instruction.kind == Kind::subtract;
-    auto *wide = subtract ? b.CreateSub(left, right) : b.CreateAdd(left, right);
-    auto *result = b.CreateAnd(wide, b.getInt32(word_mask));
-    auto *c =
-        flag(b,
-             subtract ? b.CreateICmpULT(left, right) : b.CreateICmpUGT(wide, b.getInt32(word_mask)),
-             carry);
-    auto *different = b.CreateXor(left, right);
-    auto *signs =
-        b.CreateAnd(subtract ? different : b.CreateNot(different), b.CreateXor(left, result));
-    auto *v =
-        flag(b,
-             b.CreateICmpNE(b.CreateAnd(signs, b.getInt32(1U << (word_bits - 1))), b.getInt32(0)),
-             overflow);
-    s.ccr =
-        flags(b, s.ccr, {.value = result, .carry_bit = c, .overflow_bit = v, .width = word_bits});
-    s.d = result;
-    return;
-  }
-  if (instruction.kind == Kind::bit_xor && !instruction.word && !instruction.accumulator_b) {
-    auto *a = b.CreateXor(b.CreateLShr(s.d, b.getInt32(byte_bits)), b.getInt32(operand));
-    s.d =
-        b.CreateOr(b.CreateShl(a, b.getInt32(byte_bits)), b.CreateAnd(s.d, b.getInt32(byte_mask)));
-    s.ccr = flags(b,
-                  s.ccr,
-                  {.value = a,
-                   .carry_bit = b.CreateAnd(s.ccr, b.getInt32(carry)),
-                   .overflow_bit = b.getInt32(0),
-                   .width = byte_bits});
-    return;
-  }
-  throw std::runtime_error("Unsupported CPU12 LLVM arithmetic lowering");
+  auto *result = logical(b, s, instruction);
+  s.ccr = flags(b,
+                s.ccr,
+                {.value = result,
+                 .carry_bit = b.CreateAnd(s.ccr, b.getInt32(carry)),
+                 .overflow_bit = b.getInt32(0),
+                 .width = instruction.word ? word_bits : byte_bits});
+  if (instruction.kind != Kind::bit_test) { write(b, s, instruction, result); }
 }
 
 }
