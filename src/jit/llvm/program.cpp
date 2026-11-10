@@ -5,6 +5,7 @@
 #include "cpu12/memory.hpp"
 #include "immutable.hpp"
 #include "jit/block.hpp"
+#include "jit/llvm/artifact.hpp"
 #include "jit/llvm/lifetime.hpp"
 #include "jit/llvm/lift.hpp"
 #include "jit/llvm/memory.hpp"
@@ -133,23 +134,25 @@ std::vector<Encoding> capture(const std::span<const BlockInstruction> region,
   return result;
 }
 
-Owner<LLVMTargetMachineRef, LLVMDisposeTargetMachine> target_machine() {
+Owner<LLVMTargetMachineRef, LLVMDisposeTargetMachine> target_machine(const ArtifactOutput output) {
   const Owner<char *, LLVMDisposeMessage> triple(LLVMGetDefaultTargetTriple());
   const Owner<char *, LLVMDisposeMessage> cpu(LLVMGetHostCPUName());
   const Owner<char *, LLVMDisposeMessage> features(LLVMGetHostCPUFeatures());
+  const auto native =
+      output == ArtifactOutput::native ? native_features() : std::string(features.get());
   LLVMTargetRef target = nullptr;
   char *raw = nullptr;
   const auto status = LLVMGetTargetFromTriple(triple.get(), &target, &raw);
   const Owner<char *, LLVMDisposeMessage> message(raw);
   if (status != 0) { throw std::runtime_error(message.get()); }
-  Owner<LLVMTargetMachineRef, LLVMDisposeTargetMachine> machine(
-      LLVMCreateTargetMachine(target,
-                              triple.get(),
-                              cpu.get(),
-                              features.get(),
-                              LLVMCodeGenLevelAggressive,
-                              LLVMRelocPIC,
-                              LLVMCodeModelJITDefault));
+  Owner<LLVMTargetMachineRef, LLVMDisposeTargetMachine> machine(LLVMCreateTargetMachine(
+      target,
+      triple.get(),
+      cpu.get(),
+      native.c_str(),
+      LLVMCodeGenLevelAggressive,
+      LLVMRelocPIC,
+      output == ArtifactOutput::native ? LLVMCodeModelSmall : LLVMCodeModelJITDefault));
   if (!machine) { throw std::runtime_error("Cannot create LLVM 19 native target machine"); }
   return machine;
 }
@@ -209,14 +212,14 @@ LLVMErrorRef measure_object(void *owner, LLVMMemoryBufferRef *buffer) noexcept {
 class Program::Impl {
 public:
   std::vector<std::vector<BlockInstruction>>
-  prepare(const std::span<const BlockInstruction> instructions, const Memory &memory) {
+  prepare(const std::span<const BlockInstruction> instructions, const ProgramMemory memory) {
     std::vector<std::vector<BlockInstruction>> optimizing;
     for (auto &region : regions(instructions)) {
-      sources.emplace(region.front().pc, capture(region, memory));
+      sources.emplace(region.front().pc, capture(region, memory.source));
       const bool uses_memory = std::ranges::any_of(region, [](const auto &operation) {
         return memory_operand(operation.instruction) || stack_operand(operation.instruction);
       });
-      if (uses_memory) { layouts.emplace(region.front().pc, layout(memory)); }
+      if (uses_memory) { layouts.emplace(region.front().pc, layout(memory.bindings)); }
       optimizing.push_back(std::move(region));
     }
     return optimizing;
@@ -225,16 +228,21 @@ public:
   std::uint64_t native_bytes = 0;
   Engine engine;
   std::map<Address, const void *> entries;
+  std::map<Address, std::string> symbols;
+  std::vector<std::byte> bitcode, object;
   std::map<Address, std::vector<Encoding>> sources;
   std::map<Address, std::vector<Layout>> layouts;
 };
 
 Program::Program(const std::span<const BlockInstruction> instructions, const Memory &memory)
+    : Program(instructions, {.memory = {.source = memory, .bindings = memory}, .bindings = {}}) {}
+
+Program::Program(const std::span<const BlockInstruction> instructions, const ProgramOptions options)
     : impl_(std::make_unique<Impl>()) {
-  const auto functions = impl_->prepare(instructions, memory);
+  const auto functions = impl_->prepare(instructions, options.memory);
   if (functions.empty()) { return; }
   weichwolf::llvm19::initialize_native();
-  auto machine = target_machine();
+  auto machine = target_machine(options.output);
   const Owner<char *, LLVMDisposeMessage> triple(LLVMGetDefaultTargetTriple());
   const Owner<LLVMTargetDataRef, LLVMDisposeTargetData> target_data(
       LLVMCreateTargetDataLayout(machine.get()));
@@ -246,13 +254,20 @@ Program::Program(const std::span<const BlockInstruction> instructions, const Mem
       LLVMModuleCreateWithNameInContext("cpu12-prepared", context));
   LLVMSetDataLayout(module.get(), layout.get());
   LLVMSetTarget(module.get(), triple.get());
-  const auto name = [](const auto &region) {
-    return "cpu12_region_" + std::to_string(region.front().pc);
+  const auto name = [&](const auto &region) {
+    return options.prefix + std::to_string(region.front().pc);
   };
   for (const auto &region : functions) {
-    static_cast<void>(lift(module.get(), context, region, memory, name(region).c_str()));
+    auto *function =
+        lift(module.get(), context, region, options.memory.bindings, name(region).c_str());
+    if (options.output == ArtifactOutput::native) { native_attributes(function); }
   }
+  link_bindings(module.get(), options.bindings);
+  if (options.output == ArtifactOutput::native) { impl_->bitcode = llvm19::bitcode(module.get()); }
   optimize(module.get(), machine.get());
+  if (options.output == ArtifactOutput::native) {
+    impl_->object = llvm19::object(module.get(), machine.get());
+  }
   Owner<LLVMOrcLLJITBuilderRef, LLVMOrcDisposeLLJITBuilder> builder(LLVMOrcCreateLLJITBuilder());
   LLVMOrcLLJITBuilderSetJITTargetMachineBuilder(
       builder.get(), LLVMOrcJITTargetMachineBuilderCreateFromTargetMachine(machine.release()));
@@ -268,17 +283,27 @@ Program::Program(const std::span<const BlockInstruction> instructions, const Mem
       &generator, LLVMOrcLLJITGetGlobalPrefix(impl_->engine.get()), nullptr, nullptr));
   LLVMOrcJITDylibAddGenerator(LLVMOrcLLJITGetMainJITDylib(impl_->engine.get()), generator);
 #endif
-  Owner<LLVMOrcThreadSafeModuleRef, LLVMOrcDisposeThreadSafeModule> safe_module(
-      LLVMOrcCreateNewThreadSafeModule(module.release(), thread_context.get()));
-  thread_context.reset();
-  require(LLVMOrcLLJITAddLLVMIRModule(impl_->engine.get(),
-                                      LLVMOrcLLJITGetMainJITDylib(impl_->engine.get()),
-                                      safe_module.release()));
+  if (options.output == ArtifactOutput::native) {
+    auto *buffer = LLVMCreateMemoryBufferWithMemoryRangeCopy(
+        reinterpret_cast<const char *>(impl_->object.data()), impl_->object.size(), "cpu12-image");
+    require(LLVMOrcLLJITAddObjectFile(
+        impl_->engine.get(), LLVMOrcLLJITGetMainJITDylib(impl_->engine.get()), buffer));
+  } else {
+    Owner<LLVMOrcThreadSafeModuleRef, LLVMOrcDisposeThreadSafeModule> safe_module(
+        LLVMOrcCreateNewThreadSafeModule(module.release(), thread_context.get()));
+    thread_context.reset();
+    require(LLVMOrcLLJITAddLLVMIRModule(impl_->engine.get(),
+                                        LLVMOrcLLJITGetMainJITDylib(impl_->engine.get()),
+                                        safe_module.release()));
+  }
   for (const auto &region : functions) {
     LLVMOrcExecutorAddress symbol = 0;
     require(LLVMOrcLLJITLookup(impl_->engine.get(), &symbol, name(region).c_str()));
     for (const auto &operation : region) {
       impl_->entries.emplace(operation.pc, std::bit_cast<const void *>(symbol));
+      if (options.output == ArtifactOutput::native) {
+        impl_->symbols.emplace(operation.pc, name(region));
+      }
     }
   }
 }
@@ -287,6 +312,23 @@ Program::~Program() = default;
 
 const void *Program::entry(const Address address) const {
   return impl_->entries.at(address);
+}
+
+const void *Program::find(const Address address) const {
+  const auto found = impl_->entries.find(address);
+  return found != impl_->entries.end() ? found->second : nullptr;
+}
+
+std::string_view Program::symbol(const Address address) const {
+  return impl_->symbols.at(address);
+}
+
+std::span<const std::byte> Program::bitcode() const noexcept {
+  return impl_->bitcode;
+}
+
+std::span<const std::byte> Program::object() const noexcept {
+  return impl_->object;
 }
 
 const void *Program::find(const std::span<const BlockInstruction> region,

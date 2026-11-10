@@ -2,6 +2,7 @@
 #include "runtime.hpp"
 
 #include "cpu12/core.hpp"
+#include "jit/llvm/io_abi.hpp"
 
 #include <cstdint>
 #include <limits>
@@ -81,4 +82,26 @@ std::uint32_t write_word(NativeContext *const context,
   return 0;
 }
 
+}
+
+extern "C" std::uint32_t cpu12_read_byte(cpu12::detail::NativeContext *context,
+                                         const std::uint16_t address) noexcept {
+  return cpu12::detail::read_byte(context, address);
+}
+
+extern "C" std::uint32_t cpu12_read_word(cpu12::detail::NativeContext *context,
+                                         const std::uint16_t address) noexcept {
+  return cpu12::detail::read_word(context, address);
+}
+
+extern "C" std::uint32_t cpu12_write_byte(cpu12::detail::NativeContext *context,
+                                          const std::uint16_t address,
+                                          const std::uint8_t value) noexcept {
+  return cpu12::detail::write_byte(context, address, value);
+}
+
+extern "C" std::uint32_t cpu12_write_word(cpu12::detail::NativeContext *context,
+                                          const std::uint16_t address,
+                                          const std::uint16_t value) noexcept {
+  return cpu12::detail::write_word(context, address, value);
 }

@@ -4,15 +4,17 @@ set(CPU12_SANITIZER "address-undefined" CACHE STRING "none, address-undefined, o
 set_property(CACHE CPU12_SANITIZER PROPERTY STRINGS none address-undefined thread)
 
 include("${CMAKE_CURRENT_LIST_DIR}/Hardening.cmake")
-add_library(cpu12_quality INTERFACE)
-target_link_libraries(cpu12_quality INTERFACE cpu12_hardening)
-target_compile_options(cpu12_quality INTERFACE
+add_library(cpu12_diagnostics INTERFACE)
+target_link_libraries(cpu12_diagnostics INTERFACE cpu12_hardening)
+target_compile_options(cpu12_diagnostics INTERFACE
   -Wall -Wextra -Wpedantic -Werror -pedantic-errors
   -Wconversion -Wsign-conversion -Wshadow -Wundef
   -Wcast-align -Wcast-qual -Wdouble-promotion -Wnull-dereference
   -Wimplicit-fallthrough -Wnon-virtual-dtor -Wold-style-cast
   -Woverloaded-virtual -Wextra-semi -Wvla -Wswitch-enum -Wswitch-default
   -ffp-contract=off -fno-omit-frame-pointer)
+add_library(cpu12_quality INTERFACE)
+target_link_libraries(cpu12_quality INTERFACE cpu12_diagnostics)
 # Setup and host API validation use exceptions; ordinary execution reports explicit faults.
 if(APPLE)
   target_link_options(cpu12_quality INTERFACE -Wl,-fatal_warnings)

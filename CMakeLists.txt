@@ -83,6 +83,8 @@ add_library(cpu12_core STATIC
   src/jit/llvm/indexed.cpp
   src/jit/llvm/registers.cpp
   src/jit/llvm/stack.cpp
+  src/jit/image.cpp src/jit/llvm/image.cpp
+  src/jit/llvm/artifact.cpp
   src/jit/block_parse.cpp src/jit/preparation.cpp
   src/jit/block_plan.cpp
   src/jit/arena.cpp
@@ -95,10 +97,11 @@ target_compile_features(cpu12_core PUBLIC cxx_std_23)
 target_link_libraries(cpu12_core PUBLIC cpu12_quality)
 include(cmake/Llvm.cmake)
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(arm64|aarch64)$")
-  target_compile_options(cpu12_core PUBLIC $<$<CONFIG:Release>:-mcpu=native>)
+  set(cpu12_native_option -mcpu=native)
 else()
-  target_compile_options(cpu12_core PUBLIC $<$<CONFIG:Release>:-march=native>)
+  set(cpu12_native_option -march=native)
 endif()
+target_compile_options(cpu12_core PUBLIC $<$<CONFIG:Release>:${cpu12_native_option}>)
 if(NOT APPLE)
   target_link_options(cpu12_core PUBLIC -fuse-ld=lld)
 endif()
@@ -225,6 +228,38 @@ if(BUILD_TESTING AND CPU12_BUILD_TESTING)
   target_link_libraries(cpu12-preparation-stack-test PRIVATE cpu12::core)
   add_test(NAME optimized-stack-control COMMAND cpu12-preparation-stack-test)
   set_tests_properties(optimized-stack-control PROPERTIES TIMEOUT 30)
+  add_library(cpu12-image-bindings OBJECT test/jit/image_bindings.cpp)
+  target_include_directories(cpu12-image-bindings PRIVATE include src)
+  # Semantic IR receives native instrumentation after fusion in Program.
+  target_link_libraries(cpu12-image-bindings PRIVATE cpu12_diagnostics)
+  target_compile_options(cpu12-image-bindings PRIVATE -emit-llvm ${cpu12_native_option})
+  set_target_properties(cpu12-image-bindings PROPERTIES INTERPROCEDURAL_OPTIMIZATION_RELEASE OFF)
+  add_executable(cpu12-image-test test/jit/image_test.cpp test/jit/image_contract_test.cpp
+    test/jit/image_artifact_test.cpp)
+  target_include_directories(cpu12-image-test PRIVATE src test/support)
+  target_include_directories(cpu12-image-test SYSTEM PRIVATE ${LLVM_INCLUDE_DIRS})
+  target_link_libraries(cpu12-image-test PRIVATE cpu12::core LLVM)
+  target_compile_definitions(cpu12-image-test PRIVATE
+    CPU12_IMAGE_BINDINGS="$<TARGET_OBJECTS:cpu12-image-bindings>")
+  add_dependencies(cpu12-image-test cpu12-image-bindings)
+  add_test(NAME complete-code-images COMMAND cpu12-image-test)
+  set_tests_properties(complete-code-images PROPERTIES TIMEOUT 30)
+  add_executable(cpu12-image-export test/jit/image_export.cpp)
+  target_include_directories(cpu12-image-export PRIVATE src test/support)
+  target_link_libraries(cpu12-image-export PRIVATE cpu12::core)
+  set(cpu12_image_fixtures "${CMAKE_CURRENT_BINARY_DIR}/image-fixtures")
+  set(cpu12_image_objects "${cpu12_image_fixtures}/variant-7.o" "${cpu12_image_fixtures}/variant-9.o")
+  add_custom_command(OUTPUT ${cpu12_image_objects} "${cpu12_image_fixtures}/entries.hpp"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${cpu12_image_fixtures}"
+    COMMAND cpu12-image-export "${cpu12_image_fixtures}"
+    DEPENDS cpu12-image-export VERBATIM)
+  set_source_files_properties(${cpu12_image_objects} PROPERTIES GENERATED TRUE EXTERNAL_OBJECT TRUE)
+  add_executable(cpu12-image-static-test test/jit/image_static_test.cpp
+    "${cpu12_image_fixtures}/entries.hpp" ${cpu12_image_objects})
+  target_include_directories(cpu12-image-static-test PRIVATE src test/support "${cpu12_image_fixtures}")
+  target_link_libraries(cpu12-image-static-test PRIVATE cpu12::core)
+  add_test(NAME linked-code-images COMMAND cpu12-image-static-test)
+  set_tests_properties(linked-code-images PROPERTIES TIMEOUT 30)
   add_executable(cpu12-preparation-regions-test test/jit/preparation_regions_test.cpp)
   target_include_directories(cpu12-preparation-regions-test PRIVATE test/support)
   target_link_libraries(cpu12-preparation-regions-test PRIVATE cpu12::core)
