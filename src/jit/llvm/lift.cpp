@@ -7,6 +7,7 @@
 #include "instruction.hpp"
 #include "jit/block.hpp"
 #include "jit/llvm/builder.hpp"
+#include "jit/llvm/indexed.hpp"
 #include "jit/llvm/memory.hpp"
 #include "jit/preparation.hpp"
 #include "runtime.hpp"
@@ -222,13 +223,31 @@ private:
 
   LLVMValueRef memory_value(const BlockInstruction &operation, Values &state) {
     const auto &instruction = operation.instruction;
+    auto *address = effective_address(builder_, state, operation);
+    if (instruction.addressing == Addressing::indexed && instruction.indexed.indirect) {
+      auto pointer = instruction;
+      pointer.kind = Kind::load;
+      pointer.word = true;
+      address = transfer(operation, pointer, {.address = address});
+    }
+    auto adjusted = state;
+    commit_index(builder_, adjusted, instruction);
     auto *value =
-        instruction.kind == Kind::store ? register_value(builder_, state, instruction) : nullptr;
-    MemoryAccess access(builder_, owner_, instruction, value);
+        instruction.kind == Kind::store ? register_value(builder_, adjusted, instruction) : nullptr;
+    auto *result = transfer(operation, instruction, {.address = address, .value = value});
+    commit_index(builder_, state, instruction);
+    return result;
+  }
+
+  LLVMValueRef transfer(const BlockInstruction &operation,
+                        const Instruction instruction,
+                        const AccessValues values) {
+    MemoryAccess access(builder_, owner_, instruction, values);
     access.direct(memory_);
     publish();
-    const auto location = static_cast<std::uint64_t>(operation.pc) |
-                          (static_cast<std::uint64_t>(instruction.opcode) << native_opcode_shift);
+    const auto location =
+        static_cast<std::uint64_t>(operation.pc) |
+        (static_cast<std::uint64_t>(operation.instruction.opcode) << native_opcode_shift);
     builder_.CreateStore(builder_.getInt64(location), location_);
     builder_.CreateStore(LLVMConstInt(LLVMInt1TypeInContext(context_), 1, 0), boundary_);
     auto *result = access.external();

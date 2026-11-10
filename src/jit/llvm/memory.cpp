@@ -20,11 +20,12 @@ constexpr unsigned byte_bits = 8;
 MemoryAccess::MemoryAccess(Builder &builder,
                            LLVMValueRef owner,
                            const Instruction instruction,
-                           LLVMValueRef value)
+                           const AccessValues values)
     : builder_(builder),
       owner_(owner),
-      value_(value),
+      value_(values.value),
       function_(LLVMGetBasicBlockParent(LLVMGetInsertBlock(builder.get()))),
+      address_(values.address),
       instruction_(instruction),
       external_(append("io")),
       joined_(append("memory_done")) {}
@@ -38,27 +39,81 @@ LLVMValueRef MemoryAccess::pointer(LLVMValueRef base, const std::size_t offset) 
   return builder_.CreateGEP(builder_.getInt8Ty(), base, builder_.getInt64(offset));
 }
 
-LLVMValueRef MemoryAccess::byte(LLVMValueRef base, const std::size_t offset) {
-  return builder_.CreateZExt(builder_.CreateLoad(builder_.getInt8Ty(), pointer(base, offset)),
+LLVMValueRef MemoryAccess::element(LLVMValueRef base, LLVMValueRef offset) {
+  return builder_.CreateGEP(
+      builder_.getInt8Ty(), base, builder_.CreateZExt(offset, builder_.getInt64Ty()));
+}
+
+LLVMValueRef MemoryAccess::byte(LLVMValueRef base, LLVMValueRef offset) {
+  return builder_.CreateZExt(builder_.CreateLoad(builder_.getInt8Ty(), element(base, offset)),
                              builder_.getInt32Ty());
 }
 
-void MemoryAccess::transfer(LLVMValueRef bytes, const std::size_t high, const std::size_t low) {
+LLVMValueRef MemoryAccess::transfer(LLVMValueRef bytes, const Offsets offsets) {
   if (instruction_.kind == Kind::store) {
     auto *first =
         instruction_.word ? builder_.CreateLShr(value_, builder_.getInt32(byte_bits)) : value_;
-    builder_.CreateStore(builder_.CreateTrunc(first, builder_.getInt8Ty()), pointer(bytes, high));
+    builder_.CreateStore(builder_.CreateTrunc(first, builder_.getInt8Ty()),
+                         element(bytes, offsets.high));
     if (instruction_.word) {
-      builder_.CreateStore(builder_.CreateTrunc(value_, builder_.getInt8Ty()), pointer(bytes, low));
+      builder_.CreateStore(builder_.CreateTrunc(value_, builder_.getInt8Ty()),
+                           element(bytes, offsets.low));
     }
-    direct_value_ = value_;
-  } else {
-    direct_value_ = byte(bytes, high);
-    if (instruction_.word) {
-      direct_value_ = builder_.CreateOr(
-          builder_.CreateShl(direct_value_, builder_.getInt32(byte_bits)), byte(bytes, low));
+    return value_;
+  }
+  auto *result = byte(bytes, offsets.high);
+  if (instruction_.word) {
+    result = builder_.CreateOr(builder_.CreateShl(result, builder_.getInt32(byte_bits)),
+                               byte(bytes, offsets.low));
+  }
+  return result;
+}
+
+void MemoryAccess::region(const Ram &region, const std::size_t index) {
+  constexpr unsigned word_mask = 0xffff;
+  const bool write = instruction_.kind == Kind::store;
+  auto *next_address = builder_.CreateAnd(builder_.CreateAdd(address_, builder_.getInt32(1)),
+                                          builder_.getInt32(word_mask));
+  const Offsets offsets{.high = builder_.CreateSub(address_, builder_.getInt32(region.first)),
+                        .low = builder_.CreateSub(next_address, builder_.getInt32(region.first))};
+  auto *fits = builder_.CreateICmpULT(offsets.high, builder_.getInt32(region.bytes.size()));
+  if (instruction_.word) {
+    fits = builder_.CreateAnd(
+        fits, builder_.CreateICmpULT(offsets.low, builder_.getInt32(region.bytes.size())));
+  }
+  auto *body = append("mapped_memory");
+  auto *next = append("next_region");
+  LLVMBuildCondBr(builder_.get(), fits, body, next);
+  LLVMPositionBuilderAtEnd(builder_.get(), body);
+  auto *type = LLVMTypeOf(owner_);
+  auto *bindings =
+      builder_.CreateLoad(type, pointer(owner_, offsetof(NativeContext, memory_bindings)));
+  auto *binding = pointer(bindings, index * sizeof(MemoryBinding));
+  auto *bytes = builder_.CreateLoad(type, pointer(binding, offsetof(MemoryBinding, bytes)));
+  LLVMValueRef known = nullptr;
+  if (!region.known.empty()) {
+    known = builder_.CreateLoad(type, pointer(binding, offsetof(MemoryBinding, known)));
+    if (!write) {
+      auto *ready = builder_.CreateICmpNE(byte(known, offsets.high), builder_.getInt32(0));
+      if (instruction_.word) {
+        ready = builder_.CreateAnd(
+            ready, builder_.CreateICmpNE(byte(known, offsets.low), builder_.getInt32(0)));
+      }
+      auto *initialized = append("known_memory");
+      LLVMBuildCondBr(builder_.get(), ready, initialized, external_);
+      LLVMPositionBuilderAtEnd(builder_.get(), initialized);
     }
   }
+  auto *value = transfer(bytes, offsets);
+  if (write && known != nullptr) {
+    builder_.CreateStore(builder_.getInt8(1), element(known, offsets.high));
+    if (instruction_.word) {
+      builder_.CreateStore(builder_.getInt8(1), element(known, offsets.low));
+    }
+  }
+  direct_.emplace_back(value, LLVMGetInsertBlock(builder_.get()));
+  LLVMBuildBr(builder_.get(), joined_);
+  LLVMPositionBuilderAtEnd(builder_.get(), next);
 }
 
 void MemoryAccess::direct(const Memory &memory) {
@@ -67,41 +122,20 @@ void MemoryAccess::direct(const Memory &memory) {
   for (std::size_t index = 0; index < regions.size(); ++index) {
     const auto &region = regions[index];
     const bool write = instruction_.kind == Kind::store;
-    if ((write && !region.writable) || instruction_.address < region.first) { continue; }
+    if (region.bytes.empty() || (write && !region.writable)) { continue; }
+    if (instruction_.addressing == Addressing::indexed) {
+      this->region(region, index);
+      continue;
+    }
+    if (instruction_.address < region.first) { continue; }
     const auto high = static_cast<std::size_t>(instruction_.address - region.first);
     const auto low = static_cast<std::size_t>(next - region.first);
     if (high >= region.bytes.size() ||
         (instruction_.word && (next < region.first || low >= region.bytes.size()))) {
       continue;
     }
-    auto *type = LLVMTypeOf(owner_);
-    auto *bindings =
-        builder_.CreateLoad(type, pointer(owner_, offsetof(NativeContext, memory_bindings)));
-    auto *binding = pointer(bindings, index * sizeof(MemoryBinding));
-    auto *bytes = builder_.CreateLoad(type, pointer(binding, offsetof(MemoryBinding, bytes)));
-    LLVMValueRef known = nullptr;
-    if (!region.known.empty()) {
-      known = builder_.CreateLoad(type, pointer(binding, offsetof(MemoryBinding, known)));
-      if (!write) {
-        auto *ready = builder_.CreateICmpNE(byte(known, high), builder_.getInt32(0));
-        if (instruction_.word) {
-          ready = builder_.CreateAnd(ready,
-                                     builder_.CreateICmpNE(byte(known, low), builder_.getInt32(0)));
-        }
-        auto *body = append("known_memory");
-        LLVMBuildCondBr(builder_.get(), ready, body, external_);
-        LLVMPositionBuilderAtEnd(builder_.get(), body);
-      }
-    }
-    transfer(bytes, high, low);
-    if (write && known != nullptr) {
-      builder_.CreateStore(builder_.getInt8(1), pointer(known, high));
-      if (instruction_.word) { builder_.CreateStore(builder_.getInt8(1), pointer(known, low)); }
-    }
-    direct_ = LLVMGetInsertBlock(builder_.get());
-    LLVMBuildBr(builder_.get(), joined_);
-    LLVMPositionBuilderAtEnd(builder_.get(), external_);
-    return;
+    this->region(region, index);
+    break;
   }
   LLVMBuildBr(builder_.get(), external_);
   LLVMPositionBuilderAtEnd(builder_.get(), external_);
@@ -131,7 +165,7 @@ LLVMValueRef MemoryAccess::external() {
     }
   }
   std::array arguments{owner_,
-                       builder_.getInt16(instruction_.address),
+                       builder_.CreateTrunc(address_, builder_.getInt16Ty()),
                        write ? builder_.CreateTrunc(value_, value_type) : nullptr};
   auto *call =
       LLVMBuildCall2(builder_.get(), type, function, arguments.data(), write ? 3U : 2U, "");
@@ -149,14 +183,15 @@ LLVMValueRef MemoryAccess::join(LLVMValueRef external_value) {
   LLVMBuildBr(builder_.get(), joined_);
   LLVMPositionBuilderAtEnd(builder_.get(), joined_);
   auto *result = LLVMBuildPhi(builder_.get(), builder_.getInt32Ty(), "operand");
-  auto *value = instruction_.kind == Kind::store ? value_ : external_value;
-  LLVMAddIncoming(result, &value, &external_block, 1);
-  if (direct_ != nullptr) { LLVMAddIncoming(result, &direct_value_, &direct_, 1); }
+  auto *io_value = instruction_.kind == Kind::store ? value_ : external_value;
+  LLVMAddIncoming(result, &io_value, &external_block, 1);
+  for (auto &[value, block] : direct_) { LLVMAddIncoming(result, &value, &block, 1); }
   return result;
 }
 
 bool memory_operand(const Instruction &instruction) noexcept {
   return instruction.addressing == Addressing::direct ||
-         instruction.addressing == Addressing::extended;
+         instruction.addressing == Addressing::extended ||
+         instruction.addressing == Addressing::indexed;
 }
 }
