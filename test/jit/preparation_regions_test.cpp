@@ -10,6 +10,7 @@
 #include <exception>
 #include <iostream>
 #include <limits>
+#include <span>
 #include <stdexcept>
 #include <vector>
 
@@ -99,6 +100,90 @@ void check(Core &core, const Address base) {
       }
     }
   }
+}
+
+void split_prefixes(Core &prepared, Core &reference, const Registers seed) {
+  for (const auto pc : {seed.pc, static_cast<Address>(seed.pc + 3)}) {
+    auto initial = seed;
+    initial.pc = pc;
+    for (const auto grant : {0U, 1U, 2U, 3U, 17U}) {
+      prepared.set_registers(initial);
+      reference.set_registers(initial);
+      require(prepared.run(grant) == reference.run(grant) &&
+                  prepared.state() == reference.state() &&
+                  prepared.progress() == reference.progress(),
+              "Split prepared instructions preserve complete state and every prefix");
+    }
+    for (const auto delta : {0U, 1U, 2U, 3U, 17U}) {
+      prepared.set_registers(initial);
+      reference.set_registers(initial);
+      const auto deadline = prepared.progress().estimated_cycles + delta;
+      require(prepared.run_until(deadline) == reference.run_until(deadline) &&
+                  prepared.state() == reference.state() &&
+                  prepared.progress() == reference.progress(),
+              "Split prepared instructions preserve atomic cycle-deadline boundaries");
+    }
+  }
+}
+
+void split_regions(const Address entry) {
+  constexpr Address value = 0x1234;
+  std::array<Byte, 5> bytes{static_cast<Byte>(isa::Opcode::ldd_immediate),
+                            static_cast<Byte>(value >> byte_bits),
+                            static_cast<Byte>(value),
+                            static_cast<Byte>(isa::Opcode::bra_relative),
+                            backedge};
+  const auto source = bytes;
+  auto rebound_bytes = bytes;
+  std::array<Ram, bytes.size()> windows;
+  auto rebound = windows;
+  for (std::size_t index = 0; index < windows.size(); ++index) {
+    const auto pc = static_cast<Address>(entry + index);
+    windows[index] = {.first = pc, .bytes = std::span(bytes).subspan(index, 1), .writable = false};
+    rebound[index] = {.first = pc,
+                      .bytes = std::span(rebound_bytes).subspan(index, 1),
+                      .writable = false,
+                      .identity = 1};
+  }
+  const auto memory = Memory::mapped(windows);
+  Core prepared(memory);
+  Core reference(memory);
+  const auto state = prepared.state();
+  const auto progress = prepared.progress();
+  const std::array entries{entry};
+  const auto report = prepared.prepare(entries);
+  require(report.prepared_entries == 2 && report.unresolved_entries == 0 &&
+              report.failure.fault == Fault::none && report.native_bytes > 0 &&
+              prepared.state() == state && prepared.progress() == progress,
+          "A complete immutable instruction may cross grants and the logical address wrap");
+  const auto compilations = prepared.statistics().compiled_entries;
+  for (unsigned ccr = 0; ccr <= std::numeric_limits<Byte>::max(); ++ccr) {
+    const Registers seed{.pc = entry,
+                         .d = 0x5678,
+                         .x = first,
+                         .y = stack,
+                         .sp = stack,
+                         .ccr = static_cast<Byte>(ccr)};
+    auto expected = seed;
+    expected.d = value;
+    expected.pc = static_cast<Address>(entry + 3);
+    expected.ccr &= load_preserved;
+    prepared.set_registers(seed);
+    reference.set_registers(seed);
+    const auto result = prepared.run(1);
+    require(result.fault == Fault::none && result.retired == 1 &&
+                prepared.registers() == expected && result == reference.run(1) &&
+                prepared.state() == reference.state() &&
+                prepared.progress() == reference.progress(),
+            "Split immediate operands execute their exact independent value and CCR semantics");
+    split_prefixes(prepared, reference, seed);
+  }
+  prepared.set_memory(Memory::mapped(rebound));
+  const auto reused = prepared.prepare(entries);
+  require(reused.prepared_entries == 2 && reused.native_bytes == 0 &&
+              prepared.statistics().compiled_entries == compilations && bytes == source &&
+              rebound_bytes == source,
+          "Identical split encodings reuse retained native code across physical backing changes");
 }
 
 void independent_regions() {
@@ -196,6 +281,9 @@ void rebinding_regions() {
 }
 
 int main() try {
+  constexpr Address wrapped_entry = 0xfffe;
+  split_regions(first);
+  split_regions(wrapped_entry);
   independent_regions();
   incremental_regions();
   rebinding_regions();

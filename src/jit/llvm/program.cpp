@@ -21,7 +21,6 @@
 #include "llvm-c/Transforms/PassBuilder.h"
 #include "llvm-c/Types.h"
 
-#include <algorithm>
 #include <array>
 #include <bit>
 #include <cstdint>
@@ -73,11 +72,17 @@ std::vector<Encoding> capture(const std::span<const BlockInstruction> region,
   result.reserve(region.size());
   for (const auto &operation : region) {
     Encoding source{.pc = operation.pc, .length = operation.instruction.length};
-    const auto bytes = immutable_bytes(memory, source.pc);
-    if (source.length > source.bytes.size() || source.length > bytes.size()) {
+    if (source.length > source.bytes.size()) {
       throw std::logic_error("Prepared CPU12 code lost its immutable instruction bytes");
     }
-    std::ranges::copy(bytes.first(source.length), source.bytes.begin());
+    for (unsigned offset = 0; offset < source.length; ++offset) {
+      const auto address = static_cast<Address>(source.pc + offset);
+      const auto bytes = immutable_bytes(memory, address);
+      if (bytes.empty()) {
+        throw std::logic_error("Prepared CPU12 code lost its immutable instruction bytes");
+      }
+      source.bytes[offset] = bytes.front();
+    }
     result.push_back(source);
   }
   return result;
