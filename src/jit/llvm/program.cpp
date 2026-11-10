@@ -10,6 +10,7 @@
 #include "jit/llvm/memory.hpp"
 #include "jit/llvm/native.hpp"
 #include "jit/llvm/regions.hpp"
+#include "jit/llvm/stack.hpp"
 #include "runtime.hpp"
 
 #include "llvm-c/Analysis.h"
@@ -212,8 +213,9 @@ public:
     std::vector<std::vector<BlockInstruction>> optimizing;
     for (auto &region : regions(instructions)) {
       sources.emplace(region.front().pc, capture(region, memory));
-      const bool uses_memory = std::ranges::any_of(
-          region, [](const auto &operation) { return memory_operand(operation.instruction); });
+      const bool uses_memory = std::ranges::any_of(region, [](const auto &operation) {
+        return memory_operand(operation.instruction) || stack_operand(operation.instruction);
+      });
       if (uses_memory) { layouts.emplace(region.front().pc, layout(memory)); }
       optimizing.push_back(std::move(region));
     }

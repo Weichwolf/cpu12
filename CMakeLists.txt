@@ -82,6 +82,7 @@ add_library(cpu12_core STATIC
   src/jit/llvm/memory.cpp
   src/jit/llvm/indexed.cpp
   src/jit/llvm/registers.cpp
+  src/jit/llvm/stack.cpp
   src/jit/block_parse.cpp src/jit/preparation.cpp
   src/jit/block_plan.cpp
   src/jit/arena.cpp
@@ -217,6 +218,13 @@ if(BUILD_TESTING AND CPU12_BUILD_TESTING)
   target_link_libraries(cpu12-preparation-registers-test PRIVATE cpu12::core)
   add_test(NAME optimized-register-operations COMMAND cpu12-preparation-registers-test)
   set_tests_properties(optimized-register-operations PROPERTIES TIMEOUT 30)
+  add_executable(cpu12-preparation-stack-test test/jit/preparation_stack_test.cpp
+    test/jit/preparation_stack_calls.cpp test/jit/preparation_stack_fixed.cpp
+    test/jit/preparation_stack_boundaries.cpp)
+  target_include_directories(cpu12-preparation-stack-test PRIVATE test/support)
+  target_link_libraries(cpu12-preparation-stack-test PRIVATE cpu12::core)
+  add_test(NAME optimized-stack-control COMMAND cpu12-preparation-stack-test)
+  set_tests_properties(optimized-stack-control PROPERTIES TIMEOUT 30)
   add_executable(cpu12-preparation-regions-test test/jit/preparation_regions_test.cpp)
   target_include_directories(cpu12-preparation-regions-test PRIVATE test/support)
   target_link_libraries(cpu12-preparation-regions-test PRIVATE cpu12::core)

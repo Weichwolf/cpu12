@@ -87,7 +87,7 @@ void native_grants() {
           "Prepared runs must not mutate source or trigger lazy compilation");
 }
 
-void retained_native_boundary() {
+void prepared_return_boundary() {
   constexpr auto program = isa::program(isa::opcode<isa::Opcode::addd_immediate>(),
                                         std::array<Byte, 2>{0, 1},
                                         isa::opcode<isa::Opcode::ldd_extended>(),
@@ -105,11 +105,12 @@ void retained_native_boundary() {
   Core prepared(memory);
   Core reference(memory);
   const auto report = prepared.prepare(entries);
-  require(report.prepared_entries == 3 && report.unresolved_entries == 1 &&
+  require(report.prepared_entries == 4 && report.unresolved_entries == 1 &&
               report.failure.fault == Fault::none,
-          "Direct memory ALU joins its optimized neighbors; the dynamic return remains explicit");
+          "Direct memory ALU and RTS all prepare; the dynamic return target remains explicit");
+  const auto compilations = prepared.statistics().compiled_entries;
   const Registers seed{.pc = entry, .d = sentinel_x, .x = sentinel_x, .y = sentinel_y, .sp = stack};
-  for (const auto grant : {1U, 2U, 3U}) {
+  for (const auto grant : {1U, 2U, 3U, 4U}) {
     prepared.set_registers(seed);
     reference.set_registers(seed);
     require(prepared.run(grant) == reference.run(grant) && prepared.state() == reference.state() &&
@@ -117,6 +118,9 @@ void retained_native_boundary() {
             "Prepared and retained native entries must join without losing partial retirement or "
             "effects");
   }
+  require(
+      bytes == program && prepared.statistics().compiled_entries == compilations,
+      "Prepared RTS must preserve source and fault without lazy single-instruction translation");
 }
 
 void binding_lifetime() {
@@ -360,7 +364,7 @@ void refusal_state() {
 
 int main() try {
   native_grants();
-  retained_native_boundary();
+  prepared_return_boundary();
   binding_lifetime();
   refusal_state();
   independent_preparation();

@@ -10,6 +10,7 @@
 #include "jit/llvm/indexed.hpp"
 #include "jit/llvm/memory.hpp"
 #include "jit/llvm/registers.hpp"
+#include "jit/llvm/stack.hpp"
 #include "jit/preparation.hpp"
 #include "runtime.hpp"
 
@@ -52,7 +53,8 @@ public:
         registers_(LLVMGetParam(function_, 0)),
         owner_(LLVMGetParam(function_, 1)),
         budget_(LLVMGetParam(function_, 2)),
-        done_(LLVMAppendBasicBlockInContext(context, function_, "done")) {}
+        done_(LLVMAppendBasicBlockInContext(context, function_, "done")),
+        dispatch_(LLVMAppendBasicBlockInContext(context, function_, "dispatch")) {}
 
   LLVMValueRef lift() {
     initialize();
@@ -61,6 +63,8 @@ public:
                       LLVMAppendBasicBlockInContext(
                           context_, function_, ("pc" + std::to_string(operation.pc)).c_str()));
     }
+    LLVMBuildBr(builder_.get(), dispatch_);
+    LLVMPositionBuilderAtEnd(builder_.get(), dispatch_);
     auto *dispatch = LLVMBuildSwitch(builder_.get(),
                                      load(pc_, builder_.getInt16Ty()),
                                      done_,
@@ -189,6 +193,12 @@ private:
           destination);
       cost =
           builder_.CreateSelect(taken, builder_.getInt64(timing.base + timing.taken_extra), cost);
+    } else if (instruction.kind == Kind::call || instruction.kind == Kind::jump) {
+      destination = control_value(operation, state);
+    } else if (stack_operand(instruction)) {
+      auto *previous = state.ccr;
+      destination = stack_value(operation, state);
+      if (mask_operation(instruction)) { interrupt_masks(previous, state.ccr, false); }
     } else if (instruction.kind == Kind::register_operation) {
       if (instruction.operation == RegisterOp::decimal_adjust) {
         validate_decimal(operation, state);
@@ -212,30 +222,84 @@ private:
         static_cast<std::uint64_t>(operation.pc) |
         (static_cast<std::uint64_t>(instruction.opcode) << cpu12::detail::native_opcode_shift);
     builder_.CreateStore(builder_.getInt64(location), location_);
-    if (memory_operand(instruction) || mask_operation(instruction)) {
+    if (memory_operand(instruction) || stack_operand(instruction) || mask_operation(instruction)) {
       auto *flow_block = LLVMAppendBasicBlockInContext(context_, function_, "resume");
       LLVMBuildCondBr(
           builder_.get(), load(boundary_, LLVMInt1TypeInContext(context_)), done_, flow_block);
       LLVMPositionBuilderAtEnd(builder_.get(), flow_block);
     }
-    const auto flow = cpu12::detail::successors(operation);
-    if (flow.indirect || flow.count == 0) {
-      throw std::runtime_error("CPU12 LLVM lowering requires direct flow");
-    }
-    if (flow.count == 1) {
+    continue_flow(operation, taken);
+  }
+
+  void continue_flow(const BlockInstruction &operation, LLVMValueRef taken) {
+    const auto flow = successors(operation);
+    if (flow.indirect) {
+      LLVMBuildBr(builder_.get(), dispatch_);
+    } else if (operation.instruction.kind == Kind::call) {
+      LLVMBuildBr(builder_.get(), target(flow.direct[flow.count - 1]));
+    } else if (flow.count == 1) {
       LLVMBuildBr(builder_.get(), target(flow.direct[0]));
-    } else {
+    } else if (flow.count == 2) {
       LLVMBuildCondBr(builder_.get(), taken, target(flow.direct[1]), target(flow.direct[0]));
+    } else {
+      throw std::logic_error("CPU12 LLVM lowering requires a prepared control-flow successor");
     }
+  }
+
+  LLVMValueRef stack_value(const BlockInstruction &operation, Values &state) {
+    const auto &instruction = operation.instruction;
+    const bool push = instruction.kind == Kind::push;
+    const int width = instruction.word ? 2 : 1;
+    const Instruction access{.kind = push ? Kind::store : Kind::load,
+                             .addressing = Addressing::indexed,
+                             .word = instruction.word};
+    auto *source = push ? stack_register(builder_, state, instruction.stack_target) : nullptr;
+    auto *result =
+        transfer(operation,
+                 access,
+                 {.address = stack_address(builder_, state, push ? -width : 0), .value = source});
+    state.sp = stack_address(builder_, state, push ? -width : width);
+    if (instruction.kind == Kind::return_subroutine) {
+      return builder_.CreateTrunc(result, builder_.getInt16Ty());
+    }
+    if (!push) { stack_register(builder_, state, instruction.stack_target, result); }
+    return builder_.getInt16(static_cast<Address>(operation.pc + instruction.length));
+  }
+
+  LLVMValueRef control_value(const BlockInstruction &operation, Values &state) {
+    const auto &instruction = operation.instruction;
+    const auto next = static_cast<Address>(operation.pc + instruction.length);
+    auto *destination = instruction.addressing == Addressing::relative
+                            ? builder_.getInt32(static_cast<Address>(next + instruction.operand))
+                            : effective_address(builder_, state, operation);
+    if (instruction.addressing == Addressing::indexed && instruction.indexed.indirect) {
+      const Instruction pointer{
+          .kind = Kind::load, .addressing = Addressing::indexed, .word = true};
+      destination = transfer(operation, pointer, {.address = destination});
+    }
+    auto adjusted = state;
+    commit_index(builder_, adjusted, instruction);
+    if (instruction.kind == Kind::call) {
+      const Instruction access{
+          .kind = Kind::store, .addressing = Addressing::indexed, .word = true};
+      static_cast<void>(transfer(
+          operation,
+          access,
+          {.address = stack_address(builder_, adjusted, -2), .value = builder_.getInt32(next)}));
+      adjusted.sp = stack_address(builder_, adjusted, -2);
+    }
+    state = adjusted;
+    return builder_.CreateTrunc(destination, builder_.getInt16Ty());
   }
 
   static bool mask_operation(const Instruction &instruction) {
-    return instruction.kind == Kind::register_operation &&
-           (instruction.operation == RegisterOp::ccr_and ||
-            instruction.operation == RegisterOp::ccr_or);
+    return (instruction.kind == Kind::register_operation &&
+            (instruction.operation == RegisterOp::ccr_and ||
+             instruction.operation == RegisterOp::ccr_or)) ||
+           (instruction.kind == Kind::pull && instruction.stack_target == StackTarget::ccr);
   }
 
-  void interrupt_masks(LLVMValueRef previous, LLVMValueRef current) {
+  void interrupt_masks(LLVMValueRef previous, LLVMValueRef current, const bool defer = true) {
     constexpr unsigned irq = 0x10;
     constexpr unsigned masks = 0x50;
     auto *unmasked = builder_.CreateAnd(
@@ -244,11 +308,13 @@ private:
         builder_.CreateICmpEQ(builder_.CreateAnd(current, builder_.getInt32(irq)),
                               builder_.getInt32(0)));
     constexpr auto delay_offset = offsetof(NativeContext, cpu) + offsetof(State, irq_delay);
-    builder_.CreateStore(
-        builder_.CreateSelect(unmasked,
-                              builder_.getInt8(1),
-                              load(address(owner_, delay_offset), builder_.getInt8Ty())),
-        address(owner_, delay_offset));
+    if (defer) {
+      builder_.CreateStore(
+          builder_.CreateSelect(unmasked,
+                                builder_.getInt8(1),
+                                load(address(owner_, delay_offset), builder_.getInt8Ty())),
+          address(owner_, delay_offset));
+    }
     auto *changed = builder_.CreateICmpNE(
         builder_.CreateAnd(builder_.CreateXor(previous, current), builder_.getInt32(masks)),
         builder_.getInt32(0));
@@ -375,7 +441,7 @@ private:
   const std::span<const BlockInstruction> instructions_;
   const Memory &memory_;
   LLVMValueRef registers_, owner_, budget_;
-  LLVMBasicBlockRef done_;
+  LLVMBasicBlockRef done_, dispatch_;
   LLVMValueRef d_ = nullptr, ccr_ = nullptr, pc_ = nullptr, cycles_ = nullptr;
   LLVMValueRef x_ = nullptr, y_ = nullptr;
   LLVMValueRef sp_ = nullptr;
@@ -397,6 +463,7 @@ LLVMValueRef lift(LLVMModuleRef module,
 bool supports(const Instruction &instruction) noexcept {
   if (instruction.kind == Kind::nop || instruction.kind == Kind::branch) { return true; }
   if (instruction.kind == Kind::register_operation) { return true; }
+  if (stack_operand(instruction) || instruction.kind == Kind::jump) { return true; }
   if (instruction.addressing != Addressing::immediate && !memory_operand(instruction)) {
     return false;
   }
