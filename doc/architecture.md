@@ -42,6 +42,10 @@ code/variant hashes, compiler/target/features and binding ABI identity. Resolve
 memory/context/device symbols by linking or validated relocation, never serialized
 process pointers. Keep LLVM ownership private; expose only the minimal consumer
 artifact/binding contract. Shared IR is optimized together before host lowering.
+Treat translated code and concrete host functions as one optimized native path.
+Inline stable bindings and remove avoidable call/dispatch boundaries, state
+copies, spills and repeated validation. Qualify generated code and connected
+profiles while preserving every required memory/device effect.
 
 Compile from actual code entries along natural control flow. Retain immutable
 translations for the core lifetime and link successors natively. No instruction
