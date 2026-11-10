@@ -45,12 +45,6 @@ LLVMValueRef &word(Values &values, const WordTarget target) {
   }
 }
 
-LLVMValueRef read(Builder &b, Values &state, const Instruction instruction) {
-  if (instruction.word) { return word(state, instruction.target); }
-  return instruction.accumulator_b ? b.CreateAnd(state.d, b.getInt32(byte_mask))
-                                   : b.CreateLShr(state.d, b.getInt32(byte_bits));
-}
-
 void write(Builder &b, Values &state, const Instruction instruction, LLVMValueRef value) {
   if (instruction.word) {
     word(state, instruction.target) = value;
@@ -62,14 +56,13 @@ void write(Builder &b, Values &state, const Instruction instruction, LLVMValueRe
   }
 }
 
-void arithmetic(Builder &b, Values &s, const Instruction instruction) {
+void arithmetic(Builder &b, Values &s, const Instruction instruction, LLVMValueRef right) {
   const bool add = instruction.kind == Kind::add || instruction.kind == Kind::add_carry;
   const bool with_carry =
       instruction.kind == Kind::add_carry || instruction.kind == Kind::subtract_carry;
   const auto width = instruction.word ? word_bits : byte_bits;
   const auto mask = instruction.word ? word_mask : byte_mask;
-  auto *left = read(b, s, instruction);
-  auto *right = b.getInt32(instruction.operand);
+  auto *left = register_value(b, s, instruction);
   auto *adjusted = with_carry ? b.CreateAdd(right, b.CreateAnd(s.ccr, b.getInt32(carry))) : right;
   auto *wide = add ? b.CreateAdd(left, adjusted) : b.CreateSub(left, adjusted);
   auto *result = b.CreateAnd(wide, b.getInt32(mask));
@@ -89,10 +82,9 @@ void arithmetic(Builder &b, Values &s, const Instruction instruction) {
   if (instruction.kind != Kind::compare) { write(b, s, instruction, result); }
 }
 
-LLVMValueRef logical(Builder &b, Values &s, const Instruction instruction) {
-  auto *right = b.getInt32(instruction.operand);
-  auto *left = read(b, s, instruction);
-  if (instruction.kind == Kind::load) { return right; }
+LLVMValueRef logical(Builder &b, Values &s, const Instruction instruction, LLVMValueRef right) {
+  auto *left = register_value(b, s, instruction);
+  if (instruction.kind == Kind::load || instruction.kind == Kind::store) { return right; }
   if (instruction.kind == Kind::bit_and || instruction.kind == Kind::bit_test) {
     return b.CreateAnd(left, right);
   }
@@ -103,7 +95,13 @@ LLVMValueRef logical(Builder &b, Values &s, const Instruction instruction) {
 
 }
 
-void lower(Builder &b, Values &s, const Instruction instruction) {
+LLVMValueRef register_value(Builder &b, Values &state, const Instruction instruction) {
+  if (instruction.word) { return word(state, instruction.target); }
+  return instruction.accumulator_b ? b.CreateAnd(state.d, b.getInt32(byte_mask))
+                                   : b.CreateLShr(state.d, b.getInt32(byte_bits));
+}
+
+void lower(Builder &b, Values &s, const Instruction instruction, LLVMValueRef operand) {
   if (instruction.kind == Kind::register_operation &&
       (instruction.operation == RegisterOp::index_increment ||
        instruction.operation == RegisterOp::index_decrement)) {
@@ -114,23 +112,28 @@ void lower(Builder &b, Values &s, const Instruction instruction) {
                        flag(b, b.CreateICmpEQ(value, b.getInt32(0)), zero));
     return;
   }
-  if (instruction.addressing != Addressing::immediate) {
-    throw std::runtime_error("LLVM lowering requires an established immediate operand");
+  if (operand == nullptr) {
+    if (instruction.addressing != Addressing::immediate) {
+      throw std::runtime_error("LLVM lowering requires an established operand");
+    }
+    operand = b.getInt32(instruction.operand);
   }
   if (instruction.kind == Kind::add || instruction.kind == Kind::add_carry ||
       instruction.kind == Kind::subtract || instruction.kind == Kind::subtract_carry ||
       instruction.kind == Kind::compare) {
-    arithmetic(b, s, instruction);
+    arithmetic(b, s, instruction, operand);
     return;
   }
-  auto *result = logical(b, s, instruction);
+  auto *result = logical(b, s, instruction, operand);
   s.ccr = flags(b,
                 s.ccr,
                 {.value = result,
                  .carry_bit = b.CreateAnd(s.ccr, b.getInt32(carry)),
                  .overflow_bit = b.getInt32(0),
                  .width = instruction.word ? word_bits : byte_bits});
-  if (instruction.kind != Kind::bit_test) { write(b, s, instruction, result); }
+  if (instruction.kind != Kind::bit_test && instruction.kind != Kind::store) {
+    write(b, s, instruction, result);
+  }
 }
 
 }

@@ -74,7 +74,9 @@ reset_vector(const Memory &ram, detail::NativeContext &context, const Address ve
 
 class Core::Impl {
 public:
-  Impl(const Memory &memory, const Io io) : context{.io = io}, jit(memory) {}
+  Impl(const Memory &memory, const Io io) : context{.io = io}, jit(memory) {
+    context.memory_bindings = jit.bindings();
+  }
 
   const bool supported = native_supported();
   detail::NativeContext context;
@@ -208,6 +210,7 @@ void Core::set_registers(const Registers registers) {
 void Core::set_memory(const Memory memory) {
   if (impl_->active) { throw std::logic_error("Cannot remap active CPU12 memory"); }
   impl_->jit.set_memory(memory);
+  impl_->context.memory_bindings = impl_->jit.bindings();
 }
 
 PreparationReport Core::prepare(const std::span<const Address> established_entries) {

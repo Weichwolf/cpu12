@@ -17,10 +17,15 @@ struct Values {
   LLVMValueRef ccr;
 };
 
-void lower(Builder &builder, Values &values, Instruction instruction);
+[[nodiscard]] LLVMValueRef register_value(Builder &b, Values &state, Instruction instruction);
+void lower(Builder &builder,
+           Values &values,
+           Instruction instruction,
+           LLVMValueRef operand = nullptr);
 [[nodiscard]] bool supports(const Instruction &instruction) noexcept;
 [[nodiscard]] LLVMValueRef lift(LLVMModuleRef module,
                                 LLVMContextRef context,
                                 std::span<const BlockInstruction> instructions,
+                                const Memory &memory,
                                 const char *name);
 }

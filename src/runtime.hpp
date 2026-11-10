@@ -9,6 +9,10 @@ namespace cpu12::detail {
 inline constexpr std::uint32_t failed_read = 0x100;
 inline constexpr std::uint32_t failed_word_read = 0x10000;
 
+struct MemoryBinding {
+  Byte *bytes = nullptr, *known = nullptr;
+};
+
 struct NativeContext {
   State cpu{};
   Io io;
@@ -20,6 +24,7 @@ struct NativeContext {
   Progress progress{};
   bool yield_requested = false;
   std::uint64_t cycle_deadline = std::numeric_limits<std::uint64_t>::max();
+  const MemoryBinding *memory_bindings = nullptr;
 };
 
 [[nodiscard]] std::uint32_t read_byte(NativeContext *context, std::uint16_t address) noexcept;

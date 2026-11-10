@@ -19,7 +19,7 @@ public:
   Program &operator=(const Program &) = delete;
   [[nodiscard]] const void *entry(Address address) const;
   // Generated functions contain no captured RAM pointers. Reuse requires the
-  // complete immutable region's exact guest addresses, lengths and bytes.
+  // complete immutable region's exact bytes and any lowered memory topology.
   [[nodiscard]] const void *find(std::span<const BlockInstruction> region,
                                  const Memory &memory) const;
   [[nodiscard]] std::uint64_t native_bytes() const noexcept;

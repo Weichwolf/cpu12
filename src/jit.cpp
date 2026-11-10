@@ -84,9 +84,13 @@ struct Mapping {
     } else if (!grants.empty()) {
       memory = Memory::mapped(grants);
     }
+    for (const auto &grant : grants) {
+      bindings.push_back({.bytes = grant.bytes.data(), .known = grant.known.data()});
+    }
   }
 
   std::vector<Ram> grants;
+  std::vector<MemoryBinding> bindings;
   Memory memory;
   std::unordered_map<std::uint64_t, Entry> blocks;
   std::array<std::unique_ptr<NativePage>, native_page_entries> pages;
@@ -172,6 +176,10 @@ public:
 
 Jit::Jit(const Memory &ram) : impl_(std::make_unique<Impl>()) {
   set_memory(ram);
+}
+
+const MemoryBinding *Jit::bindings() const noexcept {
+  return impl_->current->bindings.data();
 }
 
 void Jit::set_memory(const Memory &memory) {

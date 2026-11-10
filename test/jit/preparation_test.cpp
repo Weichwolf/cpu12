@@ -105,9 +105,9 @@ void retained_native_boundary() {
   Core prepared(memory);
   Core reference(memory);
   const auto report = prepared.prepare(entries);
-  require(report.prepared_entries == 2 && report.unresolved_entries == 2 &&
+  require(report.prepared_entries == 3 && report.unresolved_entries == 1 &&
               report.failure.fault == Fault::none,
-          "Unmigrated valid ISA and dynamic return edges must remain explicit");
+          "Direct memory ALU joins its optimized neighbors; the dynamic return remains explicit");
   const Registers seed{.pc = entry, .d = sentinel_x, .x = sentinel_x, .y = sentinel_y, .sp = stack};
   for (const auto grant : {1U, 2U, 3U}) {
     prepared.set_registers(seed);

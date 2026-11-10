@@ -18,6 +18,7 @@ public:
   void set_memory(const Memory &memory);
   [[nodiscard]] PreparationReport prepare(std::span<const Address> established_entries);
   [[nodiscard]] const Memory &memory() const noexcept;
+  [[nodiscard]] const MemoryBinding *bindings() const noexcept;
   Jit(const Jit &) = delete;
   Jit &operator=(const Jit &) = delete;
   // False means unsupported captured bytes, with no native or I/O effect.

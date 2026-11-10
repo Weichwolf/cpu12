@@ -8,9 +8,11 @@
 #include "jit/block.hpp"
 #include "jit/llvm/lifetime.hpp"
 #include "jit/llvm/lift.hpp"
+#include "jit/llvm/memory.hpp"
 #include "jit/llvm/native.hpp"
 #include "jit/llvm/regions.hpp"
 #include "jit/preparation.hpp"
+#include "runtime.hpp"
 
 #include "llvm-c/Analysis.h"
 #include "llvm-c/Core.h"
@@ -26,6 +28,7 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <cstddef>
 #include <cstdint>
 #include <exception>
 #include <iostream>
@@ -62,6 +65,45 @@ void dispose_engine(LLVMOrcLLJITRef engine) noexcept {
 }
 
 using Engine = Owner<LLVMOrcLLJITRef, dispose_engine>;
+
+void bind_io(LLVMOrcLLJITRef engine) {
+  const std::array bindings{
+      std::pair{"cpu12_read_byte", std::bit_cast<std::uintptr_t>(&read_byte)},
+      std::pair{"cpu12_read_word", std::bit_cast<std::uintptr_t>(&read_word)},
+      std::pair{"cpu12_write_byte", std::bit_cast<std::uintptr_t>(&write_byte)},
+      std::pair{"cpu12_write_word", std::bit_cast<std::uintptr_t>(&write_word)}};
+  std::array<LLVMOrcCSymbolMapPair, bindings.size()> symbols{};
+  for (std::size_t index = 0; index < bindings.size(); ++index) {
+    symbols[index] = {.Name = LLVMOrcLLJITMangleAndIntern(engine, bindings[index].first),
+                      .Sym = {.Address = bindings[index].second,
+                              .Flags = {.GenericFlags = LLVMJITSymbolGenericFlagsExported |
+                                                        LLVMJITSymbolGenericFlagsCallable,
+                                        .TargetFlags = 0}}};
+  }
+  auto *unit = LLVMOrcAbsoluteSymbols(symbols.data(), symbols.size());
+  if (auto *error = LLVMOrcJITDylibDefine(LLVMOrcLLJITGetMainJITDylib(engine), unit)) {
+    LLVMOrcDisposeMaterializationUnit(unit);
+    require(error);
+  }
+}
+
+struct Layout {
+  Address first;
+  std::size_t size;
+  bool writable, tracked;
+  bool operator==(const Layout &) const = default;
+};
+
+std::vector<Layout> layout(const Memory &memory) {
+  std::vector<Layout> result;
+  for (const auto &region : memory.regions()) {
+    result.push_back({.first = region.first,
+                      .size = region.bytes.size(),
+                      .writable = region.writable,
+                      .tracked = !region.known.empty()});
+  }
+  return result;
+}
 
 struct Encoding {
   Address pc = 0;
@@ -181,9 +223,12 @@ public:
     std::vector<std::vector<BlockInstruction>> optimizing;
     for (auto &region : regions(instructions)) {
       sources.emplace(region.front().pc, capture(region, memory));
+      const bool uses_memory = std::ranges::any_of(
+          region, [](const auto &operation) { return memory_operand(operation.instruction); });
+      if (uses_memory) { layouts.emplace(region.front().pc, layout(memory)); }
       // Complete acyclic single instructions need no cross-instruction SSA.
       // Cycles retain optimizing loop lowering even with just one guest opcode.
-      if (trivial(region)) {
+      if (trivial(region) && !uses_memory) {
         const auto bytes = emit_block(region, memory);
         native_bytes += bytes.size();
         entries.emplace(region.front().pc, arena.append(bytes));
@@ -198,6 +243,7 @@ public:
   Engine engine;
   std::map<Address, const void *> entries;
   std::map<Address, std::vector<Encoding>> sources;
+  std::map<Address, std::vector<Layout>> layouts;
 };
 
 Program::Program(const std::span<const BlockInstruction> instructions,
@@ -223,7 +269,7 @@ Program::Program(const std::span<const BlockInstruction> instructions,
     return "cpu12_region_" + std::to_string(region.front().pc);
   };
   for (const auto &region : functions) {
-    static_cast<void>(lift(module.get(), context, region, name(region).c_str()));
+    static_cast<void>(lift(module.get(), context, region, memory, name(region).c_str()));
   }
   optimize(module.get(), machine.get());
   Owner<LLVMOrcLLJITBuilderRef, LLVMOrcDisposeLLJITBuilder> builder(LLVMOrcCreateLLJITBuilder());
@@ -232,6 +278,7 @@ Program::Program(const std::span<const BlockInstruction> instructions,
   LLVMOrcLLJITRef raw_engine = nullptr;
   require(LLVMOrcCreateLLJIT(&raw_engine, builder.release()));
   impl_->engine.reset(raw_engine);
+  bind_io(impl_->engine.get());
   LLVMOrcObjectTransformLayerSetTransform(
       LLVMOrcLLJITGetObjTransformLayer(impl_->engine.get()), measure_object, &impl_->native_bytes);
 #if __has_feature(address_sanitizer)
@@ -266,6 +313,8 @@ const void *Program::find(const std::span<const BlockInstruction> region,
   if (region.empty()) { return nullptr; }
   const auto found = impl_->sources.find(region.front().pc);
   if (found == impl_->sources.end() || found->second != capture(region, memory)) { return nullptr; }
+  const auto binding = impl_->layouts.find(region.front().pc);
+  if (binding != impl_->layouts.end() && binding->second != layout(memory)) { return nullptr; }
   return entry(region.front().pc);
 }
 

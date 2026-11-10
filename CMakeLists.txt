@@ -79,6 +79,7 @@ add_library(cpu12_core STATIC
   src/move.cpp
   src/jit.cpp
   src/jit/llvm/arithmetic.cpp src/jit/llvm/lift.cpp src/jit/llvm/program.cpp src/jit/llvm/regions.cpp
+  src/jit/llvm/memory.cpp
   src/jit/block_parse.cpp src/jit/preparation.cpp
   src/jit/block_plan.cpp
   src/jit/arena.cpp
@@ -194,6 +195,12 @@ if(BUILD_TESTING AND CPU12_BUILD_TESTING)
   target_link_libraries(cpu12-preparation-alu-test PRIVATE cpu12::core)
   add_test(NAME optimized-immediate-alu COMMAND cpu12-preparation-alu-test)
   set_tests_properties(optimized-immediate-alu PROPERTIES TIMEOUT 30)
+  add_executable(cpu12-preparation-memory-test test/jit/preparation_memory_test.cpp
+    test/jit/preparation_memory_boundaries.cpp test/jit/preparation_memory_bindings.cpp)
+  target_include_directories(cpu12-preparation-memory-test PRIVATE test/support)
+  target_link_libraries(cpu12-preparation-memory-test PRIVATE cpu12::core)
+  add_test(NAME optimized-mapped-memory COMMAND cpu12-preparation-memory-test)
+  set_tests_properties(optimized-mapped-memory PROPERTIES TIMEOUT 30)
   add_executable(cpu12-preparation-regions-test test/jit/preparation_regions_test.cpp)
   target_include_directories(cpu12-preparation-regions-test PRIVATE test/support)
   target_link_libraries(cpu12-preparation-regions-test PRIVATE cpu12::core)
