@@ -85,13 +85,18 @@ void native_grants() {
 void retained_native_boundary() {
   constexpr auto program = isa::program(isa::opcode<isa::Opcode::addd_immediate>(),
                                         std::array<Byte, 2>{0, 1},
-                                        isa::opcode<isa::Opcode::ldd_immediate>(),
-                                        std::array<Byte, 2>{0x7f, 0xff},
+                                        isa::opcode<isa::Opcode::ldd_extended>(),
+                                        std::array<Byte, 2>{0x20, 0},
                                         isa::opcode<isa::Opcode::subd_immediate>(),
                                         std::array<Byte, 2>{0, 1},
                                         isa::opcode<isa::Opcode::rts>());
   auto bytes = program;
-  const auto memory = Memory::window({.first = entry, .bytes = bytes, .writable = false});
+  constexpr Address loaded = 0x7fff;
+  std::array<Byte, 2> value{static_cast<Byte>(loaded >> 8U), static_cast<Byte>(loaded)};
+  constexpr Address data = 0x2000;
+  const std::array windows{Ram{.first = entry, .bytes = bytes, .writable = false},
+                           Ram{.first = data, .bytes = value, .writable = false}};
+  const auto memory = Memory::mapped(windows);
   Core prepared(memory);
   Core reference(memory);
   const auto report = prepared.prepare(entries);

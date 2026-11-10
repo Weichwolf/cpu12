@@ -78,6 +78,7 @@ private:
     d_ = LLVMBuildAlloca(builder_.get(), builder_.getInt32Ty(), "d");
     x_ = LLVMBuildAlloca(builder_.get(), builder_.getInt32Ty(), "x");
     y_ = LLVMBuildAlloca(builder_.get(), builder_.getInt32Ty(), "y");
+    sp_ = LLVMBuildAlloca(builder_.get(), builder_.getInt32Ty(), "sp");
     ccr_ = LLVMBuildAlloca(builder_.get(), builder_.getInt32Ty(), "ccr");
     pc_ = LLVMBuildAlloca(builder_.get(), builder_.getInt16Ty(), "pc");
     cycles_ = LLVMBuildAlloca(builder_.get(), LLVMInt64TypeInContext(context_), "cycles");
@@ -102,6 +103,10 @@ private:
         builder_.CreateZExt(field(offsetof(cpu12::Registers, y), builder_.getInt16Ty()),
                             builder_.getInt32Ty()),
         y_);
+    builder_.CreateStore(
+        builder_.CreateZExt(field(offsetof(cpu12::Registers, sp), builder_.getInt16Ty()),
+                            builder_.getInt32Ty()),
+        sp_);
     auto *initial_pc = field(offsetof(cpu12::Registers, pc), builder_.getInt16Ty());
     builder_.CreateStore(initial_pc, pc_);
     builder_.CreateStore(builder_.CreateZExt(initial_pc, LLVMInt64TypeInContext(context_)),
@@ -161,6 +166,7 @@ private:
     Values state{.d = load(d_, builder_.getInt32Ty()),
                  .x = load(x_, builder_.getInt32Ty()),
                  .y = load(y_, builder_.getInt32Ty()),
+                 .sp = load(sp_, builder_.getInt32Ty()),
                  .ccr = load(ccr_, builder_.getInt32Ty())};
     const auto next = static_cast<cpu12::Address>(operation.pc + instruction.length);
     const auto timing = cpu12::detail::instruction_timing(instruction);
@@ -181,6 +187,7 @@ private:
     builder_.CreateStore(state.d, d_);
     builder_.CreateStore(state.x, x_);
     builder_.CreateStore(state.y, y_);
+    builder_.CreateStore(state.sp, sp_);
     builder_.CreateStore(state.ccr, ccr_);
     builder_.CreateStore(destination, pc_);
     builder_.CreateStore(builder_.CreateAdd(elapsed, cost), cycles_);
@@ -219,6 +226,9 @@ private:
     builder_.CreateStore(
         builder_.CreateTrunc(load(y_, builder_.getInt32Ty()), builder_.getInt16Ty()),
         address(registers_, offsetof(cpu12::Registers, y)));
+    builder_.CreateStore(
+        builder_.CreateTrunc(load(sp_, builder_.getInt32Ty()), builder_.getInt16Ty()),
+        address(registers_, offsetof(cpu12::Registers, sp)));
     builder_.CreateStore(load(pc_, builder_.getInt16Ty()),
                          address(registers_, offsetof(cpu12::Registers, pc)));
     builder_.CreateStore(load(cycles_, LLVMInt64TypeInContext(context_)),
@@ -245,6 +255,7 @@ private:
   LLVMBasicBlockRef done_;
   LLVMValueRef d_ = nullptr, ccr_ = nullptr, pc_ = nullptr, cycles_ = nullptr;
   LLVMValueRef x_ = nullptr, y_ = nullptr;
+  LLVMValueRef sp_ = nullptr;
   LLVMValueRef retired_ = nullptr, location_ = nullptr, deadline_ = nullptr;
   std::map<cpu12::Address, LLVMBasicBlockRef> blocks_;
 };
@@ -264,6 +275,7 @@ bool supports(const Instruction &instruction) noexcept {
            (instruction.target == WordTarget::x || instruction.target == WordTarget::y);
   }
   if (instruction.addressing != Addressing::immediate) { return false; }
+  if (instruction.kind == Kind::load) { return true; }
   if (instruction.kind == Kind::add || instruction.kind == Kind::subtract) {
     return instruction.word && instruction.target == WordTarget::d;
   }

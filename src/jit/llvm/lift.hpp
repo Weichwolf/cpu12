@@ -13,6 +13,7 @@ struct Values {
   LLVMValueRef d;
   LLVMValueRef x;
   LLVMValueRef y;
+  LLVMValueRef sp;
   LLVMValueRef ccr;
 };
 

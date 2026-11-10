@@ -34,6 +34,34 @@ LLVMValueRef flags(Builder &b, LLVMValueRef old, const FlagInputs input) {
                     bits);
 }
 
+LLVMValueRef &word(Values &values, const WordTarget target) {
+  switch (target) {
+    case WordTarget::d: return values.d;
+    case WordTarget::x: return values.x;
+    case WordTarget::y: return values.y;
+    case WordTarget::sp: return values.sp;
+    default: throw std::logic_error("Invalid CPU12 LLVM word register");
+  }
+}
+
+void load(Builder &b, Values &state, const Instruction instruction) {
+  auto *value = b.getInt32(instruction.operand);
+  if (instruction.word) {
+    word(state, instruction.target) = value;
+  } else if (instruction.accumulator_b) {
+    state.d = b.CreateOr(b.CreateAnd(state.d, b.getInt32(word_mask ^ byte_mask)), value);
+  } else {
+    state.d = b.CreateOr(b.CreateAnd(state.d, b.getInt32(byte_mask)),
+                         b.CreateShl(value, b.getInt32(byte_bits)));
+  }
+  state.ccr = flags(b,
+                    state.ccr,
+                    {.value = value,
+                     .carry_bit = b.CreateAnd(state.ccr, b.getInt32(carry)),
+                     .overflow_bit = b.getInt32(0),
+                     .width = instruction.word ? word_bits : byte_bits});
+}
+
 }
 
 void lower(Builder &b, Values &s, const Instruction instruction) {
@@ -49,6 +77,10 @@ void lower(Builder &b, Values &s, const Instruction instruction) {
   }
   if (instruction.addressing != cpu12::detail::Addressing::immediate) {
     throw std::runtime_error("LLVM lowering requires an established immediate operand");
+  }
+  if (instruction.kind == Kind::load) {
+    load(b, s, instruction);
+    return;
   }
   const auto operand = instruction.operand;
   if ((instruction.kind == Kind::add || instruction.kind == Kind::subtract) && instruction.word) {
