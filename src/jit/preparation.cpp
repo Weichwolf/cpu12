@@ -92,8 +92,8 @@ PreparationGraph preparation_graph(const Memory &memory,
       continue;
     }
     if (capture.failure.fault != Fault::none) {
-      result.failure = capture.failure;
-      return result;
+      if (result.failure.fault == Fault::none) { result.failure = capture.failure; }
+      continue;
     }
     const BlockInstruction operation{.instruction = *capture.instruction, .pc = address};
     result.instructions.push_back(operation);

@@ -286,6 +286,44 @@ void reentrant_preparation() {
       "Reentrant preparation must refuse without changing the active guest or its I/O transaction");
 }
 
+void independent_preparation() {
+  constexpr Byte invalid = 0x18;
+  constexpr Byte backedge = 0xfd;
+  std::array<Byte, 5> bytes{invalid, invalid, static_cast<Byte>(isa::Opcode::dex), bra, backedge};
+  const auto memory = Memory::window({.first = entry, .bytes = bytes, .writable = false});
+  Core prepared(memory);
+  Core reference(memory);
+  constexpr std::array seeds{entry, Address{entry + 2}};
+  const auto state = prepared.state();
+  const auto progress = prepared.progress();
+  const auto report = prepared.prepare(seeds);
+  require(report.failure.fault == Fault::unsupported_instruction && report.failure.pc == entry &&
+              report.failure.opcode == invalid && report.prepared_entries == 2 &&
+              report.unresolved_entries == 0 && report.native_bytes != 0 &&
+              prepared.state() == state && prepared.progress() == progress,
+          "Independent valid entries must install without hiding invalid seed diagnostics or "
+          "changing execution state");
+  const Registers seed{
+      .pc = entry + 2, .d = sentinel_x, .x = 1, .y = sentinel_y, .sp = stack, .ccr = 0xff};
+  prepared.set_registers(seed);
+  reference.set_registers(seed);
+  constexpr std::uint32_t grant = 17;
+  require(prepared.run(grant) == reference.run(grant) && prepared.state() == reference.state() &&
+              prepared.progress() == reference.progress(),
+          "A preparation diagnostic must not prevent exact independent native execution");
+  const auto reused = prepared.prepare(seeds);
+  require(reused.failure.fault == report.failure.fault && reused.failure.pc == report.failure.pc &&
+              reused.prepared_entries == report.prepared_entries && reused.native_bytes == 0,
+          "Repeated partial preparation must reuse valid native entries and retain diagnostics");
+  prepared.set_registers({.pc = entry});
+  reference.set_registers({.pc = entry});
+  const auto invalid_run = prepared.run(1);
+  require(invalid_run.fault == Fault::unsupported_instruction && invalid_run.retired == 0 &&
+              invalid_run == reference.run(1) && prepared.state() == reference.state() &&
+              prepared.progress() == reference.progress(),
+          "Executing the invalid seed must still report the exact architectural failure");
+}
+
 void refusal_state() {
   auto bytes = loop;
   Core mutable_code(Memory::window({.first = entry, .bytes = bytes}));
@@ -315,6 +353,7 @@ int main() try {
   retained_native_boundary();
   binding_lifetime();
   refusal_state();
+  independent_preparation();
   arithmetic_entries();
   index_entries();
   reentrant_preparation();

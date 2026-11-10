@@ -229,6 +229,41 @@ void invalid_instruction() {
           "successor");
 }
 
+void independent_invalid_edges() {
+  constexpr Address valid = entry + 4;
+  constexpr Byte backedge = 0xfd;
+  std::array<Byte, 7> bytes{padding,
+                            padding,
+                            padding,
+                            padding,
+                            opcode<isa::Opcode::dex>,
+                            opcode<isa::Opcode::bra_relative>,
+                            backedge};
+  const auto before = bytes;
+  const auto memory = Memory::window({.first = entry, .bytes = bytes, .writable = false});
+  constexpr std::array seeds{entry, valid, Address{entry + 1}};
+  const auto graph = detail::preparation_graph(memory, seeds);
+  const RunResult wanted{.fault = Fault::unsupported_instruction, .pc = entry, .opcode = padding};
+  require(graph.failure == wanted && graph.unresolved.empty() && graph.instructions.size() == 2 &&
+              graph.instructions[0].pc == valid && graph.instructions[1].pc == valid + 1 &&
+              bytes == before,
+          "Invalid independent seeds preserve the first diagnosis without discarding valid code "
+          "or inventing an invalid successor");
+  auto branch_bytes = bytes;
+  branch_bytes[0] = opcode<isa::Opcode::bne_relative>;
+  branch_bytes[1] = 2;
+  const auto branch_memory =
+      Memory::window({.first = entry, .bytes = branch_bytes, .writable = false});
+  constexpr std::array branch_seed{entry};
+  const auto branch = detail::preparation_graph(branch_memory, branch_seed);
+  const RunResult invalid_arm{
+      .fault = Fault::unsupported_instruction, .pc = entry + 2, .opcode = padding};
+  require(branch.failure == invalid_arm && branch.instructions.size() == 3 &&
+              branch.instructions[0].pc == entry && branch.instructions[1].pc == valid &&
+              branch.instructions[2].pc == valid + 1 && branch.unresolved.empty(),
+          "An invalid conditional arm must not discard its independently established sibling");
+}
+
 void entire_address_space() {
   std::array<Byte, address_bytes> bytes;
   bytes.fill(isa::nop[0]);
@@ -256,6 +291,7 @@ int main() try {
   split_and_aliases();
   guarded_writable_storage();
   invalid_instruction();
+  independent_invalid_edges();
   entire_address_space();
   std::cout << "Immutable preparation, exact direct CFG, unresolved edges and full address space "
                "passed\n";
