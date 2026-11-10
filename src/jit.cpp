@@ -205,7 +205,7 @@ PreparationReport Jit::prepare(const std::span<const Address> established_entrie
   report.unresolved_entries = unresolved.count();
   instructions = impl_->reuse_prepared(*mapping, instructions);
   if (instructions.empty()) { return report; }
-  auto program = std::make_unique<llvm19::Program>(instructions, mapping->memory);
+  auto program = std::make_unique<llvm19::Program>(instructions, mapping->memory, impl_->arena);
   if (impl_->current != mapping) {
     throw std::logic_error("CPU12 binding changed during preparation");
   }

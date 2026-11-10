@@ -120,6 +120,41 @@ void check(const Load operation, Address operand) {
               prepared.statistics().compiled_entries == statistics.compiled_entries,
           "Prepared load execution must neither alter source nor trigger lazy translation");
 }
+
+void isolated(const Load operation, Address operand) {
+  const std::size_t length = operation.word ? 3U : 2U;
+  if (!operation.word) { operand = static_cast<Byte>(operand); }
+  std::array<Byte, 3> bytes{static_cast<Byte>(operation.opcode),
+                            static_cast<Byte>(operation.word ? operand >> byte_bits : operand),
+                            static_cast<Byte>(operand)};
+  const auto original = bytes;
+  Core core(
+      Memory::window({.first = entry, .bytes = std::span(bytes).first(length), .writable = false}));
+  constexpr std::array entries{entry};
+  const auto report = core.prepare(entries);
+  require(report.prepared_entries == 1 && report.native_bytes > 0 &&
+              report.failure.fault == Fault::none,
+          "An isolated complete load region prepares native code without a continuation");
+  const auto statistics = core.statistics();
+  for (unsigned ccr = 0; ccr <= std::numeric_limits<Byte>::max(); ++ccr) {
+    const Registers seed{.pc = entry,
+                         .d = 0xa55a,
+                         .x = 0x1234,
+                         .y = 0x5678,
+                         .sp = 0x9000,
+                         .ccr = static_cast<Byte>(ccr)};
+    core.set_registers(seed);
+    const auto before = core.progress();
+    const auto result = core.run(1);
+    require(result.retired == 1 && result.fault == Fault::none &&
+                core.registers() == expected(seed, operation, operand) &&
+                core.progress() == Progress{.estimated_cycles = before.estimated_cycles +
+                                                                (operation.word ? 2U : 1U)},
+            "A directly lowered isolated load preserves every register/CCR and exact cycles");
+  }
+  require(core.statistics().compiled_entries == statistics.compiled_entries && bytes == original,
+          "Warm isolated loads never recompile or alter their immutable code");
+}
 }
 
 int main() try {
@@ -132,7 +167,10 @@ int main() try {
       Load{.opcode = isa::Opcode::lds_immediate, .target = Target::sp, .word = true}};
   constexpr std::array<Address, 8> values{0, 1, 0x7f, 0x80, 0xff, 0x7fff, 0x8000, 0xffff};
   for (const auto operation : operations) {
-    for (const auto value : values) { check(operation, value); }
+    for (const auto value : values) {
+      check(operation, value);
+      isolated(operation, value);
+    }
   }
   std::cout << "Prepared immediate loads preserve full state, CCR, prefixes and cycle deadlines\n";
 } catch (const std::exception &error) {

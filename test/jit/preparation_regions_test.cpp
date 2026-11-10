@@ -277,6 +277,115 @@ void rebinding_regions() {
   core.set_memory(Memory::mapped(original));
   require(core.prepare(entries).native_bytes == 0, "Original immutable code remains retained");
   check(core, first);
+  core.set_memory(Memory::window({.first = first,
+                                  .bytes = std::span(fixture.bytes).first(3),
+                                  .writable = false,
+                                  .identity = 4}));
+  const std::array restricted{first};
+  require(core.prepare(restricted).prepared_entries == 1,
+          "Restricted executable grants establish only their actual instruction");
+  core.set_registers({.pc = first});
+  const auto restricted_before = core.progress();
+  const auto denied = core.run(2);
+  require(denied.retired == 1 && denied.fault == Fault::instruction_fetch &&
+              denied.pc == first + 3 && denied.address == first + 3 &&
+              core.registers() == Registers{.pc = static_cast<Address>(first + 3), .ccr = zero} &&
+              core.progress() ==
+                  Progress{.estimated_cycles = restricted_before.estimated_cycles + 2},
+          "A reused prefix must never execute retained code outside its new immutable grant");
+}
+
+void isolated_branches() {
+  constexpr std::array operations{isa::Opcode::bra_relative,
+                                  isa::Opcode::brn_relative,
+                                  isa::Opcode::bhi_relative,
+                                  isa::Opcode::bls_relative,
+                                  isa::Opcode::bcc_relative,
+                                  isa::Opcode::bcs_relative,
+                                  isa::Opcode::bne_relative,
+                                  isa::Opcode::beq_relative,
+                                  isa::Opcode::bvc_relative,
+                                  isa::Opcode::bvs_relative,
+                                  isa::Opcode::bpl_relative,
+                                  isa::Opcode::bmi_relative,
+                                  isa::Opcode::bge_relative,
+                                  isa::Opcode::blt_relative,
+                                  isa::Opcode::bgt_relative,
+                                  isa::Opcode::ble_relative};
+  constexpr Byte displacement = 0x20;
+  for (std::size_t condition = 0; condition < operations.size(); ++condition) {
+    std::array<Byte, 2> bytes{static_cast<Byte>(operations[condition]), displacement};
+    Core core(Memory::window({.first = first, .bytes = bytes, .writable = false}));
+    const std::array entries{first};
+    require(core.prepare(entries).prepared_entries == 1, "Prepare each isolated branch form");
+    for (unsigned ccr = 0; ccr <= std::numeric_limits<Byte>::max(); ++ccr) {
+      const bool c = (ccr & carry) != 0;
+      const bool v = (ccr & overflow) != 0;
+      const bool z = (ccr & zero) != 0;
+      const bool n = (ccr & negative) != 0;
+      const std::array taken{true,
+                             false,
+                             !c && !z,
+                             c || z,
+                             !c,
+                             c,
+                             !z,
+                             z,
+                             !v,
+                             v,
+                             !n,
+                             n,
+                             n == v,
+                             n != v,
+                             !z && (n == v),
+                             z || (n != v)};
+      Registers expected{.pc = first,
+                         .d = sign,
+                         .x = first,
+                         .y = stride,
+                         .sp = stack,
+                         .ccr = static_cast<Byte>(ccr)};
+      core.set_registers(expected);
+      expected.pc = static_cast<Address>(first + 2 + (taken[condition] ? displacement : 0));
+      const auto before = core.progress();
+      const auto result = core.run(1);
+      require(result.retired == 1 && result.fault == Fault::none && core.registers() == expected &&
+                  core.progress() == Progress{.estimated_cycles = before.estimated_cycles +
+                                                                  (taken[condition] ? 3U : 1U)},
+              "Direct isolated branches preserve full state, all CCR conditions and exact timing");
+    }
+  }
+}
+
+void single_instruction_loops() {
+  constexpr Byte self = 0xfe;
+  constexpr std::array operations{isa::Opcode::bra_relative, isa::Opcode::bne_relative};
+  for (const auto operation : operations) {
+    std::array<Byte, 2> bytes{static_cast<Byte>(operation), self};
+    Core core(Memory::window({.first = first, .bytes = bytes, .writable = false}));
+    const std::array entries{first};
+    require(core.prepare(entries).prepared_entries == 1, "Prepare natural one-opcode cycles");
+    for (unsigned flags = 0; flags <= std::numeric_limits<Byte>::max(); ++flags) {
+      const bool taken = operation == isa::Opcode::bra_relative || (flags & zero) == 0;
+      const unsigned grant = taken ? 9U : 1U;
+      Registers expected{.pc = first,
+                         .d = sign,
+                         .x = first,
+                         .y = stride,
+                         .sp = stack,
+                         .ccr = static_cast<Byte>(flags)};
+      core.set_registers(expected);
+      if (!taken) { expected.pc = static_cast<Address>(first + 2); }
+      const auto before = core.progress();
+      const std::uint64_t cost = taken ? 3U : 1U;
+      const auto result = core.run(grant);
+      require(result.retired == grant && result.fault == Fault::none &&
+                  core.registers() == expected &&
+                  core.progress() ==
+                      Progress{.estimated_cycles = before.estimated_cycles + (cost * grant)},
+              "One-opcode cycles retain full loop semantics, flags and exact retirement/timing");
+    }
+  }
 }
 }
 
@@ -287,6 +396,8 @@ int main() try {
   independent_regions();
   incremental_regions();
   rebinding_regions();
+  isolated_branches();
+  single_instruction_loops();
 } catch (const std::exception &error) {
 
   std::cerr << error.what() << '\n';

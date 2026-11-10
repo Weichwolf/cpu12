@@ -30,8 +30,10 @@ cmake --preset strict
 
 `Core::prepare(established_entries)` analyzes the bound immutable instruction view
 without executing guest instructions or changing State/Progress. It compiles
-supported operations through target-aware LLVM O3 and eagerly installs retained
-native entries. Current lowering covers immediate loads into A/B/D/X/Y/SP,
+supported connected computations through target-aware LLVM O3 and eagerly installs
+retained native entries. Complete acyclic single-instruction regions use the
+direct native emitter; cycles retain optimizing lowering. Current lowering covers immediate loads into
+A/B/D/X/Y/SP,
 immediate ADDD/SUBD/EORA, INX/DEX/INY/DEY, NOP and branches;
 unmigrated instructions and unknown edges remain explicit and use existing native
 execution. No public LLVM or backend selection is exposed.

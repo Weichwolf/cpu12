@@ -46,6 +46,9 @@ module/runtime, with region-specific native entry routing. Verify our generated
 IR at optimization boundaries; per-pass verification of packaged transforms is
 a compiler diagnostic, not production execution work. Extending reachability
 retains existing immutable translations and compiles only new entries.
+Lower complete acyclic single-instruction regions directly through the qualified
+native emitter; there is no inter-instruction work to optimize. Natural cycles,
+including one-opcode cycles, retain optimizing loop lowering.
 Rebinding unrelated RAM must not retranslate code whose complete instruction
 region and compiled binding requirements remain unchanged. Captured RAM pointers
 require matching grants; parameterized functions use the current context.

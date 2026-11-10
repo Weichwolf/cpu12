@@ -4,11 +4,13 @@
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
 #include "immutable.hpp"
+#include "jit/arena.hpp"
 #include "jit/block.hpp"
 #include "jit/llvm/lifetime.hpp"
 #include "jit/llvm/lift.hpp"
 #include "jit/llvm/native.hpp"
 #include "jit/llvm/regions.hpp"
+#include "jit/preparation.hpp"
 
 #include "llvm-c/Analysis.h"
 #include "llvm-c/Core.h"
@@ -21,6 +23,7 @@
 #include "llvm-c/Transforms/PassBuilder.h"
 #include "llvm-c/Types.h"
 
+#include <algorithm>
 #include <array>
 #include <bit>
 #include <cstdint>
@@ -32,6 +35,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace cpu12::detail::llvm19 {
@@ -86,6 +90,13 @@ std::vector<Encoding> capture(const std::span<const BlockInstruction> region,
     result.push_back(source);
   }
   return result;
+}
+
+bool trivial(const std::span<const BlockInstruction> region) {
+  if (region.size() != 1) { return false; }
+  const auto flow = successors(region.front());
+  return std::ranges::none_of(std::span(flow.direct).first(flow.count),
+                              [&](const Address target) { return target == region.front().pc; });
 }
 
 Owner<LLVMTargetMachineRef, LLVMDisposeTargetMachine> target_machine() {
@@ -163,14 +174,38 @@ LLVMErrorRef measure_object(void *owner, LLVMMemoryBufferRef *buffer) noexcept {
 
 class Program::Impl {
 public:
+  std::vector<std::vector<BlockInstruction>>
+  prepare(const std::span<const BlockInstruction> instructions,
+          const Memory &memory,
+          ExecutableArena &arena) {
+    std::vector<std::vector<BlockInstruction>> optimizing;
+    for (auto &region : regions(instructions)) {
+      sources.emplace(region.front().pc, capture(region, memory));
+      // Complete acyclic single instructions need no cross-instruction SSA.
+      // Cycles retain optimizing loop lowering even with just one guest opcode.
+      if (trivial(region)) {
+        const auto bytes = emit_block(region, memory);
+        native_bytes += bytes.size();
+        entries.emplace(region.front().pc, arena.append(bytes));
+      } else {
+        optimizing.push_back(std::move(region));
+      }
+    }
+    return optimizing;
+  }
+
   std::uint64_t native_bytes = 0;
   Engine engine;
   std::map<Address, const void *> entries;
   std::map<Address, std::vector<Encoding>> sources;
 };
 
-Program::Program(const std::span<const BlockInstruction> instructions, const Memory &memory)
+Program::Program(const std::span<const BlockInstruction> instructions,
+                 const Memory &memory,
+                 ExecutableArena &arena)
     : impl_(std::make_unique<Impl>()) {
+  const auto functions = impl_->prepare(instructions, memory, arena);
+  if (functions.empty()) { return; }
   weichwolf::llvm19::initialize_native();
   auto machine = target_machine();
   const Owner<char *, LLVMDisposeMessage> triple(LLVMGetDefaultTargetTriple());
@@ -184,12 +219,10 @@ Program::Program(const std::span<const BlockInstruction> instructions, const Mem
       LLVMModuleCreateWithNameInContext("cpu12-prepared", context));
   LLVMSetDataLayout(module.get(), layout.get());
   LLVMSetTarget(module.get(), triple.get());
-  const auto functions = regions(instructions);
   const auto name = [](const auto &region) {
     return "cpu12_region_" + std::to_string(region.front().pc);
   };
   for (const auto &region : functions) {
-    impl_->sources.emplace(region.front().pc, capture(region, memory));
     static_cast<void>(lift(module.get(), context, region, name(region).c_str()));
   }
   optimize(module.get(), machine.get());
