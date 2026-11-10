@@ -10,11 +10,15 @@
 namespace cpu12::detail::llvm19 {
 class Program {
 public:
-  explicit Program(std::span<const BlockInstruction> instructions);
+  Program(std::span<const BlockInstruction> instructions, const Memory &memory);
   ~Program();
   Program(const Program &) = delete;
   Program &operator=(const Program &) = delete;
   [[nodiscard]] const void *entry(Address address) const;
+  // Generated functions contain no captured RAM pointers. Reuse requires the
+  // complete immutable region's exact guest addresses, lengths and bytes.
+  [[nodiscard]] const void *find(std::span<const BlockInstruction> region,
+                                 const Memory &memory) const;
   [[nodiscard]] std::uint64_t native_bytes() const noexcept;
 
 private:

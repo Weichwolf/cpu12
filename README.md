@@ -40,8 +40,9 @@ connected loops remain whole. IR is verified before and after optimization.
 
 The report counts prepared and unresolved guest entry addresses, newly emitted
 native text bytes, and non-latching preparation diagnostics. Repeated preparation
-reuses code and translates only newly established entries. New memory identities
-retain independent executable lifetimes.
+reuses code and translates only newly established entries. Complete immutable
+region bytes identify parameterized native functions across RAM mapping changes;
+changed instruction bytes receive separate retained code.
 Call only on the inactive execution owner; rebinding and real I/O remain the
 consumer's responsibility.
 

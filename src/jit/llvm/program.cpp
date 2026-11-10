@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "jit/llvm/program.hpp"
 
+#include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
+#include "immutable.hpp"
 #include "jit/block.hpp"
 #include "jit/llvm/lifetime.hpp"
 #include "jit/llvm/lift.hpp"
@@ -19,6 +21,8 @@
 #include "llvm-c/Transforms/PassBuilder.h"
 #include "llvm-c/Types.h"
 
+#include <algorithm>
+#include <array>
 #include <bit>
 #include <cstdint>
 #include <exception>
@@ -29,6 +33,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace cpu12::detail::llvm19 {
 namespace {
@@ -54,6 +59,29 @@ void dispose_engine(LLVMOrcLLJITRef engine) noexcept {
 }
 
 using Engine = Owner<LLVMOrcLLJITRef, dispose_engine>;
+
+struct Encoding {
+  Address pc = 0;
+  std::array<Byte, maximum_capture_bytes> bytes{};
+  Byte length = 0;
+  bool operator==(const Encoding &) const = default;
+};
+
+std::vector<Encoding> capture(const std::span<const BlockInstruction> region,
+                              const Memory &memory) {
+  std::vector<Encoding> result;
+  result.reserve(region.size());
+  for (const auto &operation : region) {
+    Encoding source{.pc = operation.pc, .length = operation.instruction.length};
+    const auto bytes = immutable_bytes(memory, source.pc);
+    if (source.length > source.bytes.size() || source.length > bytes.size()) {
+      throw std::logic_error("Prepared CPU12 code lost its immutable instruction bytes");
+    }
+    std::ranges::copy(bytes.first(source.length), source.bytes.begin());
+    result.push_back(source);
+  }
+  return result;
+}
 
 Owner<LLVMTargetMachineRef, LLVMDisposeTargetMachine> target_machine() {
   const Owner<char *, LLVMDisposeMessage> triple(LLVMGetDefaultTargetTriple());
@@ -133,9 +161,10 @@ public:
   std::uint64_t native_bytes = 0;
   Engine engine;
   std::map<Address, const void *> entries;
+  std::map<Address, std::vector<Encoding>> sources;
 };
 
-Program::Program(const std::span<const BlockInstruction> instructions)
+Program::Program(const std::span<const BlockInstruction> instructions, const Memory &memory)
     : impl_(std::make_unique<Impl>()) {
   weichwolf::llvm19::initialize_native();
   auto machine = target_machine();
@@ -155,6 +184,7 @@ Program::Program(const std::span<const BlockInstruction> instructions)
     return "cpu12_region_" + std::to_string(region.front().pc);
   };
   for (const auto &region : functions) {
+    impl_->sources.emplace(region.front().pc, capture(region, memory));
     static_cast<void>(lift(module.get(), context, region, name(region).c_str()));
   }
   optimize(module.get(), machine.get());
@@ -191,6 +221,14 @@ Program::~Program() = default;
 
 const void *Program::entry(const Address address) const {
   return impl_->entries.at(address);
+}
+
+const void *Program::find(const std::span<const BlockInstruction> region,
+                          const Memory &memory) const {
+  if (region.empty()) { return nullptr; }
+  const auto found = impl_->sources.find(region.front().pc);
+  if (found == impl_->sources.end() || found->second != capture(region, memory)) { return nullptr; }
+  return entry(region.front().pc);
 }
 
 std::uint64_t Program::native_bytes() const noexcept {

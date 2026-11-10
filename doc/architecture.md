@@ -46,6 +46,9 @@ module/runtime, with region-specific native entry routing. Verify our generated
 IR at optimization boundaries; per-pass verification of packaged transforms is
 a compiler diagnostic, not production execution work. Extending reachability
 retains existing immutable translations and compiles only new entries.
+Rebinding unrelated RAM must not retranslate code whose complete instruction
+region and compiled binding requirements remain unchanged. Captured RAM pointers
+require matching grants; parameterized functions use the current context.
 
 Keep live values in GPR/SIMD registers across instructions and backedges. Preserve
 old operands, aliases, flags and ordered effects. Eliminate dead work and hoist

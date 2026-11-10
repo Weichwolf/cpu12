@@ -13,6 +13,7 @@
 #include "jit/interrupt.hpp"
 #include "jit/llvm/lift.hpp"
 #include "jit/llvm/program.hpp"
+#include "jit/llvm/regions.hpp"
 #include "jit/preparation.hpp"
 #include "runtime.hpp"
 
@@ -93,7 +94,6 @@ struct Mapping {
   unsigned native_entries = 0;
   std::bitset<address_bytes> unavailable;
   std::bitset<address_bytes> prepared;
-  std::vector<std::unique_ptr<llvm19::Program>> programs;
 
   void install(Address address, const void *entry) {
     auto &page = native_regions[address >> native_page_shift];
@@ -127,9 +127,31 @@ struct Mapping {
 class Jit::Impl {
 public:
   ExecutableArena arena;
+  std::vector<std::unique_ptr<llvm19::Program>> programs;
   std::vector<std::unique_ptr<Mapping>> mappings;
   Mapping *current = nullptr;
   Statistics statistics;
+
+  [[nodiscard]] std::vector<BlockInstruction>
+  reuse_prepared(Mapping &mapping, const std::span<const BlockInstruction> instructions) {
+    std::vector<BlockInstruction> remaining;
+    for (const auto &region : llvm19::regions(instructions)) {
+      const void *entry = nullptr;
+      for (const auto &program : programs) {
+        entry = program->find(region, mapping.memory);
+        if (entry != nullptr) { break; }
+      }
+      if (entry == nullptr) {
+        remaining.insert(remaining.end(), region.begin(), region.end());
+        continue;
+      }
+      for (const auto &operation : region) {
+        mapping.install(operation.pc, entry);
+        mapping.prepared[operation.pc] = true;
+      }
+    }
+    return remaining;
+  }
 
   // Keep translation-only allocation and stack state off the retained-entry path.
   [[nodiscard, gnu::cold, gnu::noinline]] std::optional<NativeResult>
@@ -181,14 +203,15 @@ PreparationReport Jit::prepare(const std::span<const Address> established_entrie
     if (!mapping->prepared[operation.pc]) { instructions.push_back(operation); }
   }
   report.unresolved_entries = unresolved.count();
+  instructions = impl_->reuse_prepared(*mapping, instructions);
   if (instructions.empty()) { return report; }
-  auto program = std::make_unique<llvm19::Program>(instructions);
+  auto program = std::make_unique<llvm19::Program>(instructions, mapping->memory);
   if (impl_->current != mapping) {
     throw std::logic_error("CPU12 binding changed during preparation");
   }
   const auto *entries = program.get();
   report.native_bytes = program->native_bytes();
-  mapping->programs.push_back(std::move(program));
+  impl_->programs.push_back(std::move(program));
   ++impl_->statistics.compiled_entries;
   for (const auto &operation : instructions) {
     mapping->install(operation.pc, entries->entry(operation.pc));

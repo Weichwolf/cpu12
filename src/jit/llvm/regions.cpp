@@ -5,6 +5,7 @@
 #include "jit/block.hpp"
 #include "jit/preparation.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <map>
 #include <span>
@@ -62,6 +63,7 @@ regions(const std::span<const BlockInstruction> instructions) {
     if (inserted) { result.emplace_back(); }
     result[group->second].push_back(instructions[index]);
   }
+  for (auto &region : result) { std::ranges::sort(region, {}, &BlockInstruction::pc); }
   return result;
 }
 }

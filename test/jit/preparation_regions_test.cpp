@@ -144,11 +144,61 @@ void incremental_regions() {
   check(growing, first);
   check(growing, added.front());
 }
+
+void rebinding_regions() {
+  Fixture fixture;
+  auto changed = fixture.bytes;
+  changed[5] = 2; // Keep the entry instruction; change its later ADDD operand.
+  constexpr Address ram_first = 0x2000;
+  std::array<Byte, 32> first_ram{};
+  std::array<Byte, 64> second_ram{};
+  const std::array<Ram, 2> original{
+      Ram{.first = ram_first, .bytes = first_ram},
+      Ram{.first = first, .bytes = fixture.bytes, .writable = false, .identity = 1}};
+  const std::array<Ram, 2> rebound{
+      Ram{.first = ram_first, .bytes = second_ram},
+      Ram{.first = first, .bytes = fixture.bytes, .writable = false, .identity = 2}};
+  const std::array<Ram, 2> updated{
+      Ram{.first = ram_first, .bytes = second_ram},
+      Ram{.first = first, .bytes = changed, .writable = false, .identity = 3}};
+  const std::array entries{first, static_cast<Address>(first + stride)};
+  Core core(Memory::mapped(original));
+  require(core.prepare(entries).prepared_entries == 6, "Prepare both initial code regions");
+  const auto state = core.state();
+  const auto count = core.statistics().compiled_entries;
+  core.set_memory(Memory::mapped(rebound));
+  const auto reused = core.prepare(entries);
+  require(reused.prepared_entries == 6 && reused.native_bytes == 0 && core.state() == state &&
+              core.statistics().compiled_entries == count,
+          "Unchanged immutable region bytes reuse native code across unrelated RAM bindings");
+  check(core, first);
+  check(core, entries.back());
+  core.set_memory(Memory::mapped(updated));
+  const auto replacement = core.prepare(entries);
+  Core fresh(Memory::window({.first = first, .bytes = changed, .writable = false}));
+  const std::array changed_entry{first};
+  const auto isolated = fresh.prepare(changed_entry);
+  require(
+      replacement.prepared_entries == 6 && replacement.native_bytes > 0 &&
+          replacement.native_bytes == isolated.native_bytes,
+      "A changed interior instruction invalidates its complete region and retains unrelated code");
+  core.set_registers({.pc = first});
+  const auto before = core.progress();
+  const auto result = core.run(2);
+  require(result.retired == 2 && result.fault == Fault::none &&
+              core.registers() == Registers{.pc = static_cast<Address>(first + 6), .d = 2} &&
+              core.progress() == Progress{.estimated_cycles = before.estimated_cycles + 4},
+          "Code with the same entry bytes and changed later bytes executes its new semantics");
+  core.set_memory(Memory::mapped(original));
+  require(core.prepare(entries).native_bytes == 0, "Original immutable code remains retained");
+  check(core, first);
+}
 }
 
 int main() try {
   independent_regions();
   incremental_regions();
+  rebinding_regions();
 } catch (const std::exception &error) {
 
   std::cerr << error.what() << '\n';
