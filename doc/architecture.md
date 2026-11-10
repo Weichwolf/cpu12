@@ -42,6 +42,10 @@ code/variant hashes, compiler/target/features and binding ABI identity. Resolve
 memory/context/device symbols by linking or validated relocation, never serialized
 process pointers. Keep LLVM ownership private; expose only the minimal consumer
 artifact/binding contract. Shared IR is optimized together before host lowering.
+Development always exercises the full AOT pipeline. Provide persistent validated
+artifacts for deployment, preserving exact code/variant, core/LLVM pipeline, host
+features and binding identity. Rebuild rejected artifacts before execution.
+Design generated code and host integration for the consumer's 10x throughput target.
 Treat translated code and concrete host functions as one optimized native path.
 Inline stable bindings and remove avoidable call/dispatch boundaries, state
 copies, spills and repeated validation. Qualify generated code and connected
