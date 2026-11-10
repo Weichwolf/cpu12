@@ -46,7 +46,7 @@ private:
 
 class Host {
 public:
-  explicit Host(Case point);
+  explicit Host(Case point, bool cpp = false);
   void advance(unsigned frames);
 
   void packet() { advance(channels); }
@@ -58,6 +58,21 @@ private:
   fft::Image ram_;
   Registers registers_;
   std::uint64_t frames_ = 0;
+  bool cpp_;
+};
+
+class CppHost {
+public:
+  explicit CppHost(const Case point) : host_(point, true) {}
+
+  void advance(const unsigned frames) { host_.advance(frames); }
+
+  void packet() { host_.packet(); }
+
+  void verify() const { host_.verify(); }
+
+private:
+  Host host_;
 };
 
 void verify_cases();

@@ -3,6 +3,7 @@
 
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
+#include "fft_cpp.hpp"
 #include "fft_host.hpp"
 #include "fft_oracle.hpp"
 #include "fft_program.hpp"
@@ -128,6 +129,21 @@ Address host_input(const std::span<Byte, input_bytes> destination, Address sum) 
   return sum;
 #endif
 }
+
+Address cpp_input(const std::span<Byte, input_bytes> destination, Address sum) {
+  for (unsigned sample = 0; sample < fft::points; ++sample) {
+    unsigned reversed = 0;
+    for (unsigned bit = 0; bit < fft::stages; ++bit) {
+      reversed = (reversed << 1U) | ((sample >> bit) & 1U);
+    }
+    for (unsigned component = 0; component < 2; ++component) {
+      sum = static_cast<Address>(unsigned{sum} + input_stride);
+      fft::cpp_word(destination.data() + (std::size_t{reversed} * 4) + (std::size_t{component} * 2),
+                    sum);
+    }
+  }
+  return sum;
+}
 }
 
 fft::Image image(const Case point) {
@@ -217,16 +233,18 @@ std::uint64_t Guest::compiled() const noexcept {
   return core_.statistics().compiled_entries;
 }
 
-Host::Host(const Case point)
-    : point_(point), ram_(image(point)), registers_(fft::initial(point.ccr)) {}
+Host::Host(const Case point, const bool cpp)
+    : point_(point), ram_(image(point)), registers_(fft::initial(point.ccr)), cpp_(cpp) {}
 
 void Host::advance(const unsigned frames) {
   for (unsigned frame = 0; frame < frames; ++frame) {
-    fft::word(ram_,
-              seed_address,
-              host_input(std::span(ram_).subspan<fft::data, input_bytes>(),
-                         fft::word(ram_, seed_address)));
-    registers_ = fft::host_transform(ram_, registers_);
+    const auto input = cpp_ ? cpp_input : host_input;
+    fft::word(
+        ram_,
+        seed_address,
+        input(std::span(ram_).subspan<fft::data, input_bytes>(), fft::word(ram_, seed_address)));
+    registers_ = cpp_ ? fft::host_transform<fft::cpp_butterfly>(ram_, registers_)
+                      : fft::host_transform(ram_, registers_);
   }
   frames_ += frames;
 }
@@ -243,13 +261,17 @@ void verify_cases() {
       const Case point{.seed = seed, .ccr = ccr};
       Guest guest(point);
       Host host(point);
+      CppHost cpp(point);
       guest.verify();
       host.verify();
+      cpp.verify();
       for (const auto frames : {1U, 2U, channels, 3U}) {
         guest.advance(frames);
         host.advance(frames);
+        cpp.advance(frames);
         guest.verify();
         host.verify();
+        cpp.verify();
       }
     }
   }

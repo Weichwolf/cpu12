@@ -11,6 +11,6 @@ int main(const int argc, const char *const *const argv) {
       .host_comparison = "input-ramp-and-transform-all-memory-registers",
       .packets_per_second = packet_fft::packets_per_second,
       .instructions = packet_fft::instructions_per_packet};
-  return packet::run<packet_fft::Guest, packet_fft::Host>(
+  return packet::run<packet_fft::Guest, packet_fft::Host, packet_fft::CppHost>(
       argc, argv, scenario, packet_fft::verify_cases);
 }

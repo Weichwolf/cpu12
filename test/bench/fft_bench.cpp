@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
+#include "fft_cpp.hpp"
 #include "fft_host.hpp"
 #include "fft_oracle.hpp"
 #include "fft_program.hpp"
@@ -160,6 +161,12 @@ void validation() {
       auto host_ram = image();
       native(host_ram, cases[index], ccr, expected);
       memory(host_ram, expected_ram);
+      auto cpp_ram = image();
+      reset(cpp_ram, cases[index]);
+      const auto cpp_state = host<cpp_butterfly>(cpp_ram, ccr);
+      require(cpp_state == expected, "C++ FFT preserves independent fixed-point registers");
+      frame(cpp_ram, cpp_state);
+      memory(cpp_ram, expected_ram);
       if (index < dft_cases && flags == 0) { check_dft(cases[index], device.ram); }
       ++checked;
     }

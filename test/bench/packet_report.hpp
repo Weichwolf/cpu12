@@ -56,7 +56,7 @@ template <class Engine> Phase measure(Engine &engine, const Scenario &scenario) 
 
 struct Results {
   Phase cold;
-  std::array<double, trials> guest{}, host{}, cpu{};
+  std::array<double, trials> guest{}, host{}, cpp{}, cpu{};
   double worst_warm_packet = 0;
   unsigned missed_warm = 0;
   std::uint64_t compiled = 0;
@@ -86,8 +86,8 @@ inline void finish_placement(Results &result) {
 #endif
 }
 
-template <class Guest, class Host>
-Results exercise(Guest &guest, Host &host, const Scenario &scenario) {
+template <class Guest, class Host, class CppHost>
+Results exercise(Guest &guest, Host &host, CppHost &cpp, const Scenario &scenario) {
   if (guest.compiled() != 0) { throw std::runtime_error("Cold packet must discover its code"); }
   Results result;
   start_placement(result);
@@ -96,12 +96,16 @@ Results exercise(Guest &guest, Host &host, const Scenario &scenario) {
   guest.verify();
   measure(host, scenario);
   host.verify();
+  measure(cpp, scenario);
+  cpp.verify();
   bench::warm_up([&] {
     guest.packet();
     host.packet();
+    cpp.packet();
   });
   guest.verify();
   host.verify();
+  cpp.verify();
   if (guest.compiled() != result.compiled) {
     throw std::runtime_error("Warm-up continuous execution compiled another entry");
   }
@@ -115,15 +119,18 @@ Results exercise(Guest &guest, Host &host, const Scenario &scenario) {
       result.missed_warm += phase.missed;
     };
     const auto run_host = [&] { result.host[trial] = measure(host, scenario).wall; };
-    if (trial % 2 == 0) {
-      run_guest();
-      run_host();
-    } else {
-      run_host();
-      run_guest();
+    const auto run_cpp = [&] { result.cpp[trial] = measure(cpp, scenario).wall; };
+    for (unsigned step = 0; step < 3; ++step) {
+      switch ((trial + step) % 3) {
+        case 0: run_guest(); break;
+        case 1: run_host(); break;
+        case 2: run_cpp(); break;
+        default: throw std::logic_error("Unknown packet benchmark engine");
+      }
     }
     guest.verify();
     host.verify();
+    cpp.verify();
     if (guest.compiled() != result.compiled) {
       throw std::runtime_error("Warm continuous execution compiled another entry");
     }
@@ -145,6 +152,7 @@ inline bool report(const Results &result, const Scenario &scenario) {
   const auto packet_seconds = 1.0 / scenario.packets_per_second;
   const auto guest = median(result.guest);
   const auto host = median(result.host);
+  const auto cpp = median(result.cpp);
   const auto retired = std::uint64_t{scenario.instructions} * scenario.packets_per_second;
   const auto ideal_seconds =
       static_cast<double>(retired) / bench::reference_instructions_per_second;
@@ -155,6 +163,7 @@ inline bool report(const Results &result, const Scenario &scenario) {
   const auto matched = host >= bench::target_fraction * guest;
   std::cout << std::fixed << std::setprecision(6) << scenario.name
             << " continuous=YES qualification_scope=" << scenario.qualification_scope
+            << " guest_path=production-native llvm_preparation=not-requested host_cpp=clang19-O3"
             << "\n  placement=" << (result.allowed_cpus < 0 ? "unavailable" : "observed")
             << " allowed_cpus=" << result.allowed_cpus << " cpu_start=" << result.first_cpu
             << " cpu_end=" << result.last_cpu << "\n  " << scenario.detail
@@ -176,6 +185,7 @@ inline bool report(const Results &result, const Scenario &scenario) {
             << " cold_input_second_s=" << result.cold.wall
             << " packet_deadline=" << (deadline ? "PASS" : "FAIL") << '\n'
             << "  host_asm_s=" << host << " jit_to_host_percent=" << 100.0 * host / guest
+            << " host_cpp_o3_s=" << cpp << " jit_to_cpp_o3_percent=" << 100.0 * cpp / guest
             << " jit_target_70=" << (matched ? "PASS" : "FAIL")
             << " host_comparison=" << scenario.host_comparison << '\n'
             << "  scope=continuous-guest-and-host; no-register-or-RAM-restoration; "
@@ -184,7 +194,7 @@ inline bool report(const Results &result, const Scenario &scenario) {
   return deadline && hardware && matched;
 }
 
-template <class Guest, class Host>
+template <class Guest, class Host, class CppHost>
 int run(const int argc, const char *const *const argv, const Scenario &scenario, void (*verify)()) {
   try {
     const std::string_view choice = argc == 2 ? argv[1] : "enforce";
@@ -197,7 +207,8 @@ int run(const int argc, const char *const *const argv, const Scenario &scenario,
     }
     Guest guest({});
     Host host({});
-    const auto met = report(exercise(guest, host, scenario), scenario);
+    CppHost cpp({});
+    const auto met = report(exercise(guest, host, cpp, scenario), scenario);
     return choice == "enforce" && !met ? 2 : 0;
   } catch (const std::exception &error) {
     std::cerr << error.what() << '\n';

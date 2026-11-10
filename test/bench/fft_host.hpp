@@ -14,23 +14,24 @@
 #include <utility>
 
 namespace cpu12::test::fft {
-template <std::size_t... Indices>
+template <auto Butterfly = host_butterfly, std::size_t... Indices>
 inline HostResult host_butterflies(Image &ram, std::index_sequence<Indices...> schedule) {
   static_assert(decltype(schedule)::size() == butterfly_count);
   HostResult result{};
   // The authored guest unrolls the same fixed schedule. Resolve host addresses
   // statically too; keep every original product, temporary and output store.
-  ((result = host_butterfly({.u = ram.data() + data + (std::size_t{operations[Indices].u} * 4),
-                             .v = ram.data() + data + (std::size_t{operations[Indices].v} * 4),
-                             .scratch = ram.data() + product,
-                             .coefficient = ram.data() + twiddles +
-                                            (std::size_t{operations[Indices].coefficient} * 4)})),
+  ((result = Butterfly({.u = ram.data() + data + (std::size_t{operations[Indices].u} * 4),
+                        .v = ram.data() + data + (std::size_t{operations[Indices].v} * 4),
+                        .scratch = ram.data() + product,
+                        .coefficient = ram.data() + twiddles +
+                                       (std::size_t{operations[Indices].coefficient} * 4)})),
    ...);
   return result;
 }
 
+template <auto Butterfly = host_butterfly>
 inline Registers host_transform(Image &ram, Registers state) {
-  const auto result = host_butterflies(ram, std::make_index_sequence<butterfly_count>{});
+  const auto result = host_butterflies<Butterfly>(ram, std::make_index_sequence<butterfly_count>{});
   state.d = static_cast<Address>(result.d);
   state.y = word(ram, product);
   state.ccr = static_cast<Byte>((state.ccr & transform_retained_flags) | result.borrow |
@@ -38,8 +39,8 @@ inline Registers host_transform(Image &ram, Registers state) {
   return state;
 }
 
-inline Registers host(Image &ram, const Byte ccr) {
-  auto state = host_transform(ram, initial(static_cast<Byte>(ccr & retained_flags)));
+template <auto Butterfly = host_butterfly> inline Registers host(Image &ram, const Byte ccr) {
+  auto state = host_transform<Butterfly>(ram, initial(static_cast<Byte>(ccr & retained_flags)));
   state.pc = return_pc;
   state.sp = stack - frame_bytes;
   return state;

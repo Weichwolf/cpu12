@@ -11,6 +11,6 @@ int main(const int argc, const char *const *const argv) {
                                       .host_comparison = "word-recurrence-all-memory-sum-carry",
                                       .packets_per_second = packet_checksum::packets_per_second,
                                       .instructions = (packet_checksum::maximum_words * 4U) + 3};
-  return packet::run<packet_checksum::Guest, packet_checksum::Host>(
+  return packet::run<packet_checksum::Guest, packet_checksum::Host, packet_checksum::CppHost>(
       argc, argv, scenario, packet_checksum::verify_cases);
 }

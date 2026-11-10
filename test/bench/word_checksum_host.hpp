@@ -39,6 +39,23 @@ host_sum(HostWordRegisters &native, const Byte *cursor, const std::span<Byte, 2>
 #endif
 
 inline HostResult
+host_cpp(const std::span<const Byte> input, const std::span<Byte, 2> output, const Address seed) {
+  constexpr unsigned byte_bits = 8;
+  constexpr unsigned word_bits = 16;
+  constexpr unsigned byte_mask = 0xff;
+  HostResult result{.sum = seed, .carry = 0};
+  for (std::size_t index = 0; index < input.size(); index += 2) {
+    const auto word = (unsigned{input[index]} << byte_bits) | input[index + 1];
+    const auto sum = unsigned{result.sum} + word;
+    result.sum = static_cast<Address>(sum);
+    result.carry = static_cast<Byte>(sum >> word_bits);
+    output[0] = static_cast<Byte>(result.sum >> byte_bits);
+    output[1] = static_cast<Byte>(result.sum & byte_mask);
+  }
+  return result;
+}
+
+inline HostResult
 host(const std::span<const Byte> input, const std::span<Byte, 2> output, const Address sum) {
   HostResult result{.sum = sum, .carry = 0};
 #if defined(__aarch64__)

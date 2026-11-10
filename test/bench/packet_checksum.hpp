@@ -46,7 +46,7 @@ private:
 
 class Host {
 public:
-  explicit Host(Case point);
+  explicit Host(Case point, bool cpp = false);
   void packet();
   void verify() const;
 
@@ -55,6 +55,19 @@ private:
   Image ram_;
   checksum::HostResult result_;
   std::uint64_t packets_ = 0;
+  bool cpp_;
+};
+
+class CppHost {
+public:
+  explicit CppHost(const Case point) : host_(point, true) {}
+
+  void packet() { host_.packet(); }
+
+  void verify() const { host_.verify(); }
+
+private:
+  Host host_;
 };
 
 void verify_cases();

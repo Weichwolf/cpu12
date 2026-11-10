@@ -174,20 +174,21 @@ std::uint64_t Guest::compiled() const noexcept {
   return core_.statistics().compiled_entries;
 }
 
-Host::Host(const Case point)
-    : point_(point), ram_(image(point)), result_{.sum = point.seed, .carry = 0} {}
+Host::Host(const Case point, const bool cpp)
+    : point_(point), ram_(image(point)), result_{.sum = point.seed, .carry = 0}, cpp_(cpp) {}
 
 void Host::packet() {
-  result_ = checksum::host(std::span(ram_).subspan(input, std::size_t{point_.words} * word_bytes),
-                           std::span<Byte, 2>(&ram_[accumulator], 2),
-                           result_.sum);
+  const auto operation = cpp_ ? checksum::host_cpp : checksum::host;
+  result_ = operation(std::span(ram_).subspan(input, std::size_t{point_.words} * word_bytes),
+                      std::span<Byte, 2>(&ram_[accumulator], 2),
+                      result_.sum);
   ++packets_;
 }
 
 void Host::verify() const {
   const auto wanted = predict(point_, packets_);
   if (result_.sum != wanted.value || result_.carry != wanted.carry) {
-    throw std::runtime_error("Continuous host ASM sum/carry differs from independent recurrence");
+    throw std::runtime_error("Continuous host sum/carry differs from independent recurrence");
   }
   verify_memory(ram_, point_, packets_);
 }
@@ -203,13 +204,17 @@ void verify_cases() {
         const Case point{.words = count, .seed = seed, .ccr = ccr};
         Guest guest(point);
         Host host(point);
+        CppHost cpp(point);
         guest.verify();
         host.verify();
+        cpp.verify();
         for (unsigned packet = 0; packet < 3; ++packet) {
           guest.packet();
           host.packet();
+          cpp.packet();
           guest.verify();
           host.verify();
+          cpp.verify();
         }
         ++checked;
       }
