@@ -213,7 +213,7 @@ PreparationReport Jit::prepare(const std::span<const Address> established_entrie
   report.unresolved_entries = unresolved.count();
   instructions = impl_->reuse_prepared(*mapping, instructions);
   if (instructions.empty()) { return report; }
-  auto program = std::make_unique<llvm19::Program>(instructions, mapping->memory, impl_->arena);
+  auto program = std::make_unique<llvm19::Program>(instructions, mapping->memory);
   if (impl_->current != mapping) {
     throw std::logic_error("CPU12 binding changed during preparation");
   }
@@ -287,11 +287,23 @@ bool Jit::execute(const std::span<const std::uint8_t> bytes,
 
 std::optional<NativeResult>
 Jit::run_block(const std::uint32_t budget, Registers &registers, NativeContext &context) {
-  if (context.cpu.irq_delay != 0 || context.cpu.returned_frame) { return std::nullopt; }
+  if (context.cpu.returned_frame) { return std::nullopt; }
   auto &mapping = *impl_->current;
   const auto address = unsigned{registers.pc};
   auto &page = mapping.native_regions[address >> native_page_shift];
   const auto *entry = page != nullptr ? page[address & page_mask] : nullptr;
+  if (context.cpu.irq_delay != 0) {
+    if (entry == nullptr || !mapping.prepared[address]) { return std::nullopt; }
+    const auto previous = registers.ccr;
+    const auto result = mapping.run(entry, registers, context, std::min(budget, 1U));
+    constexpr unsigned irq = 0x10;
+    const bool unmasked = (previous & irq) != 0 && (registers.ccr & irq) == 0;
+    if (result.retired != 0 && context.fault == Fault::none && context.cpu.irq_delay != 0 &&
+        !unmasked) {
+      --context.cpu.irq_delay;
+    }
+    return result;
+  }
   if (entry == nullptr) {
     if (mapping.unavailable[address]) { return std::nullopt; }
     return impl_->run_cold(budget, registers, context);

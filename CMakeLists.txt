@@ -81,6 +81,7 @@ add_library(cpu12_core STATIC
   src/jit/llvm/arithmetic.cpp src/jit/llvm/lift.cpp src/jit/llvm/program.cpp src/jit/llvm/regions.cpp
   src/jit/llvm/memory.cpp
   src/jit/llvm/indexed.cpp
+  src/jit/llvm/registers.cpp
   src/jit/block_parse.cpp src/jit/preparation.cpp
   src/jit/block_plan.cpp
   src/jit/arena.cpp
@@ -210,6 +211,12 @@ if(BUILD_TESTING AND CPU12_BUILD_TESTING)
     add_test(NAME optimized-indexed-memory-${part} COMMAND cpu12-preparation-indexed-test ${part})
     set_tests_properties(optimized-indexed-memory-${part} PROPERTIES TIMEOUT 120)
   endforeach()
+  add_executable(cpu12-preparation-registers-test test/jit/preparation_registers_test.cpp
+    test/jit/preparation_registers_ccr.cpp test/jit/preparation_registers_accumulator.cpp)
+  target_include_directories(cpu12-preparation-registers-test PRIVATE test/support)
+  target_link_libraries(cpu12-preparation-registers-test PRIVATE cpu12::core)
+  add_test(NAME optimized-register-operations COMMAND cpu12-preparation-registers-test)
+  set_tests_properties(optimized-register-operations PROPERTIES TIMEOUT 30)
   add_executable(cpu12-preparation-regions-test test/jit/preparation_regions_test.cpp)
   target_include_directories(cpu12-preparation-regions-test PRIVATE test/support)
   target_link_libraries(cpu12-preparation-regions-test PRIVATE cpu12::core)

@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #pragma once
 #include "cpu12/memory.hpp"
-#include "jit/arena.hpp"
 #include "jit/block.hpp"
 
 #include <cstdint>
@@ -11,9 +10,7 @@
 namespace cpu12::detail::llvm19 {
 class Program {
 public:
-  Program(std::span<const BlockInstruction> instructions,
-          const Memory &memory,
-          ExecutableArena &arena);
+  Program(std::span<const BlockInstruction> instructions, const Memory &memory);
   ~Program();
   Program(const Program &) = delete;
   Program &operator=(const Program &) = delete;

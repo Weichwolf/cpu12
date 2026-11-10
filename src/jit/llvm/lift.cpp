@@ -9,6 +9,7 @@
 #include "jit/llvm/builder.hpp"
 #include "jit/llvm/indexed.hpp"
 #include "jit/llvm/memory.hpp"
+#include "jit/llvm/registers.hpp"
 #include "jit/preparation.hpp"
 #include "runtime.hpp"
 
@@ -188,6 +189,13 @@ private:
           destination);
       cost =
           builder_.CreateSelect(taken, builder_.getInt64(timing.base + timing.taken_extra), cost);
+    } else if (instruction.kind == Kind::register_operation) {
+      if (instruction.operation == RegisterOp::decimal_adjust) {
+        validate_decimal(operation, state);
+      }
+      auto *previous = state.ccr;
+      lower_register(builder_, state, instruction);
+      if (mask_operation(instruction)) { interrupt_masks(previous, state.ccr); }
     } else if (instruction.kind != Kind::nop) {
       auto *operand = memory_operand(instruction) ? memory_value(operation, state) : nullptr;
       lower(builder_, state, instruction, operand);
@@ -204,7 +212,7 @@ private:
         static_cast<std::uint64_t>(operation.pc) |
         (static_cast<std::uint64_t>(instruction.opcode) << cpu12::detail::native_opcode_shift);
     builder_.CreateStore(builder_.getInt64(location), location_);
-    if (memory_operand(instruction)) {
+    if (memory_operand(instruction) || mask_operation(instruction)) {
       auto *flow_block = LLVMAppendBasicBlockInContext(context_, function_, "resume");
       LLVMBuildCondBr(
           builder_.get(), load(boundary_, LLVMInt1TypeInContext(context_)), done_, flow_block);
@@ -219,6 +227,55 @@ private:
     } else {
       LLVMBuildCondBr(builder_.get(), taken, target(flow.direct[1]), target(flow.direct[0]));
     }
+  }
+
+  static bool mask_operation(const Instruction &instruction) {
+    return instruction.kind == Kind::register_operation &&
+           (instruction.operation == RegisterOp::ccr_and ||
+            instruction.operation == RegisterOp::ccr_or);
+  }
+
+  void interrupt_masks(LLVMValueRef previous, LLVMValueRef current) {
+    constexpr unsigned irq = 0x10;
+    constexpr unsigned masks = 0x50;
+    auto *unmasked = builder_.CreateAnd(
+        builder_.CreateICmpNE(builder_.CreateAnd(previous, builder_.getInt32(irq)),
+                              builder_.getInt32(0)),
+        builder_.CreateICmpEQ(builder_.CreateAnd(current, builder_.getInt32(irq)),
+                              builder_.getInt32(0)));
+    constexpr auto delay_offset = offsetof(NativeContext, cpu) + offsetof(State, irq_delay);
+    builder_.CreateStore(
+        builder_.CreateSelect(unmasked,
+                              builder_.getInt8(1),
+                              load(address(owner_, delay_offset), builder_.getInt8Ty())),
+        address(owner_, delay_offset));
+    auto *changed = builder_.CreateICmpNE(
+        builder_.CreateAnd(builder_.CreateXor(previous, current), builder_.getInt32(masks)),
+        builder_.getInt32(0));
+    builder_.CreateStore(
+        builder_.CreateOr(load(boundary_, LLVMInt1TypeInContext(context_)), changed), boundary_);
+  }
+
+  void validate_decimal(const BlockInstruction &operation, const Values &state) {
+    const auto domain = decimal_domain(builder_, state);
+    auto *accepted = LLVMAppendBasicBlockInContext(context_, function_, "decimal_valid");
+    auto *refused = LLVMAppendBasicBlockInContext(context_, function_, "decimal_invalid");
+    LLVMBuildCondBr(builder_.get(), domain.valid, accepted, refused);
+    LLVMPositionBuilderAtEnd(builder_.get(), refused);
+    builder_.CreateStore(builder_.getInt8(static_cast<std::uint8_t>(Fault::unsupported_state)),
+                         address(owner_, offsetof(NativeContext, fault)));
+    builder_.CreateStore(builder_.getInt16(0), address(owner_, offsetof(NativeContext, address)));
+    builder_.CreateStore(builder_.CreateTrunc(domain.input, builder_.getInt16Ty()),
+                         address(owner_, offsetof(NativeContext, value)));
+    builder_.CreateStore(builder_.getInt8(0),
+                         address(owner_, offsetof(NativeContext, access_size)));
+    const auto location =
+        static_cast<std::uint64_t>(operation.pc) |
+        (static_cast<std::uint64_t>(operation.instruction.opcode) << native_opcode_shift);
+    builder_.CreateStore(builder_.getInt64(location), location_);
+    builder_.CreateStore(LLVMConstInt(LLVMInt1TypeInContext(context_), 1, 0), boundary_);
+    LLVMBuildBr(builder_.get(), done_);
+    LLVMPositionBuilderAtEnd(builder_.get(), accepted);
   }
 
   LLVMValueRef memory_value(const BlockInstruction &operation, Values &state) {
@@ -339,11 +396,7 @@ LLVMValueRef lift(LLVMModuleRef module,
 
 bool supports(const Instruction &instruction) noexcept {
   if (instruction.kind == Kind::nop || instruction.kind == Kind::branch) { return true; }
-  if (instruction.kind == Kind::register_operation) {
-    return (instruction.operation == RegisterOp::index_increment ||
-            instruction.operation == RegisterOp::index_decrement) &&
-           (instruction.target == WordTarget::x || instruction.target == WordTarget::y);
-  }
+  if (instruction.kind == Kind::register_operation) { return true; }
   if (instruction.addressing != Addressing::immediate && !memory_operand(instruction)) {
     return false;
   }

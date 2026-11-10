@@ -18,6 +18,7 @@ struct Values {
 };
 
 [[nodiscard]] LLVMValueRef register_value(Builder &b, Values &state, Instruction instruction);
+void register_value(Builder &b, Values &state, Instruction instruction, LLVMValueRef value);
 void lower(Builder &builder,
            Values &values,
            Instruction instruction,

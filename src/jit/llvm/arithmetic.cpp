@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "instruction.hpp"
 #include "jit/llvm/builder.hpp"
+#include "jit/llvm/flags.hpp"
 #include "jit/llvm/lift.hpp"
 
 #include "llvm-c/Types.h"
@@ -19,10 +20,7 @@ LLVMValueRef flag(Builder &b, LLVMValueRef condition, const unsigned bit) {
   return b.CreateSelect(condition, b.getInt32(bit), b.getInt32(0));
 }
 
-struct FlagInputs {
-  LLVMValueRef value, carry_bit, overflow_bit;
-  unsigned width;
-};
+}
 
 LLVMValueRef flags(Builder &b, LLVMValueRef old, const FlagInputs input) {
   const auto sign = std::uint32_t{1} << (input.width - 1);
@@ -35,6 +33,7 @@ LLVMValueRef flags(Builder &b, LLVMValueRef old, const FlagInputs input) {
                     bits);
 }
 
+namespace {
 LLVMValueRef &word(Values &values, const WordTarget target) {
   switch (target) {
     case WordTarget::d: return values.d;
@@ -45,7 +44,9 @@ LLVMValueRef &word(Values &values, const WordTarget target) {
   }
 }
 
-void write(Builder &b, Values &state, const Instruction instruction, LLVMValueRef value) {
+}
+
+void register_value(Builder &b, Values &state, const Instruction instruction, LLVMValueRef value) {
   if (instruction.word) {
     word(state, instruction.target) = value;
   } else if (instruction.accumulator_b) {
@@ -56,6 +57,7 @@ void write(Builder &b, Values &state, const Instruction instruction, LLVMValueRe
   }
 }
 
+namespace {
 void arithmetic(Builder &b, Values &s, const Instruction instruction, LLVMValueRef right) {
   const bool add = instruction.kind == Kind::add || instruction.kind == Kind::add_carry;
   const bool with_carry =
@@ -79,7 +81,7 @@ void arithmetic(Builder &b, Values &s, const Instruction instruction, LLVMValueR
     s.ccr =
         b.CreateOr(b.CreateAnd(s.ccr, b.getInt32(byte_mask ^ half)), b.CreateShl(h, b.getInt32(1)));
   }
-  if (instruction.kind != Kind::compare) { write(b, s, instruction, result); }
+  if (instruction.kind != Kind::compare) { register_value(b, s, instruction, result); }
 }
 
 LLVMValueRef logical(Builder &b, Values &s, const Instruction instruction, LLVMValueRef right) {
@@ -102,16 +104,6 @@ LLVMValueRef register_value(Builder &b, Values &state, const Instruction instruc
 }
 
 void lower(Builder &b, Values &s, const Instruction instruction, LLVMValueRef operand) {
-  if (instruction.kind == Kind::register_operation &&
-      (instruction.operation == RegisterOp::index_increment ||
-       instruction.operation == RegisterOp::index_decrement)) {
-    auto &value = instruction.target == WordTarget::x ? s.x : s.y;
-    const auto delta = instruction.operation == RegisterOp::index_increment ? 1U : word_mask;
-    value = b.CreateAnd(b.CreateAdd(value, b.getInt32(delta)), b.getInt32(word_mask));
-    s.ccr = b.CreateOr(b.CreateAnd(s.ccr, b.getInt32(byte_mask ^ zero)),
-                       flag(b, b.CreateICmpEQ(value, b.getInt32(0)), zero));
-    return;
-  }
   if (operand == nullptr) {
     if (instruction.addressing != Addressing::immediate) {
       throw std::runtime_error("LLVM lowering requires an established operand");
@@ -132,7 +124,7 @@ void lower(Builder &b, Values &s, const Instruction instruction, LLVMValueRef op
                  .overflow_bit = b.getInt32(0),
                  .width = instruction.word ? word_bits : byte_bits});
   if (instruction.kind != Kind::bit_test && instruction.kind != Kind::store) {
-    write(b, s, instruction, result);
+    register_value(b, s, instruction, result);
   }
 }
 

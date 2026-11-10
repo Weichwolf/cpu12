@@ -1,0 +1,16 @@
+// SPDX-License-Identifier: GPL-3.0-only
+#pragma once
+#include "instruction.hpp"
+#include "jit/llvm/builder.hpp"
+#include "jit/llvm/lift.hpp"
+
+#include "llvm-c/Types.h"
+
+namespace cpu12::detail::llvm19 {
+struct DecimalDomain {
+  LLVMValueRef input, valid;
+};
+
+[[nodiscard]] DecimalDomain decimal_domain(Builder &b, const Values &s);
+void lower_register(Builder &b, Values &s, Instruction instruction);
+}
