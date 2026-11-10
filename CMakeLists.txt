@@ -69,7 +69,7 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(arm64|aarch64)$")
 endif()
 add_library(cpu12_core STATIC
   src/core.cpp src/cycles.cpp
-  src/fetch.cpp
+  src/fetch.cpp src/immutable.cpp
   src/decode.cpp
   src/indexed.cpp
   src/registers.cpp
@@ -78,7 +78,7 @@ add_library(cpu12_core STATIC
   src/bits.cpp
   src/move.cpp
   src/jit.cpp
-  src/jit/block_parse.cpp
+  src/jit/block_parse.cpp src/jit/preparation.cpp
   src/jit/block_plan.cpp
   src/jit/arena.cpp
   src/jit/a64/code.cpp
@@ -175,6 +175,11 @@ if(BUILD_TESTING AND CPU12_BUILD_TESTING)
   add_executable(cpu12-word-window-test test/jit/word_window_test.cpp)
   target_link_libraries(cpu12-word-window-test PRIVATE cpu12::core)
   add_test(NAME word-windows-and-nzv COMMAND cpu12-word-window-test)
+  add_executable(cpu12-preparation-graph-test test/jit/preparation_graph_test.cpp)
+  target_include_directories(cpu12-preparation-graph-test PRIVATE src test/support)
+  target_link_libraries(cpu12-preparation-graph-test PRIVATE cpu12::core)
+  add_test(NAME preparation-control-flow COMMAND cpu12-preparation-graph-test)
+  set_tests_properties(preparation-control-flow PROPERTIES TIMEOUT 30)
   add_executable(cpu12-block-parse-test test/jit/block_parse_test.cpp)
   target_include_directories(cpu12-block-parse-test PRIVATE src)
   target_link_libraries(cpu12-block-parse-test PRIVATE cpu12::core)

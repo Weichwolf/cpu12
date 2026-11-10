@@ -17,8 +17,28 @@ Compile from actual code entries along natural control flow. Retain immutable
 translations for the core lifetime and link successors natively. No instruction
 count caps, budget-specific recompilation, continuous hashing or cache eviction.
 Changed executable identities require an explicit owner transition; unrelated
-programs use a fresh core. Consider eager reachable-code preparation or persistent
-caching only when measured first-use latency justifies it.
+programs use a fresh core.
+
+Provide an explicit synchronous `Core::prepare(established_entries)` before run.
+The stopped owner binds an initialized immutable program/mapping revision; the
+consumer may transfer that ownership to a preparation worker. Discover code only
+from established entries and actual direct edges. Retain unknown indirect edges
+and unavailable code as unresolved. Preparation executes no guest instructions,
+fetch/read/write/device callbacks or architectural time/state changes. Return
+existing rich fault information without latching it into State/Progress. Validate
+the captured binding before installing retained native entries.
+
+Lift exact ISA integer, flag, memory and ordered device effects into semantic
+LLVM 19 IR. Optimize connected control flow/SSA with target-aware `default<O3>`
+and native code generation, keeping LLVM types private. Preparation has no fixed
+time budget; substantial cold work is acceptable for better execution. New code
+requires a new immutable revision and preparation. Preserve qualified native
+execution for unresolved or unmigrated semantics during implementation, without
+claiming those paths as completed optimizing preparation. Distinguish discovery,
+optimized coverage, code bytes, preparation, first-use misses and warm execution.
+Coordinate one process-wide native-target initialization before parallel LLVM
+work; separate contexts, modules and executable ownership per prepared core.
+Never shut down LLVM while any core retains LLVM objects or code.
 
 Keep live values in GPR/SIMD registers across instructions and backedges. Preserve
 old operands, aliases, flags and ordered effects. Eliminate dead work and hoist

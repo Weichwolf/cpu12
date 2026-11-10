@@ -20,5 +20,12 @@ struct Capture {
 // Decode one complete instruction at the start of an immutable borrowed window.
 [[nodiscard]] std::optional<Instruction> decode_first(std::span<const Byte> bytes);
 
+struct CodeCapture {
+  std::optional<Instruction> instruction;
+  RunResult failure;
+};
+
+[[nodiscard]] CodeCapture fetch_immutable(const Memory &memory, Address pc);
+
 [[nodiscard]] Capture fetch(const Memory &ram, NativeContext &context, Address pc);
 }

@@ -17,6 +17,17 @@ Keep native registers live, RAM direct and translations immutable and retained.
 Use natural control-flow regions without instruction-count translation caps.
 Do not hide ISA helper gaps, fabricate retirement or discard supported operations.
 
+Provide explicit immutable-entry preparation before execution: discover reachable
+control flow, lift exact ISA effects to LLVM 19 semantic IR, optimize across
+instructions and blocks with target-aware O3, and install retained native code
+for the validated binding revision. Preparation must not retire instructions,
+perform device/fetch callbacks or alter complete State/Progress. Preserve unknown
+indirect targets as unresolved and report preparation separately from boot/run.
+There is no fixed startup-compilation budget. Runtime-loaded code needs a new
+immutable revision/preparation; do not rescan mutable instruction storage while
+another execution owner can change it. Keep LLVM/backend details private and
+preserve supported x86-64/ARM64 semantics throughout migration.
+
 Provide reproducible independently authored fixtures using test/support/isa.hpp;
 organize test/isa, test/core, test/jit, test/bench and test/support consistently.
 The bench target reports cold/warm latency, packet deadlines, guest instructions

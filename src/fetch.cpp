@@ -3,6 +3,7 @@
 
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
+#include "immutable.hpp"
 #include "instruction.hpp"
 #include "memory_access.hpp"
 #include "runtime.hpp"
@@ -107,22 +108,51 @@ std::optional<Instruction> decode_first(const std::span<const Byte> bytes) {
   return decode(bytes.first(length));
 }
 
-Capture fetch(const Memory &ram, NativeContext &context, const Address pc) {
+namespace {
+template <class Append> Capture capture_instruction(Append append) {
   Capture capture;
-  if (!byte(capture, ram, context, pc)) { return capture; }
+  if (!append(capture)) { return capture; }
   const bool page = capture.bytes[0] == prefix;
-  if (page && !byte(capture, ram, context, pc)) { return capture; }
+  if (page && !append(capture)) { return capture; }
   const auto selected = select_plan(capture.bytes[page ? 1U : 0U], page);
   auto length = selected.length;
   if (selected.indexed) {
-    if (!byte(capture, ram, context, pc)) { return capture; }
+    if (!append(capture)) { return capture; }
     length = indexed_length(selected, capture.bytes[capture.size - 1]);
   }
   if (length == 0) { return capture; }
   while (capture.size < length) {
-    if (!byte(capture, ram, context, pc)) { return capture; }
+    if (!append(capture)) { return capture; }
   }
   capture.supported = true;
   return capture;
+}
+}
+
+Capture fetch(const Memory &ram, NativeContext &context, const Address pc) {
+  return capture_instruction([&](Capture &capture) { return byte(capture, ram, context, pc); });
+}
+
+CodeCapture fetch_immutable(const Memory &memory, const Address pc) {
+  RunResult failure{.pc = pc};
+  const auto capture = capture_instruction([&](Capture &bytes) {
+    const auto address = static_cast<Address>(pc + bytes.size);
+    const auto window = immutable_bytes(memory, address);
+    if (window.empty()) {
+      failure.fault = Fault::instruction_fetch;
+      failure.address = address;
+      failure.access_size = 1;
+      failure.read_mask = std::numeric_limits<Byte>::max();
+      return false;
+    }
+    bytes.bytes[bytes.size++] = window.front();
+    return true;
+  });
+  if (capture.size != 0) { failure.opcode = capture.bytes[0]; }
+  if (failure.fault != Fault::none) { return {.instruction = {}, .failure = failure}; }
+  const auto instruction =
+      capture.supported ? decode(std::span(capture.bytes).first(capture.size)) : std::nullopt;
+  if (!instruction) { failure.fault = Fault::unsupported_instruction; }
+  return {.instruction = instruction, .failure = failure};
 }
 }
