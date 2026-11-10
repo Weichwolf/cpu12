@@ -11,6 +11,8 @@
 namespace cpu12::detail::llvm19 {
 struct Values {
   LLVMValueRef d;
+  LLVMValueRef x;
+  LLVMValueRef y;
   LLVMValueRef ccr;
 };
 

@@ -37,6 +37,16 @@ LLVMValueRef flags(Builder &b, LLVMValueRef old, const FlagInputs input) {
 }
 
 void lower(Builder &b, Values &s, const Instruction instruction) {
+  if (instruction.kind == Kind::register_operation &&
+      (instruction.operation == RegisterOp::index_increment ||
+       instruction.operation == RegisterOp::index_decrement)) {
+    auto &value = instruction.target == WordTarget::x ? s.x : s.y;
+    const auto delta = instruction.operation == RegisterOp::index_increment ? 1U : word_mask;
+    value = b.CreateAnd(b.CreateAdd(value, b.getInt32(delta)), b.getInt32(word_mask));
+    s.ccr = b.CreateOr(b.CreateAnd(s.ccr, b.getInt32(byte_mask ^ zero)),
+                       flag(b, b.CreateICmpEQ(value, b.getInt32(0)), zero));
+    return;
+  }
   if (instruction.addressing != cpu12::detail::Addressing::immediate) {
     throw std::runtime_error("LLVM lowering requires an established immediate operand");
   }

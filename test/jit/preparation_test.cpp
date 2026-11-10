@@ -172,6 +172,85 @@ void arithmetic_entries() {
   }
 }
 
+void index_prefixes(Core &prepared, Core &reference, const Registers seed) {
+  constexpr std::array<std::uint32_t, 7> grants{0, 1, 2, 3, 4, 5, 17};
+  constexpr std::array<std::uint64_t, 7> deadlines{0, 1, 2, 3, 4, 5, 17};
+  for (const auto pc : {entry, Address{entry + 1}}) {
+    auto at_entry = seed;
+    at_entry.pc = pc;
+    for (const auto grant : grants) {
+      prepared.set_registers(at_entry);
+      reference.set_registers(at_entry);
+      require(prepared.run(grant) == reference.run(grant) &&
+                  prepared.state() == reference.state() &&
+                  prepared.progress() == reference.progress(),
+              "Index lowering must preserve complete prefix state and progress");
+    }
+    for (const auto delta : deadlines) {
+      prepared.set_registers(at_entry);
+      reference.set_registers(at_entry);
+      const auto deadline = prepared.progress().estimated_cycles + delta;
+      require(prepared.run_until(deadline) == reference.run_until(deadline) &&
+                  prepared.state() == reference.state() &&
+                  prepared.progress() == reference.progress(),
+              "Index lowering must preserve atomic cycle deadlines");
+    }
+  }
+}
+
+struct IndexCase {
+  isa::Opcode opcode;
+  bool x;
+  int delta;
+};
+
+Registers index_result(Registers seed, const IndexCase operation) {
+  auto &value = operation.x ? seed.x : seed.y;
+  value = static_cast<Address>(value + operation.delta);
+  constexpr unsigned zero = 4;
+  seed.ccr = static_cast<Byte>((seed.ccr & (std::numeric_limits<Byte>::max() ^ zero)) |
+                               (value == 0 ? zero : 0));
+  seed.pc = entry + 1;
+  return seed;
+}
+
+void index_entries() {
+  constexpr std::array operations{IndexCase{.opcode = isa::Opcode::inx, .x = true, .delta = 1},
+                                  IndexCase{.opcode = isa::Opcode::dex, .x = true, .delta = -1},
+                                  IndexCase{.opcode = isa::Opcode::iny, .x = false, .delta = 1},
+                                  IndexCase{.opcode = isa::Opcode::dey, .x = false, .delta = -1}};
+  constexpr std::array<Address, 7> values{0, 1, 2, 0x7fff, 0x8000, 0xfffe, 0xffff};
+  constexpr Byte backedge = 0xfd;
+  for (const auto operation : operations) {
+    std::array<Byte, 3> bytes{static_cast<Byte>(operation.opcode), bra, backedge};
+    const auto memory = Memory::window({.first = entry, .bytes = bytes, .writable = false});
+    Core prepared(memory);
+    Core reference(memory);
+    const auto report = prepared.prepare(entries);
+    require(report.prepared_entries == 2 && report.unresolved_entries == 0 &&
+                report.failure.fault == Fault::none && report.native_bytes != 0,
+            "Index operations and their backedge must be genuinely compiled");
+    for (const auto value : values) {
+      for (unsigned ccr = 0; ccr <= std::numeric_limits<Byte>::max(); ++ccr) {
+        Registers seed{.pc = entry,
+                       .d = sentinel_x,
+                       .x = sentinel_x,
+                       .y = sentinel_y,
+                       .sp = stack,
+                       .ccr = static_cast<Byte>(ccr)};
+        (operation.x ? seed.x : seed.y) = value;
+        prepared.set_registers(seed);
+        require(prepared.run(1).retired == 1 &&
+                    prepared.registers() == index_result(seed, operation),
+                "Index lowering must wrap at 16 bits and change only Z");
+        reference.set_registers(seed);
+        static_cast<void>(reference.run(1));
+        index_prefixes(prepared, reference, seed);
+      }
+    }
+  }
+}
+
 struct ReentrantDevice {
   Core *core = nullptr;
   PreparationReport report;
@@ -237,6 +316,7 @@ int main() try {
   binding_lifetime();
   refusal_state();
   arithmetic_entries();
+  index_entries();
   reentrant_preparation();
   std::cout << "Prepared native installation, precise prefixes/deadlines and immutable binding "
                "lifetime passed\n";
