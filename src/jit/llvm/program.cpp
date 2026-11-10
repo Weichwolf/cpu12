@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "jit/llvm/program.hpp"
 
+#include "cpu12/memory.hpp"
 #include "jit/block.hpp"
 #include "jit/llvm/lifetime.hpp"
 #include "jit/llvm/lift.hpp"
 #include "jit/llvm/native.hpp"
+#include "jit/llvm/regions.hpp"
 
 #include "llvm-c/Analysis.h"
 #include "llvm-c/Core.h"
@@ -21,9 +23,11 @@
 #include <cstdint>
 #include <exception>
 #include <iostream>
+#include <map>
 #include <memory>
 #include <span>
 #include <stdexcept>
+#include <string>
 #include <string_view>
 
 namespace cpu12::detail::llvm19 {
@@ -72,20 +76,22 @@ Owner<LLVMTargetMachineRef, LLVMDisposeTargetMachine> target_machine() {
   return machine;
 }
 
-void optimize(LLVMModuleRef module, LLVMTargetMachineRef machine, LLVMValueRef function) {
+void optimize(LLVMModuleRef module, LLVMTargetMachineRef machine) {
   const Owner<LLVMPassBuilderOptionsRef, LLVMDisposePassBuilderOptions> options(
       LLVMCreatePassBuilderOptions());
-  LLVMPassBuilderOptionsSetVerifyEach(options.get(), 1);
 #if __has_feature(address_sanitizer)
   constexpr std::string_view attribute = "sanitize_address";
-  LLVMAddAttributeAtIndex(
-      function,
-      static_cast<LLVMAttributeIndex>(LLVMAttributeFunctionIndex),
-      LLVMCreateEnumAttribute(LLVMGetModuleContext(module),
-                              LLVMGetEnumAttributeKindForName(attribute.data(), attribute.size()),
-                              0));
-#else
-  static_cast<void>(function);
+  for (auto *function = LLVMGetFirstFunction(module); function != nullptr;
+       function = LLVMGetNextFunction(function)) {
+    if (LLVMIsDeclaration(function) == 0) {
+      LLVMAddAttributeAtIndex(function,
+                              static_cast<LLVMAttributeIndex>(LLVMAttributeFunctionIndex),
+                              LLVMCreateEnumAttribute(LLVMGetModuleContext(module),
+                                                      LLVMGetEnumAttributeKindForName(
+                                                          attribute.data(), attribute.size()),
+                                                      0));
+    }
+  }
 #endif
   verify(module);
   require(LLVMRunPasses(module, "default<O3>", machine, options.get()));
@@ -126,7 +132,7 @@ class Program::Impl {
 public:
   std::uint64_t native_bytes = 0;
   Engine engine;
-  const void *entry = nullptr;
+  std::map<Address, const void *> entries;
 };
 
 Program::Program(const std::span<const BlockInstruction> instructions)
@@ -144,8 +150,14 @@ Program::Program(const std::span<const BlockInstruction> instructions)
       LLVMModuleCreateWithNameInContext("cpu12-prepared", context));
   LLVMSetDataLayout(module.get(), layout.get());
   LLVMSetTarget(module.get(), triple.get());
-  auto *function = lift(module.get(), context, instructions);
-  optimize(module.get(), machine.get(), function);
+  const auto functions = regions(instructions);
+  const auto name = [](const auto &region) {
+    return "cpu12_region_" + std::to_string(region.front().pc);
+  };
+  for (const auto &region : functions) {
+    static_cast<void>(lift(module.get(), context, region, name(region).c_str()));
+  }
+  optimize(module.get(), machine.get());
   Owner<LLVMOrcLLJITBuilderRef, LLVMOrcDisposeLLJITBuilder> builder(LLVMOrcCreateLLJITBuilder());
   LLVMOrcLLJITBuilderSetJITTargetMachineBuilder(
       builder.get(), LLVMOrcJITTargetMachineBuilderCreateFromTargetMachine(machine.release()));
@@ -166,15 +178,19 @@ Program::Program(const std::span<const BlockInstruction> instructions)
   require(LLVMOrcLLJITAddLLVMIRModule(impl_->engine.get(),
                                       LLVMOrcLLJITGetMainJITDylib(impl_->engine.get()),
                                       safe_module.release()));
-  LLVMOrcExecutorAddress symbol = 0;
-  require(LLVMOrcLLJITLookup(impl_->engine.get(), &symbol, "cpu12_prepared"));
-  impl_->entry = std::bit_cast<const void *>(symbol);
+  for (const auto &region : functions) {
+    LLVMOrcExecutorAddress symbol = 0;
+    require(LLVMOrcLLJITLookup(impl_->engine.get(), &symbol, name(region).c_str()));
+    for (const auto &operation : region) {
+      impl_->entries.emplace(operation.pc, std::bit_cast<const void *>(symbol));
+    }
+  }
 }
 
 Program::~Program() = default;
 
-const void *Program::entry() const noexcept {
-  return impl_->entry;
+const void *Program::entry(const Address address) const {
+  return impl_->entries.at(address);
 }
 
 std::uint64_t Program::native_bytes() const noexcept {

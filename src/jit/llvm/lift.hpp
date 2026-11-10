@@ -19,6 +19,8 @@ struct Values {
 
 void lower(Builder &builder, Values &values, Instruction instruction);
 [[nodiscard]] bool supports(const Instruction &instruction) noexcept;
-[[nodiscard]] LLVMValueRef
-lift(LLVMModuleRef module, LLVMContextRef context, std::span<const BlockInstruction> instructions);
+[[nodiscard]] LLVMValueRef lift(LLVMModuleRef module,
+                                LLVMContextRef context,
+                                std::span<const BlockInstruction> instructions,
+                                const char *name);
 }

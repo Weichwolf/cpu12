@@ -172,28 +172,26 @@ PreparationReport Jit::prepare(const std::span<const Address> established_entrie
   std::bitset<address_bytes> unresolved;
   for (const auto address : graph.unresolved) { unresolved[address] = true; }
   std::vector<BlockInstruction> instructions;
-  bool compile = false;
   for (const auto &operation : graph.instructions) {
     if (!llvm19::supports(operation.instruction)) {
       unresolved[operation.pc] = true;
       continue;
     }
-    instructions.push_back(operation);
-    compile |= !mapping->prepared[operation.pc];
+    ++report.prepared_entries;
+    if (!mapping->prepared[operation.pc]) { instructions.push_back(operation); }
   }
-  report.prepared_entries = instructions.size();
   report.unresolved_entries = unresolved.count();
-  if (!compile) { return report; }
+  if (instructions.empty()) { return report; }
   auto program = std::make_unique<llvm19::Program>(instructions);
   if (impl_->current != mapping) {
     throw std::logic_error("CPU12 binding changed during preparation");
   }
-  const auto *entry = program->entry();
+  const auto *entries = program.get();
   report.native_bytes = program->native_bytes();
   mapping->programs.push_back(std::move(program));
   ++impl_->statistics.compiled_entries;
   for (const auto &operation : instructions) {
-    mapping->install(operation.pc, entry);
+    mapping->install(operation.pc, entries->entry(operation.pc));
     mapping->prepared[operation.pc] = true;
   }
   return report;

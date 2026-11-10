@@ -40,6 +40,13 @@ Coordinate one process-wide native-target initialization before parallel LLVM
 work; separate contexts, modules and executable ownership per prepared core.
 Never shut down LLVM while any core retains LLVM objects or code.
 
+Partition prepared code by connected established direct control flow, not length
+or execution grants. Keep independent regions in separate functions within one
+module/runtime, with region-specific native entry routing. Verify our generated
+IR at optimization boundaries; per-pass verification of packaged transforms is
+a compiler diagnostic, not production execution work. Extending reachability
+retains existing immutable translations and compiles only new entries.
+
 Keep live values in GPR/SIMD registers across instructions and backedges. Preserve
 old operands, aliases, flags and ordered effects. Eliminate dead work and hoist
 bounds/permission checks only with valid proofs. Exact faults, interrupts and

@@ -25,22 +25,23 @@ namespace cpu12::detail::llvm19 {
 namespace {
 constexpr std::uint32_t carry = 1, overflow = 2, zero = 4, negative = 8;
 
-LLVMValueRef make_function(LLVMModuleRef module, LLVMContextRef context) {
+LLVMValueRef make_function(LLVMModuleRef module, LLVMContextRef context, const char *name) {
   auto *pointer = LLVMPointerTypeInContext(context, 0);
   std::array fields{LLVMInt64TypeInContext(context), LLVMInt64TypeInContext(context)};
   auto *result = LLVMStructTypeInContext(context, fields.data(), fields.size(), 0);
   std::array parameters{pointer, pointer, LLVMInt32TypeInContext(context)};
   auto *type = LLVMFunctionType(result, parameters.data(), parameters.size(), 0);
-  return LLVMAddFunction(module, "cpu12_prepared", type);
+  return LLVMAddFunction(module, name, type);
 }
 
 class FlowLifter {
 public:
   FlowLifter(LLVMModuleRef module,
              LLVMContextRef context,
-             const std::span<const BlockInstruction> instructions)
+             const std::span<const BlockInstruction> instructions,
+             const char *name)
       : context_(context),
-        function_(make_function(module, context)),
+        function_(make_function(module, context, name)),
         builder_(context, LLVMAppendBasicBlockInContext(context, function_, "entry")),
         instructions_(instructions),
         registers_(LLVMGetParam(function_, 0)),
@@ -262,9 +263,11 @@ private:
 
 }
 
-LLVMValueRef
-lift(LLVMModuleRef module, LLVMContextRef context, std::span<const BlockInstruction> instructions) {
-  return FlowLifter(module, context, instructions).lift();
+LLVMValueRef lift(LLVMModuleRef module,
+                  LLVMContextRef context,
+                  std::span<const BlockInstruction> instructions,
+                  const char *name) {
+  return FlowLifter(module, context, instructions, name).lift();
 }
 
 bool supports(const Instruction &instruction) noexcept {

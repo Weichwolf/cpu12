@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #pragma once
+#include "cpu12/memory.hpp"
 #include "jit/block.hpp"
 
 #include <cstdint>
@@ -13,7 +14,7 @@ public:
   ~Program();
   Program(const Program &) = delete;
   Program &operator=(const Program &) = delete;
-  [[nodiscard]] const void *entry() const noexcept;
+  [[nodiscard]] const void *entry(Address address) const;
   [[nodiscard]] std::uint64_t native_bytes() const noexcept;
 
 private:

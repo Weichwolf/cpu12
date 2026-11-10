@@ -78,7 +78,7 @@ add_library(cpu12_core STATIC
   src/bits.cpp
   src/move.cpp
   src/jit.cpp
-  src/jit/llvm/arithmetic.cpp src/jit/llvm/lift.cpp src/jit/llvm/program.cpp
+  src/jit/llvm/arithmetic.cpp src/jit/llvm/lift.cpp src/jit/llvm/program.cpp src/jit/llvm/regions.cpp
   src/jit/block_parse.cpp src/jit/preparation.cpp
   src/jit/block_plan.cpp
   src/jit/arena.cpp
@@ -187,6 +187,11 @@ if(BUILD_TESTING AND CPU12_BUILD_TESTING)
   target_link_libraries(cpu12-preparation-load-test PRIVATE cpu12::core)
   add_test(NAME optimized-immediate-loads COMMAND cpu12-preparation-load-test)
   set_tests_properties(optimized-immediate-loads PROPERTIES TIMEOUT 30)
+  add_executable(cpu12-preparation-regions-test test/jit/preparation_regions_test.cpp)
+  target_include_directories(cpu12-preparation-regions-test PRIVATE test/support)
+  target_link_libraries(cpu12-preparation-regions-test PRIVATE cpu12::core)
+  add_test(NAME optimized-control-flow-regions COMMAND cpu12-preparation-regions-test)
+  set_tests_properties(optimized-control-flow-regions PROPERTIES TIMEOUT 30)
   add_executable(cpu12-preparation-graph-test test/jit/preparation_graph_test.cpp)
   target_include_directories(cpu12-preparation-graph-test PRIVATE src test/support)
   target_link_libraries(cpu12-preparation-graph-test PRIVATE cpu12::core)

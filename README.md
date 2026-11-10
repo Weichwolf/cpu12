@@ -35,10 +35,13 @@ native entries. Current lowering covers immediate loads into A/B/D/X/Y/SP,
 immediate ADDD/SUBD/EORA, INX/DEX/INY/DEY, NOP and branches;
 unmigrated instructions and unknown edges remain explicit and use existing native
 execution. No public LLVM or backend selection is exposed.
+Disconnected control-flow regions use separate native functions in one module;
+connected loops remain whole. IR is verified before and after optimization.
 
 The report counts prepared and unresolved guest entry addresses, newly emitted
 native text bytes, and non-latching preparation diagnostics. Repeated preparation
-reuses code. New memory identities retain independent executable lifetimes.
+reuses code and translates only newly established entries. New memory identities
+retain independent executable lifetimes.
 Call only on the inactive execution owner; rebinding and real I/O remain the
 consumer's responsibility.
 
