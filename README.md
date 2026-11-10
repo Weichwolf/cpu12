@@ -28,25 +28,26 @@ cmake --preset strict
 
 ## Preparation
 
-`Core::prepare(established_entries)` analyzes the bound immutable instruction view
-without executing guest instructions or changing State/Progress. It compiles
-supported connected computations through target-aware LLVM O3 and eagerly installs
-retained native entries. Complete acyclic single-instruction regions use the
-direct native emitter; cycles retain optimizing lowering. Current lowering covers immediate loads into
-A/B/D/X/Y/SP,
-immediate ADDD/SUBD/EORA, INX/DEX/INY/DEY, NOP and branches;
-unmigrated instructions and unknown edges remain explicit and use existing native
-execution. No public LLVM or backend selection is exposed.
-Disconnected control-flow regions use separate native functions in one module;
-connected loops remain whole. IR is verified before and after optimization.
+The [target architecture](doc/architecture.md) requires complete Ahead-of-Time
+Binary Translation of consumer-owned executable images and known variants.
+Prefer startup loading and complete preparation before execution. Support
+build-time export of linkable LLVM bitcode or relocatable native objects through
+the same semantic translation and optimization pipeline.
 
-The report counts prepared and unresolved guest entry addresses, newly emitted
-native text bytes, and non-latching preparation diagnostics. Repeated preparation
-reuses code and translates only newly established entries. Complete immutable
-region bytes identify parameterized native functions across RAM mapping changes;
-changed instruction bytes receive separate retained code.
-Call only on the inactive execution owner; rebinding and real I/O remain the
-consumer's responsibility.
+`Core::prepare(entries)` analyzes an immutable code/mapping view without guest
+execution, real I/O or architectural state/time changes. Lift the complete known
+executable program into semantic LLVM 19 IR, optimize connected functions and
+loops with target-aware O3, and install code against validated bindings.
+Fuse compatible consumer-owned host IR before optimization. Keep LLVM handles
+private and original memory/device effects ordered.
+
+Require complete translation before execution; report a gap with code identity,
+address and reason. Distinguish total executable coverage from optimization
+coverage. Include interrupt/indirect entries and known loader/template variants;
+preserve original writes while selecting prepared native code. Keep mutable data
+in borrowed host RAM and retain observable program words. Compilation and
+validated artifact loading run on a stopped owner; code/cache identity includes
+input hashes, binding ABI, compiler and host target/features.
 
 ## Use
 
@@ -72,6 +73,9 @@ int main() {
       cpu12::Ram{.first = static_cast<cpu12::Address>(program.size()),
                  .bytes = std::span(ram).subspan(program.size())}};
   cpu12::Core core(cpu12::Memory::mapped(regions));
+  const std::array entries{cpu12::Address{0}};
+  const auto prepared = core.prepare(entries);
+  if (prepared.failure.fault != cpu12::Fault::none || prepared.unresolved_entries != 0) { return 1; }
   const auto result = core.run();
   return result.fault == cpu12::Fault::none ? 0 : 1;
 }
@@ -83,7 +87,13 @@ absolute local cycle deadline. Core does not schedule an instrument or its audio
 Unsupported operations fail explicitly.
 
 Benchmarks check independent results and report cold/warm timing and matched
-JIT/host ratios (`100 * host_time / jit_time`). All scenarios have x86-64 and
+host ratios. Continuous checksum and FFT runs also verify portable C++ host
+references compiled with Clang 19 `-O3`, reporting `host_cpp_o3_s` and
+`jit_to_cpp_o3_percent` separately from the retained ASM comparison and gates.
+Require explicit LLVM O3 preparation and report its complete executable coverage
+separately from warm timing and host/API costs.
+
+JIT/host ratios use `100 * host_time / jit_time`. All scenarios have x86-64 and
 ARM64 host references. Hardware factors use stated models, not measured device
 speed. Warm populations use a fixed 100 ms warm-up after cold measurement;
 packet warm-up advances both engines continuously. Select cases with

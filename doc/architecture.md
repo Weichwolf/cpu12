@@ -1,6 +1,6 @@
-# Target JIT architecture
+# Target Ahead-of-Time Binary Translation architecture
 
-Shared design for cpu12 and dsp56300; this is a target, not an implementation claim.
+Shared design for cpu12 and dsp56300.
 
 ```text
 consumer memory + I/O -> Core -> retained native regions and loops
@@ -12,6 +12,36 @@ Core owns complete readable state; consumers own memory and device scheduling.
 Only core.hpp and memory.hpp are public. One owner executes each core; different
 cores may run independently. No board model, universal core hierarchy, checkpoint
 API, effect-ticket API or production interpreter belongs in the library.
+
+The consumer orchestrates Ahead-of-Time Binary Translation of complete known
+executable images and variants. Core libraries
+provide semantic ISA translation; they own no firmware or host device lifecycle.
+Prefer startup firmware loading and full AOT before playback; preserve the same
+native code-quality contract as build-time compilation. Startup/compiler memory
+is separate from warm throughput; no lazy translation during playing qualifies.
+Mandatory preparation may generate a local build-time translation compiled/linked
+with the application, or execute before run. Fuse compatible concrete host IR with
+ISA IR before LLVM 19 O3. The result runs as native host code over borrowed host
+RAM; preserve program words where code itself observes or changes them.
+
+Complete coverage gates execution for each validated code/binding version.
+Translate every established executable function, interrupt/indirect entry and
+known variant before playback; a partial optimizing subset is insufficient.
+An incomplete translation reports identity, address and reason. Known loader
+output and instruction templates select already prepared native variants while
+genuine program writes retain their effects. Do not assume arbitrary new code
+during playing without evidence. Runtime data remains mutable host RAM.
+Keep generated firmware artifacts untracked; reject mismatched images, ABI or
+host features.
+
+One semantic frontend and optimization pipeline serves both materialization paths:
+install native code in the stopped startup owner, or export linkable LLVM bitcode
+or relocatable native objects for build-time AOT. Core projects must provide this
+capability; a consumer must not copy ISA lowering internals. Export artifacts carry
+code/variant hashes, compiler/target/features and binding ABI identity. Resolve
+memory/context/device symbols by linking or validated relocation, never serialized
+process pointers. Keep LLVM ownership private; expose only the minimal consumer
+artifact/binding contract. Shared IR is optimized together before host lowering.
 
 Compile from actual code entries along natural control flow. Retain immutable
 translations for the core lifetime and link successors natively. No instruction
@@ -32,9 +62,7 @@ Lift exact ISA integer, flag, memory and ordered device effects into semantic
 LLVM 19 IR. Optimize connected control flow/SSA with target-aware `default<O3>`
 and native code generation, keeping LLVM types private. Preparation has no fixed
 time budget; substantial cold work is acceptable for better execution. New code
-requires a new immutable revision and preparation. Preserve qualified native
-execution for unresolved or unmigrated semantics during implementation, without
-claiming those paths as completed optimizing preparation. Distinguish discovery,
+requires a new immutable revision and preparation. Resolve executable frontiers before complete preparation succeeds. Distinguish discovery,
 optimized coverage, code bytes, preparation, first-use misses and warm execution.
 Coordinate one process-wide native-target initialization before parallel LLVM
 work; separate contexts, modules and executable ownership per prepared core.
@@ -64,8 +92,13 @@ per-instruction dispatch, state copies, allocations and telemetry. Translation
 boundaries do not depend on execution grants; event handling retains precise
 observable ISA prefixes. Consumer buffering and pacing do not change guest time.
 
-Measure realistic continuous workloads against matched optimized host ASM with
-identical inputs, relevant semantics and independently checked results. Report
+Measure realistic continuous workloads against equivalent portable C++ compiled
+by Clang 19 O3 for the same host CPU/features, targeting throughput parity.
+Match inputs, fixed-width arithmetic, flags/state and observable memory effects;
+check results independently and prevent dead-code elimination. Report actual
+guest lowering, complete preparation coverage and remaining boundary costs.
+An ordinary native-emitter run is not an LLVM-O3/AOT result. Retain matched
+ASM/SIMD comparisons and existing gates as separate additional references. Report
 cold translation, warm execution, API/boundary costs, code size and each slow case.
 >=70% warm host-ASM throughput is a reference, not an integration gate. Keep
 hardware-factor assumptions explicit. SIMD is optional; add complexity only for
@@ -74,5 +107,10 @@ Mandelbrot/FFT and application-appropriate streams. Benchmarks live in test/benc
 
 Preserve A/B/D overlaps, big-endian transfers, flags, stack, reset/interrupt
 entry, wait states and nominal ISA-cycle progress. Device clocks remain external.
+
+Binary-translation precedents: N64Recomp (native C functions and known overlays),
+XenonRecomp (C++ plus a consumer runtime) and Remill (C++ ISA semantics lifted to
+LLVM with consumer-owned memory bindings). These are design references, not
+dependencies or evidence of this core's coverage/performance.
 
 Primary references: reference-manifest.json.
