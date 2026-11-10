@@ -19,9 +19,11 @@
 - Speak German with the user; code, comments, documentation and commits are English.
 - C++23, LLVM 19, CMake/Ninja; strict warnings/linking, clang-format, zero-finding
   clang-tidy, functions <=120 lines. Never suppress or weaken checks.
-- Use Release for performance. Test affected core semantics independently and with
-  ASan/UBSan for our code and generated JIT code; use separate TSan for concurrent
-  code. Use packaged third-party libraries without source builds or sanitizers.
+- Functionality and instrument performance take priority. Use Release and focused
+  independent checks for affected own-code semantics while iterating. Defer routine
+  ASan/UBSan and separate TSan qualification until the goal is reached; run them
+  earlier only for a concrete technical reason. Sanitize our code/generated JIT
+  code, not foreign libraries. Use packaged dependencies without source builds.
   Keep checks focused; no GitHub workflows.
 - Blofeld firmware probes stop within 10 host seconds and fail unless playable.
   Until real time, no long firmware runs or unchanged failed-probe repetitions.
