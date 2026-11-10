@@ -107,9 +107,12 @@ LLVMErrorRef measure_object(void *owner, LLVMMemoryBufferRef *buffer) noexcept {
   const Owner<LLVMSectionIteratorRef, LLVMDisposeSectionIterator> section(
       LLVMObjectFileCopySectionIterator(binary.get()));
   std::uint64_t bytes = 0;
+  if (!section) { return nullptr; }
   while (LLVMObjectFileIsSectionIteratorAtEnd(binary.get(), section.get()) == 0) {
-    const std::string_view name(LLVMGetSectionName(section.get()));
-    if (name == "__text" || name.starts_with(".text")) {
+    const auto *section_name = LLVMGetSectionName(section.get());
+    const std::string_view name(section_name == nullptr ? "" : section_name);
+    if (name == "__text" || name == ".text" || name.starts_with(".text.") || name == ".ltext" ||
+        name.starts_with(".ltext.")) {
       bytes += LLVMGetSectionSize(section.get());
     }
     LLVMMoveToNextSection(section.get());

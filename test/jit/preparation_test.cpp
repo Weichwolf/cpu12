@@ -4,7 +4,6 @@
 #include "isa.hpp"
 
 #include <array>
-#include <cstddef>
 #include <cstdint>
 #include <exception>
 #include <iostream>
@@ -36,6 +35,12 @@ void native_grants() {
   const auto state = prepared.state();
   const auto progress = prepared.progress();
   const auto report = prepared.prepare(entries);
+  if (report.failure.fault != Fault::none || report.prepared_entries != 3 ||
+      report.unresolved_entries != 0 || report.native_bytes == 0) {
+    std::cerr << "Preparation: entries=" << report.prepared_entries
+              << " unresolved=" << report.unresolved_entries << " bytes=" << report.native_bytes
+              << " fault=" << static_cast<unsigned>(report.failure.fault) << '\n';
+  }
   require(report.failure.fault == Fault::none && report.prepared_entries == 3 &&
               report.unresolved_entries == 0 && report.native_bytes != 0 &&
               prepared.state() == state && prepared.progress() == progress,
