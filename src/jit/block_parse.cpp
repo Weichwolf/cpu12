@@ -6,7 +6,6 @@
 #include "jit/block.hpp"
 
 #include <bitset>
-#include <cstddef>
 #include <optional>
 #include <span>
 #include <vector>
