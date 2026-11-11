@@ -21,6 +21,16 @@ bool stack_operand(const Instruction &instruction) noexcept {
          instruction.kind == Kind::return_subroutine || instruction.kind == Kind::call;
 }
 
+bool frame_operand(const Instruction &instruction) noexcept {
+  return instruction.kind == Kind::wait || instruction.kind == Kind::stop ||
+         instruction.kind == Kind::return_interrupt;
+}
+
+LLVMValueRef swap_frame_word(Builder &b, LLVMValueRef value) {
+  return b.CreateOr(b.CreateLShr(value, b.getInt32(byte_bits)),
+                    b.CreateShl(b.CreateAnd(value, b.getInt32(byte_mask)), b.getInt32(byte_bits)));
+}
+
 LLVMValueRef stack_register(Builder &b, const Values &s, const StackTarget target) {
   switch (target) {
     case StackTarget::x: return s.x;

@@ -195,6 +195,9 @@ private:
           builder_.CreateSelect(taken, builder_.getInt64(timing.base + timing.taken_extra), cost);
     } else if (instruction.kind == Kind::call || instruction.kind == Kind::jump) {
       destination = control_value(operation, state);
+    } else if (frame_operand(instruction)) {
+      destination = instruction.kind == Kind::return_interrupt ? return_frame(operation, state)
+                                                               : wait_frame(operation, state, cost);
     } else if (stack_operand(instruction)) {
       auto *previous = state.ccr;
       destination = stack_value(operation, state);
@@ -222,7 +225,8 @@ private:
         static_cast<std::uint64_t>(operation.pc) |
         (static_cast<std::uint64_t>(instruction.opcode) << cpu12::detail::native_opcode_shift);
     builder_.CreateStore(builder_.getInt64(location), location_);
-    if (memory_operand(instruction) || stack_operand(instruction) || mask_operation(instruction)) {
+    if (memory_operand(instruction) || stack_operand(instruction) || frame_operand(instruction) ||
+        mask_operation(instruction)) {
       auto *flow_block = LLVMAppendBasicBlockInContext(context_, function_, "resume");
       LLVMBuildCondBr(
           builder_.get(), load(boundary_, LLVMInt1TypeInContext(context_)), done_, flow_block);
@@ -264,6 +268,87 @@ private:
     }
     if (!push) { stack_register(builder_, state, instruction.stack_target, result); }
     return builder_.getInt16(static_cast<Address>(operation.pc + instruction.length));
+  }
+
+  LLVMValueRef return_frame(const BlockInstruction &operation, Values &state) {
+    const Instruction byte{.kind = Kind::load, .addressing = Addressing::indexed};
+    const Instruction word{.kind = Kind::load, .addressing = Addressing::indexed, .word = true};
+    const auto read = [&](const int offset, const Instruction access) {
+      return transfer(operation, access, {.address = stack_address(builder_, state, offset)});
+    };
+    auto *ccr = read(0, byte);
+    auto *d = read(1, word);
+    auto *x = read(3, word);
+    auto *pc = read(7, word);
+    auto *y = read(5, word);
+    stack_register(builder_, state, StackTarget::ccr, ccr);
+    state.d = swap_frame_word(builder_, d);
+    state.x = x;
+    state.y = y;
+    state.sp = stack_address(builder_, state, 9);
+    builder_.CreateStore(
+        builder_.getInt8(0),
+        address(owner_, offsetof(NativeContext, cpu) + offsetof(State, irq_delay)));
+    builder_.CreateStore(
+        builder_.getInt8(1),
+        address(owner_, offsetof(NativeContext, cpu) + offsetof(State, returned_frame)));
+    builder_.CreateStore(LLVMConstInt(LLVMInt1TypeInContext(context_), 1, 0), boundary_);
+    return builder_.CreateTrunc(pc, builder_.getInt16Ty());
+  }
+
+  void push_frame(const BlockInstruction &operation, const Values &state) {
+    const Instruction word{.kind = Kind::store, .addressing = Addressing::indexed, .word = true};
+    const Instruction byte{.kind = Kind::store, .addressing = Addressing::indexed};
+    const auto write = [&](const int offset, LLVMValueRef value, const Instruction access) {
+      static_cast<void>(transfer(
+          operation, access, {.address = stack_address(builder_, state, offset), .value = value}));
+    };
+    write(-2,
+          builder_.getInt32(static_cast<Address>(operation.pc + operation.instruction.length)),
+          word);
+    write(-4, state.y, word);
+    write(-6, state.x, word);
+    write(-8, swap_frame_word(builder_, state.d), word);
+    write(-9, state.ccr, byte);
+  }
+
+  LLVMValueRef wait_frame(const BlockInstruction &operation, Values &state, LLVMValueRef &cost) {
+    const bool stop = operation.instruction.kind == Kind::stop;
+    auto *previous = LLVMGetInsertBlock(builder_.get());
+    auto *resume = LLVMAppendBasicBlockInContext(context_, function_, "wait_resume");
+    if (stop) {
+      constexpr unsigned stop_mask = 0x80;
+      auto *masked = builder_.CreateICmpNE(
+          builder_.CreateAnd(state.ccr, builder_.getInt32(stop_mask)), builder_.getInt32(0));
+      auto *body = LLVMAppendBasicBlockInContext(context_, function_, "stop_frame");
+      LLVMBuildCondBr(builder_.get(), masked, resume, body);
+      LLVMPositionBuilderAtEnd(builder_.get(), body);
+    }
+    push_frame(operation, state);
+    auto *stacked_sp = stack_address(builder_, state, -9);
+    builder_.CreateStore(
+        builder_.getInt8(
+            static_cast<Byte>(stop ? ExecutionState::stopped : ExecutionState::waiting)),
+        address(owner_, offsetof(NativeContext, cpu) + offsetof(State, execution)));
+    builder_.CreateStore(LLVMConstInt(LLVMInt1TypeInContext(context_), 1, 0), boundary_);
+    auto *stacked = LLVMGetInsertBlock(builder_.get());
+    LLVMBuildBr(builder_.get(), resume);
+    LLVMPositionBuilderAtEnd(builder_.get(), resume);
+    if (stop) {
+      const auto timing = instruction_timing(operation.instruction);
+      auto *sp = LLVMBuildPhi(builder_.get(), builder_.getInt32Ty(), "stop_sp");
+      std::array pointers{state.sp, stacked_sp};
+      std::array blocks{previous, stacked};
+      LLVMAddIncoming(sp, pointers.data(), blocks.data(), blocks.size());
+      auto *cycles = LLVMBuildPhi(builder_.get(), builder_.getInt64Ty(), "stop_cycles");
+      std::array values{cost, builder_.getInt64(timing.base + timing.taken_extra)};
+      LLVMAddIncoming(cycles, values.data(), blocks.data(), blocks.size());
+      state.sp = sp;
+      cost = cycles;
+    } else {
+      state.sp = stacked_sp;
+    }
+    return builder_.getInt16(static_cast<Address>(operation.pc + operation.instruction.length));
   }
 
   LLVMValueRef control_value(const BlockInstruction &operation, Values &state) {
@@ -463,7 +548,9 @@ LLVMValueRef lift(LLVMModuleRef module,
 bool supports(const Instruction &instruction) noexcept {
   if (instruction.kind == Kind::nop || instruction.kind == Kind::branch) { return true; }
   if (instruction.kind == Kind::register_operation) { return true; }
-  if (stack_operand(instruction) || instruction.kind == Kind::jump) { return true; }
+  if (stack_operand(instruction) || frame_operand(instruction) || instruction.kind == Kind::jump) {
+    return true;
+  }
   if (instruction.addressing != Addressing::immediate && !memory_operand(instruction)) {
     return false;
   }

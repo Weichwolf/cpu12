@@ -3,6 +3,7 @@
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
 #include "image_support.hpp"
+#include "isa.hpp"
 #include "jit/image.hpp"
 
 #include <algorithm>
@@ -77,13 +78,20 @@ void instruction_contract() {
     rejects([&] { static_cast<void>(detail::ImagePlan({.variants = variants})); },
             "variant=7 PC=16384");
   }
-  constexpr std::array<Byte, 3> valid_wait{0x3e, bra, 0xfe};
+  constexpr auto valid_wait = isa::program(isa::wai, std::array<Byte, 2>{bra, backedge});
   const std::array spans{CodeSpan{.address = entry, .words = valid_wait}};
   const std::array variants{CodeVariant{.id = id, .code = spans, .entries = entries}};
   const std::array layouts{VariantLayout{.id = id, .memory = layout}};
-  require(detail::ImagePlan({.variants = variants}).variants()[0].instructions.size() == 2,
+  const ImageProgram wait_image({.variants = variants}, layouts);
+  require(wait_image.report().prepared_entries == 2 && wait_image.report().native_bytes != 0,
+          "A complete declared WAI continuation receives prepared native code");
+  constexpr auto valid_swi = isa::program(isa::swi, std::array<Byte, 2>{bra, backedge});
+  const std::array unsupported_spans{CodeSpan{.address = entry, .words = valid_swi}};
+  const std::array unsupported{
+      CodeVariant{.id = id, .code = unsupported_spans, .entries = entries}};
+  require(detail::ImagePlan({.variants = unsupported}).variants()[0].instructions.size() == 2,
           "Inventory distinguishes documented ISA from current LLVM lowering coverage");
-  rejects([&] { static_cast<void>(ImageProgram({.variants = variants}, layouts)); },
+  rejects([&] { static_cast<void>(ImageProgram({.variants = unsupported}, layouts)); },
           "no LLVM lowering");
 }
 

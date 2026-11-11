@@ -223,7 +223,8 @@ public:
     for (auto &region : regions(instructions)) {
       sources.emplace(region.front().pc, capture(region, memory.source));
       const bool uses_memory = std::ranges::any_of(region, [](const auto &operation) {
-        return memory_operand(operation.instruction) || stack_operand(operation.instruction);
+        return memory_operand(operation.instruction) || stack_operand(operation.instruction) ||
+               frame_operand(operation.instruction);
       });
       if (uses_memory) { layouts.emplace(region.front().pc, layout(memory.bindings)); }
       optimizing.push_back(std::move(region));
