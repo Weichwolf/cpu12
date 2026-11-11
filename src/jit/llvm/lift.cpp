@@ -10,6 +10,7 @@
 #include "jit/llvm/flags.hpp"
 #include "jit/llvm/flow.hpp"
 #include "jit/llvm/indexed.hpp"
+#include "jit/llvm/math.hpp"
 #include "jit/llvm/memory.hpp"
 #include "jit/llvm/registers.hpp"
 #include "jit/llvm/stack.hpp"
@@ -264,6 +265,8 @@ private:
       auto *previous = state.ccr;
       destination = stack_value(operation, state);
       if (mask_operation(instruction)) { interrupt_masks(previous, state.ccr, false); }
+    } else if (instruction.kind == Kind::multiply_divide) {
+      lower_math(builder_, state, instruction.math);
     } else if (instruction.kind == Kind::move) {
       move(operation, state);
     } else if (instruction.kind == Kind::memory_bits) {
@@ -695,7 +698,7 @@ bool supports(const Instruction &instruction) noexcept {
     return true;
   }
   if (instruction.kind == Kind::register_operation || instruction.kind == Kind::transfer ||
-      instruction.kind == Kind::move) {
+      instruction.kind == Kind::move || instruction.kind == Kind::multiply_divide) {
     return true;
   }
   if (stack_operand(instruction) || frame_operand(instruction) || instruction.kind == Kind::jump) {

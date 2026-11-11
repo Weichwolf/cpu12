@@ -82,7 +82,7 @@ add_library(cpu12_core STATIC
   src/jit/llvm/memory.cpp
   src/jit/llvm/indexed.cpp
   src/jit/llvm/flow.cpp
-  src/jit/llvm/registers.cpp
+  src/jit/llvm/registers.cpp src/jit/llvm/math.cpp
   src/jit/llvm/transfer.cpp
   src/jit/llvm/stack.cpp
   src/jit/image.cpp src/jit/llvm/image.cpp
@@ -264,6 +264,14 @@ if(BUILD_TESTING AND CPU12_BUILD_TESTING)
   foreach(group IN ITEMS ordinary x y sp bus)
     add_test(NAME optimized-memory-moves-${group} COMMAND cpu12-preparation-move-test "${group}")
     set_tests_properties(optimized-memory-moves-${group} PROPERTIES TIMEOUT 180)
+  endforeach()
+  add_executable(cpu12-preparation-math-test test/jit/preparation_math_test.cpp
+    test/jit/preparation_math_domains.cpp test/jit/preparation_math_flow.cpp)
+  target_include_directories(cpu12-preparation-math-test PRIVATE test/support)
+  target_link_libraries(cpu12-preparation-math-test PRIVATE cpu12::core)
+  foreach(operation IN ITEMS mul emul emuls idiv idivs ediv edivs fdiv chain)
+    add_test(NAME optimized-math-${operation} COMMAND cpu12-preparation-math-test "${operation}")
+    set_tests_properties(optimized-math-${operation} PROPERTIES TIMEOUT 120)
   endforeach()
   add_executable(cpu12-native-flow-test test/jit/native_flow_test.cpp test/jit/native_flow_reuse.cpp)
   target_include_directories(cpu12-native-flow-test PRIVATE src test/support)
