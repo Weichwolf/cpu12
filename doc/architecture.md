@@ -233,6 +233,19 @@ Mandelbrot/FFT and application-appropriate streams. Benchmarks live in test/benc
 Preserve A/B/D overlaps, big-endian transfers, flags, stack, reset/interrupt
 entry, wait states and nominal ISA-cycle progress. Device clocks remain external.
 
+Derive foreground and interrupt-entry time bounds separately. A pure foreground
+cycle does not exclude asynchronous output. For an IRQ entry, verify the actual
+immutable vector word grant, target coverage, stack writes and mask state; include
+an eligible XIRQ nested inside an ordinary IRQ. Preserve WAI/RTI frame reuse and
+exact entry costs. Direct tracked-RAM stores initialize saved bytes without
+reading their old values or consulting the owner. Split, unknown or mutable
+vector grants cannot establish the same direct entry proof. End the continuation
+proof at stack/mask changes, unresolved control flow or possible owner calls.
+An entry bound applies to its supplied state and binding; it establishes neither
+source assertion time nor permission to run past a possible input. The consumer
+combines source-channel knowledge, local device deadlines and clock segments.
+Closing an RTI return window changes the entry contract before ordinary execution.
+
 Binary-translation precedents: N64Recomp (native C functions and known overlays),
 XenonRecomp (C++ plus a consumer runtime) and Remill (C++ ISA semantics lifted to
 LLVM with consumer-owned memory bindings). These are design references, not

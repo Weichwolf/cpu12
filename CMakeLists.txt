@@ -90,7 +90,7 @@ add_library(cpu12_core STATIC
   src/jit/llvm/artifact.cpp
   src/jit/llvm/abi.cpp src/jit/llvm/module.cpp src/jit/llvm/optimize.cpp
   src/jit/llvm/callbacks.cpp src/jit/llvm/runtime_bitcode.cpp
-  src/jit/block_parse.cpp src/jit/preparation.cpp src/jit/prefixes.cpp
+  src/jit/block_parse.cpp src/jit/preparation.cpp src/jit/prefixes.cpp src/jit/interrupt_prefix.cpp
   src/jit/block_plan.cpp
   src/jit/arena.cpp
   src/jit/a64/code.cpp
@@ -159,6 +159,11 @@ endif()
 set(CPU12_FORMAT_TARGET "${CPU12_TOOL_PREFIX}format-check")
 add_custom_target(${CPU12_FORMAT_TARGET} COMMAND "${CPU12_CLANG_FORMAT}" --dry-run --Werror ${CPU12_FORMAT_FILES} VERBATIM)
 if(BUILD_TESTING AND CPU12_BUILD_TESTING)
+  add_executable(cpu12-interrupt-prefixes-test test/jit/interrupt_prefixes_test.cpp)
+  target_include_directories(cpu12-interrupt-prefixes-test PRIVATE src test/support)
+  target_link_libraries(cpu12-interrupt-prefixes-test PRIVATE cpu12::core)
+  add_test(NAME prepared-interrupt-prefixes COMMAND cpu12-interrupt-prefixes-test)
+  set_tests_properties(prepared-interrupt-prefixes PROPERTIES TIMEOUT 30)
   add_executable(cpu12-prefixes-test test/jit/prefixes_test.cpp)
   target_include_directories(cpu12-prefixes-test PRIVATE src test/support)
   target_link_libraries(cpu12-prefixes-test PRIVATE cpu12::core)

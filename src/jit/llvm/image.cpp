@@ -96,8 +96,9 @@ namespace {
 struct ImageSource {
   ImageSource(const CodeImage image,
               const std::span<const VariantLayout> layouts,
-              const std::span<const CodeTransition> transitions)
-      : plan(image, transitions) {
+              const std::span<const CodeTransition> transitions,
+              const std::span<const InterruptRequest> interrupts)
+      : plan(image, transitions), events(interrupts.begin(), interrupts.end()) {
     for (const auto layout : layouts) {
       if (!bindings.emplace(layout.id, std::vector(layout.memory.begin(), layout.memory.end()))
                .second) {
@@ -126,6 +127,7 @@ struct ImageSource {
   }
 
   const ImagePlan plan;
+  const std::vector<InterruptRequest> events;
   std::map<std::uint64_t, std::vector<RegionLayout>> bindings;
   std::map<std::uint64_t, std::map<Address, std::uint64_t>> prefixes;
 
@@ -186,7 +188,7 @@ public:
        const std::span<const CallbackBinding> callbacks,
        const ArtifactOutput output,
        const std::string &prefix)
-      : source(std::make_shared<const ImageSource>(image, layouts, transitions)) {
+      : source(std::make_shared<const ImageSource>(image, layouts, transitions, interrupts)) {
     const auto names = prefix.empty() ? source->namespace_prefix(interrupts, callbacks) : prefix;
     for (const auto &variant : source->plan.variants()) {
       const auto memory =
@@ -286,6 +288,14 @@ std::span<const RegionLayout> ImageProgram::layout(const std::uint64_t id) const
 
 std::uint64_t ImageProgram::foreground_prefix(const std::uint64_t id, const Address pc) const {
   return impl_->source->prefixes.at(id).at(pc);
+}
+
+std::uint64_t ImageProgram::interrupt_entry_prefix(const std::uint64_t id,
+                                                   const State &state,
+                                                   const Memory &memory) const {
+  validate_binding(id, memory);
+  return detail::interrupt_entry_prefix(
+      state, memory, impl_->source->prefixes.at(id), impl_->source->events);
 }
 
 void ImageProgram::validate_binding(const std::uint64_t id, const Memory &memory) const {
