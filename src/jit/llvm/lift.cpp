@@ -146,7 +146,9 @@ private:
     LLVMPositionBuilderAtEnd(builder_.get(), body);
   }
 
-  LLVMValueRef branch_condition(const cpu12::detail::Instruction &instruction, LLVMValueRef ccr) {
+  LLVMValueRef branch_condition(const Instruction &instruction, Values &state) {
+    if (instruction.kind == Kind::loop) { return loop_condition(instruction, state); }
+    auto *ccr = state.ccr;
     if (instruction.condition == 0) { return LLVMConstInt(LLVMInt1TypeInContext(context_), 1, 0); }
     if (instruction.condition == 1) { return LLVMConstInt(LLVMInt1TypeInContext(context_), 0, 0); }
     constexpr unsigned first_signed = 12;
@@ -177,6 +179,20 @@ private:
                                              : builder_.CreateICmpNE(bits, builder_.getInt32(0));
   }
 
+  LLVMValueRef loop_condition(const Instruction &instruction, Values &state) {
+    auto *value = register_value(builder_, state, instruction);
+    if (instruction.operation != RegisterOp::test) {
+      constexpr unsigned byte_mask = 0xff;
+      constexpr unsigned word_mask = 0xffff;
+      const auto delta = instruction.operation == RegisterOp::increment ? 1U : word_mask;
+      value = builder_.CreateAnd(builder_.CreateAdd(value, builder_.getInt32(delta)),
+                                 builder_.getInt32(instruction.word ? word_mask : byte_mask));
+      register_value(builder_, state, instruction, value);
+    }
+    return instruction.condition != 0 ? builder_.CreateICmpNE(value, builder_.getInt32(0))
+                                      : builder_.CreateICmpEQ(value, builder_.getInt32(0));
+  }
+
   void emit(const cpu12::detail::BlockInstruction &operation) {
     LLVMPositionBuilderAtEnd(builder_.get(), blocks_.at(operation.pc));
     auto *completed = load(retired_, builder_.getInt32Ty());
@@ -193,8 +209,8 @@ private:
     LLVMValueRef taken = nullptr;
     LLVMValueRef destination = builder_.getInt16(next);
     LLVMValueRef cost = builder_.getInt64(timing.base);
-    if (instruction.kind == Kind::branch) {
-      taken = branch_condition(instruction, state.ccr);
+    if (instruction.kind == Kind::branch || instruction.kind == Kind::loop) {
+      taken = branch_condition(instruction, state);
       destination = builder_.CreateSelect(
           taken,
           builder_.getInt16(static_cast<cpu12::Address>(next + instruction.operand)),
@@ -573,7 +589,7 @@ void lift(LLVMValueRef function,
 
 bool supports(const Instruction &instruction) noexcept {
   if (instruction.kind == Kind::nop || instruction.kind == Kind::branch ||
-      instruction.kind == Kind::effective_address) {
+      instruction.kind == Kind::loop || instruction.kind == Kind::effective_address) {
     return true;
   }
   if (instruction.kind == Kind::register_operation || instruction.kind == Kind::transfer) {
