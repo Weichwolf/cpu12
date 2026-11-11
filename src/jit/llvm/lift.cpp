@@ -230,6 +230,8 @@ private:
       auto *previous = state.ccr;
       destination = stack_value(operation, state);
       if (mask_operation(instruction)) { interrupt_masks(previous, state.ccr, false); }
+    } else if (instruction.kind == Kind::memory_unary) {
+      memory_unary(operation, state);
     } else if (instruction.kind == Kind::register_operation) {
       if (instruction.operation == RegisterOp::decimal_adjust) {
         validate_decimal(operation, state);
@@ -483,6 +485,27 @@ private:
     return result;
   }
 
+  void memory_unary(const BlockInstruction &operation, Values &state) {
+    const auto &instruction = operation.instruction;
+    auto *at = effective_address(builder_, state, operation);
+    if (instruction.addressing == Addressing::indexed && instruction.indexed.indirect) {
+      const Instruction pointer{
+          .kind = Kind::load, .addressing = Addressing::indexed, .word = true};
+      at = transfer(operation, pointer, {.address = at});
+    }
+    const Instruction read{.kind = Kind::load, .addressing = Addressing::indexed};
+    auto *source = instruction.operation == RegisterOp::clear
+                       ? builder_.getInt32(0)
+                       : transfer(operation, read, {.address = at});
+    const auto result = lower_unary(builder_, source, state.ccr, instruction);
+    if (instruction.operation != RegisterOp::test) {
+      const Instruction write{.kind = Kind::store, .addressing = Addressing::indexed};
+      static_cast<void>(transfer(operation, write, {.address = at, .value = result.value}));
+    }
+    commit_index(builder_, state, instruction);
+    state.ccr = result.ccr;
+  }
+
   LLVMValueRef transfer(const BlockInstruction &operation,
                         const Instruction instruction,
                         const AccessValues values) {
@@ -602,6 +625,7 @@ bool supports(const Instruction &instruction) noexcept {
     return false;
   }
   if (instruction.kind == Kind::store) { return memory_operand(instruction); }
+  if (instruction.kind == Kind::memory_unary) { return memory_operand(instruction); }
   if (instruction.kind == Kind::load || instruction.kind == Kind::compare) { return true; }
   if (instruction.kind == Kind::add || instruction.kind == Kind::subtract) {
     return !instruction.word || instruction.target == WordTarget::d;

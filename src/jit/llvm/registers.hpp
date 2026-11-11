@@ -11,6 +11,12 @@ struct DecimalDomain {
   LLVMValueRef input, valid;
 };
 
+struct UnaryValue {
+  LLVMValueRef value, ccr;
+};
+
+[[nodiscard]] UnaryValue
+lower_unary(Builder &b, LLVMValueRef source, LLVMValueRef ccr, Instruction instruction);
 [[nodiscard]] DecimalDomain decimal_domain(Builder &b, const Values &s);
 void lower_register(Builder &b, Values &s, Instruction instruction);
 void lower_transfer(Builder &b, Values &s, Instruction instruction);

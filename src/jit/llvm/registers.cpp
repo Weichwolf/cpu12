@@ -23,7 +23,7 @@ struct Unary {
   LLVMValueRef result, c, v;
 };
 
-Unary unary(Builder &b, const Values &s, const Instruction instruction, LLVMValueRef source) {
+Unary unary(Builder &b, LLVMValueRef ccr, const Instruction instruction, LLVMValueRef source) {
   const auto width = instruction.word ? word_bits : byte_bits;
   const auto sign = 1U << (width - 1);
   const auto mask = instruction.word ? word_mask : byte_mask;
@@ -43,12 +43,12 @@ Unary unary(Builder &b, const Values &s, const Instruction instruction, LLVMValu
       break;
     case RegisterOp::increment:
       result = b.CreateAdd(source, b.getInt32(1));
-      c = b.CreateAnd(s.ccr, b.getInt32(carry));
+      c = b.CreateAnd(ccr, b.getInt32(carry));
       v = bit(b, b.CreateICmpEQ(source, b.getInt32(sign - 1)), overflow);
       break;
     case RegisterOp::decrement:
       result = b.CreateSub(source, b.getInt32(1));
-      c = b.CreateAnd(s.ccr, b.getInt32(carry));
+      c = b.CreateAnd(ccr, b.getInt32(carry));
       v = bit(b, b.CreateICmpEQ(source, b.getInt32(sign)), overflow);
       break;
     case RegisterOp::logical_right:
@@ -58,7 +58,7 @@ Unary unary(Builder &b, const Values &s, const Instruction instruction, LLVMValu
       c = b.CreateAnd(source, b.getInt32(carry));
       if (op == RegisterOp::rotate_right) {
         result = b.CreateOr(
-            result, b.CreateShl(b.CreateAnd(s.ccr, b.getInt32(carry)), b.getInt32(width - 1)));
+            result, b.CreateShl(b.CreateAnd(ccr, b.getInt32(carry)), b.getInt32(width - 1)));
       } else if (op == RegisterOp::arithmetic_right) {
         result = b.CreateOr(result, b.CreateAnd(source, b.getInt32(sign)));
       }
@@ -68,7 +68,7 @@ Unary unary(Builder &b, const Values &s, const Instruction instruction, LLVMValu
       result = b.CreateShl(source, b.getInt32(1));
       c = b.CreateLShr(source, b.getInt32(width - 1));
       if (op == RegisterOp::rotate_left) {
-        result = b.CreateOr(result, b.CreateAnd(s.ccr, b.getInt32(carry)));
+        result = b.CreateOr(result, b.CreateAnd(ccr, b.getInt32(carry)));
       }
       break;
     case RegisterOp::clear: result = b.getInt32(0); break;
@@ -124,6 +124,18 @@ DecimalDomain decimal_domain(Builder &b, const Values &s) {
   return {.input = input, .valid = b.CreateAnd(low, high)};
 }
 
+UnaryValue
+lower_unary(Builder &b, LLVMValueRef source, LLVMValueRef ccr, const Instruction instruction) {
+  const auto result = unary(b, ccr, instruction, source);
+  return {.value = result.result,
+          .ccr = flags(b,
+                       ccr,
+                       {.value = result.result,
+                        .carry_bit = result.c,
+                        .overflow_bit = result.v,
+                        .width = instruction.word ? word_bits : byte_bits})};
+}
+
 void lower_register(Builder &b, Values &s, const Instruction instruction) {
   const auto op = instruction.operation;
   if (op == RegisterOp::index_increment || op == RegisterOp::index_decrement) {
@@ -149,14 +161,9 @@ void lower_register(Builder &b, Values &s, const Instruction instruction) {
     }
     lower(b, s, arithmetic, b.CreateAnd(s.d, b.getInt32(byte_mask)));
   } else {
-    const auto result = unary(b, s, instruction, register_value(b, s, instruction));
-    s.ccr = flags(b,
-                  s.ccr,
-                  {.value = result.result,
-                   .carry_bit = result.c,
-                   .overflow_bit = result.v,
-                   .width = instruction.word ? word_bits : byte_bits});
-    if (op != RegisterOp::test) { register_value(b, s, instruction, result.result); }
+    const auto result = lower_unary(b, register_value(b, s, instruction), s.ccr, instruction);
+    s.ccr = result.ccr;
+    if (op != RegisterOp::test) { register_value(b, s, instruction, result.value); }
   }
 }
 }
