@@ -320,7 +320,8 @@ Program::Program(const std::span<const BlockInstruction> instructions, const Pro
                   functions,
                   options.memory.bindings,
                   options.prefix,
-                  options.output != ArtifactOutput::none);
+                  options.output != ArtifactOutput::none,
+                  options.registers);
   impl_->event_symbols = options.prepare_events
                              ? lift_events(module.get(),
                                            options.memory.bindings,

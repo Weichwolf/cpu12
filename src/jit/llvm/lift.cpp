@@ -44,7 +44,7 @@ public:
         builder_(context_, LLVMAppendBasicBlockInContext(context_, function_, "entry")),
         instructions_(instructions),
         memory_(memory),
-        registers_(LLVMGetParam(function_, 0)),
+        registers_(flow_.registers(builder_, function_)),
         owner_(LLVMGetParam(function_, 1)),
         budget_(LLVMGetParam(function_, 2)),
         done_(LLVMAppendBasicBlockInContext(context_, function_, "done")),

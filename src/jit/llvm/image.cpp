@@ -205,6 +205,9 @@ public:
                              .interrupts = interrupts,
                              .prepare_events = true,
                              .runtime_io = output == ArtifactOutput::semantic,
+                             .registers = output == ArtifactOutput::semantic
+                                              ? RegisterSource::owner
+                                              : RegisterSource::argument,
                              .callbacks = callbacks}));
     }
   }

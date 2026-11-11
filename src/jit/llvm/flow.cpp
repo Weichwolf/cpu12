@@ -7,6 +7,8 @@
 #include "jit/llvm/artifact.hpp"
 #include "jit/llvm/builder.hpp"
 #include "jit/llvm/lift.hpp"
+#include "jit/llvm/program.hpp"
+#include "runtime.hpp"
 
 #include "llvm-c/Core.h"
 #include "llvm-c/Types.h"
@@ -45,11 +47,12 @@ LLVMValueRef constant(LLVMModuleRef module, const std::string &name, LLVMValueRe
   return result;
 }
 
-LLVMValueRef wrapper(LLVMModuleRef module, const std::string &name, LLVMValueRef body) {
+LLVMValueRef
+wrapper(LLVMModuleRef module, const std::string &name, LLVMValueRef body, const Flow &flow) {
   auto *entry = function(module, name, false);
   auto *context = LLVMGetModuleContext(module);
   const Builder builder(context, LLVMAppendBasicBlockInContext(context, entry, "entry"));
-  auto *registers = LLVMGetParam(entry, 0);
+  auto *registers = flow.registers(builder, entry);
   auto *pc =
       builder.CreateGEP(builder.getInt8Ty(), registers, builder.getInt64(offsetof(Registers, pc)));
   auto *location =
@@ -74,13 +77,16 @@ Flow::Flow(LLVMModuleRef module,
            const std::span<const std::vector<BlockInstruction>> regions,
            const Memory &memory,
            const std::string &prefix,
-           const bool native)
-    : module_(module), dispatch_(function(module, prefix + "dispatch", true)) {
+           const bool native,
+           const RegisterSource registers)
+    : module_(module),
+      dispatch_(function(module, prefix + "dispatch", true)),
+      register_source_(registers) {
   std::vector<LLVMValueRef> bodies;
   for (const auto &region : regions) {
     const auto name = prefix + std::to_string(region.front().pc);
     auto *body = function(module, name + ".body", true);
-    auto *entry = wrapper(module, name, body);
+    auto *entry = wrapper(module, name, body, *this);
     bodies.push_back(body);
     if (native) {
       native_attributes(entry);
@@ -102,6 +108,13 @@ Flow::Flow(LLVMModuleRef module,
 LLVMValueRef Flow::target(const Address pc) const {
   const auto found = targets_.find(pc);
   return found == targets_.end() ? nullptr : found->second;
+}
+
+LLVMValueRef Flow::registers(const Builder &builder, LLVMValueRef function) const {
+  if (register_source_ == RegisterSource::argument) { return LLVMGetParam(function, 0); }
+  constexpr auto offset = offsetof(NativeContext, cpu) + offsetof(State, registers);
+  return builder.CreateGEP(
+      builder.getInt8Ty(), LLVMGetParam(function, 1), builder.getInt64(offset));
 }
 
 void Flow::transfer(const Builder &builder,
@@ -145,6 +158,7 @@ void Flow::emit_dispatch(LLVMValueRef table) const {
   auto *pointer = LLVMPointerTypeInContext(context, 0);
   auto *array = LLVMArrayType2(pointer, native_page_entries);
   auto args = arguments(dispatch_);
+  args[0] = registers(builder, dispatch_);
   auto *pc_address =
       builder.CreateGEP(builder.getInt8Ty(), args[0], builder.getInt64(offsetof(Registers, pc)));
   auto *pc = builder.CreateZExt(builder.CreateLoad(builder.getInt16Ty(), pc_address),

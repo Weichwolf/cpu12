@@ -18,6 +18,7 @@ struct ProgramMemory {
 };
 
 enum class ArtifactOutput : std::uint8_t { none, native, semantic };
+enum class RegisterSource : std::uint8_t { argument, owner };
 
 struct ProgramOptions {
   ProgramMemory memory;
@@ -27,6 +28,7 @@ struct ProgramOptions {
   std::span<const InterruptRequest> interrupts;
   bool prepare_events = false;
   bool runtime_io = false;
+  RegisterSource registers = RegisterSource::argument;
   std::span<const CallbackBinding> callbacks;
 };
 

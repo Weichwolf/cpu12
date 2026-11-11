@@ -6,20 +6,25 @@
 
 #include "llvm-c/Types.h"
 
+#include <cstdint>
 #include <map>
 #include <span>
 #include <string>
 #include <vector>
 
 namespace cpu12::detail::llvm19 {
+enum class RegisterSource : std::uint8_t;
+
 class Flow {
 public:
   Flow(LLVMModuleRef module,
        std::span<const std::vector<BlockInstruction>> regions,
        const Memory &memory,
        const std::string &prefix,
-       bool native);
+       bool native,
+       RegisterSource registers);
   [[nodiscard]] LLVMValueRef target(Address pc) const;
+  [[nodiscard]] LLVMValueRef registers(const Builder &builder, LLVMValueRef function) const;
 
   [[nodiscard]] LLVMValueRef dispatcher() const { return dispatch_; }
 
@@ -31,6 +36,7 @@ private:
   void emit_dispatch(LLVMValueRef table) const;
   LLVMModuleRef module_;
   LLVMValueRef dispatch_;
+  RegisterSource register_source_;
   std::map<Address, LLVMValueRef> targets_;
 };
 }
