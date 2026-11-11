@@ -23,6 +23,8 @@ struct ProgramOptions {
   std::string prefix = "cpu12_region_";
   std::span<const std::byte> bindings;
   ArtifactOutput output = ArtifactOutput::none;
+  std::span<const InterruptRequest> interrupts;
+  bool prepare_events = false;
 };
 
 class Program {
@@ -38,6 +40,7 @@ public:
   [[nodiscard]] std::string_view symbol(Address address) const;
   [[nodiscard]] std::span<const std::byte> bitcode() const noexcept;
   [[nodiscard]] std::span<const std::byte> object() const noexcept;
+  [[nodiscard]] const void *event(std::uint64_t key) const;
   // Generated functions contain no captured RAM pointers. Reuse requires the
   // complete transitive native code and any lowered memory topology.
   [[nodiscard]] const void *find(std::span<const BlockInstruction> region,

@@ -356,19 +356,13 @@ private:
   }
 
   void push_frame(const BlockInstruction &operation, const Values &state) {
-    const Instruction word{.kind = Kind::store, .addressing = Addressing::indexed, .word = true};
-    const Instruction byte{.kind = Kind::store, .addressing = Addressing::indexed};
-    const auto write = [&](const int offset, LLVMValueRef value, const Instruction access) {
-      static_cast<void>(transfer(
-          operation, access, {.address = stack_address(builder_, state, offset), .value = value}));
-    };
-    write(-2,
-          builder_.getInt32(static_cast<Address>(operation.pc + operation.instruction.length)),
-          word);
-    write(-4, state.y, word);
-    write(-6, state.x, word);
-    write(-8, swap_frame_word(builder_, state.d), word);
-    write(-9, state.ccr, byte);
+    llvm19::push_frame(
+        builder_,
+        state,
+        builder_.getInt32(static_cast<Address>(operation.pc + operation.instruction.length)),
+        [&](const Instruction access, const AccessValues values) {
+          return transfer(operation, access, values);
+        });
   }
 
   LLVMValueRef wait_frame(const BlockInstruction &operation, Values &state, LLVMValueRef &cost) {

@@ -10,6 +10,7 @@
 #include <cstdint>
 
 namespace cpu12::test::image {
+
 namespace {
 namespace frames = cpu12::test::interrupts;
 constexpr Registers seed{
@@ -149,5 +150,6 @@ void image_events() {
   wake(image, false);
   wake(image, true);
   returned_instruction(image);
+  image_irq_bus();
 }
 }

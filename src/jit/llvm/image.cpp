@@ -86,7 +86,8 @@ class ImageProgram::Impl {
 public:
   explicit Impl(const CodeImage image,
                 const std::span<const VariantLayout> layouts,
-                const std::span<const std::byte> linked)
+                const std::span<const std::byte> linked,
+                const std::span<const InterruptRequest> interrupts)
       : plan(image) {
     for (const auto layout : layouts) {
       if (!bindings.emplace(layout.id, std::vector(layout.memory.begin(), layout.memory.end()))
@@ -121,7 +122,9 @@ public:
                                         .bindings = Memory::mapped(memory->memory)},
                              .prefix = "cpu12_variant_" + std::to_string(variant.id) + "_region_",
                              .bindings = linked,
-                             .output = ArtifactOutput::native}));
+                             .output = ArtifactOutput::native,
+                             .interrupts = interrupts,
+                             .prepare_events = true}));
     }
   }
 
@@ -141,8 +144,9 @@ public:
 
 ImageProgram::ImageProgram(const CodeImage image,
                            const std::span<const VariantLayout> layouts,
-                           const std::span<const std::byte> bindings)
-    : impl_(std::make_unique<Impl>(image, layouts, bindings)) {}
+                           const std::span<const std::byte> bindings,
+                           const std::span<const InterruptRequest> interrupts)
+    : impl_(std::make_unique<Impl>(image, layouts, bindings, interrupts)) {}
 
 ImageProgram::~ImageProgram() = default;
 

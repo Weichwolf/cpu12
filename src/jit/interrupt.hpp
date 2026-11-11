@@ -10,6 +10,17 @@
 
 namespace cpu12::detail {
 enum class InterruptFrame : std::uint8_t { push, waiting, returned };
+inline constexpr auto stop_event_key = std::uint64_t{3} << 62U;
+
+[[nodiscard]] constexpr std::uint64_t event_key(const InterruptRequest request,
+                                                const InterruptFrame frame) {
+  constexpr unsigned kind_shift = 16;
+  constexpr unsigned frame_shift = 17;
+  constexpr unsigned event_shift = 63;
+  return (std::uint64_t{1} << event_shift) | (static_cast<std::uint64_t>(frame) << frame_shift) |
+         (static_cast<std::uint64_t>(request.kind) << kind_shift) | request.vector;
+}
+
 void return_interrupt(Code &code, const Memory &ram);
 void defer_interrupt(Code &code, bool accumulator);
 void stack_context(Code &code, const Memory &ram, std::uint8_t next_pc = 0);

@@ -66,11 +66,15 @@ declared start, including starts not reachable from the supplied root entries;
 reject inconsistent overlaps, missing operands, undeclared encoded targets and
 missing semantic lowering. Pointer-free layouts describe each variant's memory
 requirements; concrete RAM addresses belong only to execution owners.
+Compile the declared IRQ vector/kind push, waiting and returned-frame entries
+plus STOP wake in the same LLVM module as their variant. Reuse the ordinary
+memory lowering and frame-store order; load actual storage through the owner's
+runtime bindings. Link eligible host IR before final O3 for these entries too.
 
 Install a selected variant with `Core::install(image, variant)` on its stopped
 owner. Validate original immutable source bytes and the actual complete memory
-layout, build the native entry index, and cold-prepare declared IRQ vector/kind
-frames plus stop wake. Publish only the complete successful binding and retain
+layout, build the native entry index, and bind the already compiled event entries.
+Installation generates no machine code. Publish only the complete successful binding and retain
 shared code ownership. Installation executes no guest instructions or device
 callbacks and changes no architectural state, memory or time. A rejected install
 preserves the complete previous binding. Fault recovery remains an explicit

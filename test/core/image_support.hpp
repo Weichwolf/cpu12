@@ -36,6 +36,7 @@ template <class Action> void rejects(Action action, const std::string_view reaso
 
 void image_contracts();
 void image_events();
+void image_irq_bus();
 void image_deadlines();
 void image_io();
 }

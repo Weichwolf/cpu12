@@ -82,6 +82,7 @@ add_library(cpu12_core STATIC
   src/jit/llvm/memory.cpp
   src/jit/llvm/indexed.cpp
   src/jit/llvm/flow.cpp
+  src/jit/llvm/events.cpp
   src/jit/llvm/registers.cpp src/jit/llvm/math.cpp
   src/jit/llvm/transfer.cpp
   src/jit/llvm/stack.cpp
@@ -312,7 +313,7 @@ if(BUILD_TESTING AND CPU12_BUILD_TESTING)
   set_tests_properties(linked-code-images PROPERTIES TIMEOUT 30)
   add_executable(cpu12-installed-image-test test/core/image_test.cpp
     test/core/image_contract_test.cpp test/core/image_events_test.cpp test/core/image_deadlines_test.cpp
-    test/core/image_io_test.cpp)
+    test/core/image_io_test.cpp test/core/image_irq_bus.cpp)
   target_include_directories(cpu12-installed-image-test PRIVATE test/support)
   target_link_libraries(cpu12-installed-image-test PRIVATE cpu12::core)
   add_test(NAME installed-native-images COMMAND cpu12-installed-image-test)

@@ -18,7 +18,8 @@ class ImageProgram {
 public:
   ImageProgram(CodeImage image,
                std::span<const VariantLayout> layouts,
-               std::span<const std::byte> bindings = {});
+               std::span<const std::byte> bindings = {},
+               std::span<const InterruptRequest> interrupts = {});
   ~ImageProgram();
   ImageProgram(const ImageProgram &) = delete;
   ImageProgram &operator=(const ImageProgram &) = delete;

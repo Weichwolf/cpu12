@@ -73,15 +73,6 @@ bool same_region(const Ram &left, const Ram &right) noexcept {
 }
 
 constexpr unsigned page_mask = static_cast<unsigned>(native_page_entries - 1);
-constexpr auto stop_key = std::uint64_t{3} << 62U;
-
-constexpr std::uint64_t event_key(const InterruptRequest request, const InterruptFrame frame) {
-  constexpr unsigned kind_shift = 16;
-  constexpr unsigned frame_shift = 17;
-  constexpr auto event_tag = std::uint64_t{1} << 63U;
-  return event_tag | (static_cast<std::uint64_t>(frame) << frame_shift) |
-         (static_cast<std::uint64_t>(request.kind) << kind_shift) | request.vector;
-}
 
 void unprepared(NativeContext &context, const Address address) noexcept {
   context.fault = Fault::unprepared_execution;
@@ -120,7 +111,6 @@ struct Mapping {
   std::bitset<address_bytes> prepared;
   std::shared_ptr<const llvm19::ImageProgram> image;
   std::uint64_t variant = 0;
-  std::unique_ptr<ExecutableArena> events;
 
   void install(Address address, const void *entry) {
     auto &page = native_regions[address >> native_page_shift];
@@ -232,7 +222,6 @@ void Jit::install(std::shared_ptr<const llvm19::ImageProgram> image,
   auto mapping = std::make_unique<Mapping>(impl_->current->memory);
   mapping->image = std::move(image);
   mapping->variant = variant;
-  mapping->events = std::make_unique<ExecutableArena>();
   for (const auto &operation : mapping->image->instructions(variant)) {
     mapping->install(operation.pc, mapping->image->entry(variant, operation.pc));
     mapping->prepared[operation.pc] = true;
@@ -241,12 +230,16 @@ void Jit::install(std::shared_ptr<const llvm19::ImageProgram> image,
       InterruptFrame::push, InterruptFrame::waiting, InterruptFrame::returned};
   for (const auto request : interrupts) {
     for (const auto frame : frames) {
-      const auto *code = mapping->events->append(emit_interrupt(request, mapping->memory, frame));
+      const auto *code = mapping->image->program(variant).event(event_key(request, frame));
+      if (code == nullptr) { throw std::invalid_argument("CPU12 image has no prepared IRQ entry"); }
       mapping->blocks.emplace(event_key(request, frame), Entry{.code = code});
     }
   }
-  mapping->blocks.emplace(stop_key, Entry{.code = mapping->events->append(emit_stop_wake())});
-  impl_->statistics.compiled_entries += mapping->blocks.size();
+  const auto *wake = mapping->image->program(variant).event(stop_event_key);
+  if (wake == nullptr) {
+    throw std::invalid_argument("CPU12 image has no prepared STOP-wake entry");
+  }
+  mapping->blocks.emplace(stop_event_key, Entry{.code = wake});
   impl_->image_binding = std::move(mapping);
   impl_->current = impl_->image_binding.get();
 }
@@ -461,14 +454,14 @@ void Jit::interrupt(const InterruptRequest request, Registers &registers, Native
 }
 
 void Jit::resume_stop(Registers &registers, NativeContext &context) {
-  auto found = impl_->current->blocks.find(stop_key);
+  auto found = impl_->current->blocks.find(stop_event_key);
   if (found == impl_->current->blocks.end()) {
     if (requires_image()) {
       unprepared(context, registers.pc);
       return;
     }
     found = impl_->current->blocks
-                .emplace(stop_key, Entry{.code = impl_->arena.append(emit_stop_wake())})
+                .emplace(stop_event_key, Entry{.code = impl_->arena.append(emit_stop_wake())})
                 .first;
     ++impl_->statistics.compiled_entries;
   }

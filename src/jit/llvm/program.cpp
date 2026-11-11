@@ -7,6 +7,7 @@
 #include "instruction.hpp"
 #include "jit/block.hpp"
 #include "jit/llvm/artifact.hpp"
+#include "jit/llvm/events.hpp"
 #include "jit/llvm/flow.hpp"
 #include "jit/llvm/io_abi.hpp"
 #include "jit/llvm/lifetime.hpp"
@@ -303,6 +304,7 @@ public:
   std::uint64_t native_bytes = 0;
   Engine engine;
   std::map<Address, Entry> entries;
+  std::map<std::uint64_t, const void *> events;
   std::map<Address, std::string> symbols;
   std::vector<std::byte> bitcode, object;
   std::map<Address, std::vector<Encoding>> sources;
@@ -312,7 +314,9 @@ public:
 };
 
 Program::Program(const std::span<const BlockInstruction> instructions, const Memory &memory)
-    : Program(instructions, {.memory = {.source = memory, .bindings = memory}, .bindings = {}}) {}
+    : Program(
+          instructions,
+          {.memory = {.source = memory, .bindings = memory}, .bindings = {}, .interrupts = {}}) {}
 
 Program::Program(const std::span<const BlockInstruction> instructions, const ProgramOptions options)
     : impl_(std::make_unique<Impl>()) {
@@ -339,6 +343,12 @@ Program::Program(const std::span<const BlockInstruction> instructions, const Pro
                   options.memory.bindings,
                   options.prefix,
                   options.output == ArtifactOutput::native);
+  const auto events = options.prepare_events ? lift_events(module.get(),
+                                                           options.memory.bindings,
+                                                           options.prefix,
+                                                           options.interrupts,
+                                                           options.output == ArtifactOutput::native)
+                                             : std::map<std::uint64_t, std::string>{};
   link_bindings(module.get(), options.bindings);
   if (options.output == ArtifactOutput::native) { impl_->bitcode = llvm19::bitcode(module.get()); }
   optimize(module.get(), machine.get());
@@ -385,6 +395,11 @@ Program::Program(const std::span<const BlockInstruction> instructions, const Pro
       }
     }
   }
+  for (const auto &[key, event_name] : events) {
+    LLVMOrcExecutorAddress symbol = 0;
+    require(LLVMOrcLLJITLookup(impl_->engine.get(), &symbol, event_name.c_str()));
+    impl_->events.emplace(key, std::bit_cast<const void *>(symbol));
+  }
 }
 
 Program::~Program() = default;
@@ -413,6 +428,11 @@ std::span<const std::byte> Program::bitcode() const noexcept {
 
 std::span<const std::byte> Program::object() const noexcept {
   return impl_->object;
+}
+
+const void *Program::event(const std::uint64_t key) const {
+  const auto found = impl_->events.find(key);
+  return found == impl_->events.end() ? nullptr : found->second;
 }
 
 const void *Program::find(const std::span<const BlockInstruction> region,
