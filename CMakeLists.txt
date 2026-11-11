@@ -68,7 +68,7 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(arm64|aarch64)$")
     src/jit/a64/run.cpp)
 endif()
 add_library(cpu12_core STATIC
-  src/core.cpp src/cycles.cpp
+  src/core.cpp src/cycles.cpp src/image.cpp
   src/fetch.cpp src/immutable.cpp
   src/decode.cpp
   src/indexed.cpp
@@ -260,6 +260,13 @@ if(BUILD_TESTING AND CPU12_BUILD_TESTING)
   target_link_libraries(cpu12-image-static-test PRIVATE cpu12::core)
   add_test(NAME linked-code-images COMMAND cpu12-image-static-test)
   set_tests_properties(linked-code-images PROPERTIES TIMEOUT 30)
+  add_executable(cpu12-installed-image-test test/core/image_test.cpp
+    test/core/image_contract_test.cpp test/core/image_events_test.cpp test/core/image_deadlines_test.cpp
+    test/core/image_io_test.cpp)
+  target_include_directories(cpu12-installed-image-test PRIVATE test/support)
+  target_link_libraries(cpu12-installed-image-test PRIVATE cpu12::core)
+  add_test(NAME installed-native-images COMMAND cpu12-installed-image-test)
+  set_tests_properties(installed-native-images PROPERTIES TIMEOUT 30)
   add_executable(cpu12-preparation-regions-test test/jit/preparation_regions_test.cpp)
   target_include_directories(cpu12-preparation-regions-test PRIVATE test/support)
   target_link_libraries(cpu12-preparation-regions-test PRIVATE cpu12::core)

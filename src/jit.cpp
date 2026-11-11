@@ -6,11 +6,13 @@
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
 #include "cycles.hpp"
+#include "immutable.hpp"
 #include "instruction.hpp"
 #include "jit/arena.hpp"
 #include "jit/block.hpp"
 #include "jit/emitter.hpp"
 #include "jit/interrupt.hpp"
+#include "jit/llvm/image.hpp"
 #include "jit/llvm/lift.hpp"
 #include "jit/llvm/program.hpp"
 #include "jit/llvm/regions.hpp"
@@ -20,6 +22,7 @@
 #include <algorithm>
 #include <array>
 #include <bitset>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -70,6 +73,23 @@ bool same_region(const Ram &left, const Ram &right) noexcept {
 }
 
 constexpr unsigned page_mask = static_cast<unsigned>(native_page_entries - 1);
+constexpr auto stop_key = std::uint64_t{3} << 62U;
+
+constexpr std::uint64_t event_key(const InterruptRequest request, const InterruptFrame frame) {
+  constexpr unsigned kind_shift = 16;
+  constexpr unsigned frame_shift = 17;
+  constexpr auto event_tag = std::uint64_t{1} << 63U;
+  return event_tag | (static_cast<std::uint64_t>(frame) << frame_shift) |
+         (static_cast<std::uint64_t>(request.kind) << kind_shift) | request.vector;
+}
+
+void unprepared(NativeContext &context, const Address address) noexcept {
+  context.fault = Fault::unprepared_execution;
+  context.address = address;
+  context.value = 0;
+  context.access_size = 0;
+  context.read_mask = 0;
+}
 
 struct Entry {
   const void *code = nullptr;
@@ -98,6 +118,9 @@ struct Mapping {
   unsigned native_entries = 0;
   std::bitset<address_bytes> unavailable;
   std::bitset<address_bytes> prepared;
+  std::shared_ptr<const llvm19::ImageProgram> image;
+  std::uint64_t variant = 0;
+  std::unique_ptr<ExecutableArena> events;
 
   void install(Address address, const void *entry) {
     auto &page = native_regions[address >> native_page_shift];
@@ -133,6 +156,7 @@ public:
   ExecutableArena arena;
   std::vector<std::unique_ptr<llvm19::Program>> programs;
   std::vector<std::unique_ptr<Mapping>> mappings;
+  std::unique_ptr<Mapping> image_binding;
   Mapping *current = nullptr;
   Statistics statistics;
 
@@ -183,6 +207,12 @@ const MemoryBinding *Jit::bindings() const noexcept {
 }
 
 void Jit::set_memory(const Memory &memory) {
+  if (impl_->image_binding) {
+    auto mapping = std::make_unique<Mapping>(memory);
+    impl_->image_binding = std::move(mapping);
+    impl_->current = impl_->image_binding.get();
+    return;
+  }
   for (const auto &mapping : impl_->mappings) {
     if (mapping->matches(memory)) {
       impl_->current = mapping.get();
@@ -195,8 +225,72 @@ void Jit::set_memory(const Memory &memory) {
   impl_->current = selected;
 }
 
+void Jit::install(std::shared_ptr<const llvm19::ImageProgram> image,
+                  const std::uint64_t variant,
+                  const std::span<const InterruptRequest> interrupts) {
+  image->validate_binding(variant, impl_->current->memory);
+  auto mapping = std::make_unique<Mapping>(impl_->current->memory);
+  mapping->image = std::move(image);
+  mapping->variant = variant;
+  mapping->events = std::make_unique<ExecutableArena>();
+  for (const auto &operation : mapping->image->instructions(variant)) {
+    mapping->install(operation.pc, mapping->image->entry(variant, operation.pc));
+    mapping->prepared[operation.pc] = true;
+  }
+  constexpr std::array frames{
+      InterruptFrame::push, InterruptFrame::waiting, InterruptFrame::returned};
+  for (const auto request : interrupts) {
+    for (const auto frame : frames) {
+      const auto *code = mapping->events->append(emit_interrupt(request, mapping->memory, frame));
+      mapping->blocks.emplace(event_key(request, frame), Entry{.code = code});
+    }
+  }
+  mapping->blocks.emplace(stop_key, Entry{.code = mapping->events->append(emit_stop_wake())});
+  impl_->statistics.compiled_entries += mapping->blocks.size();
+  impl_->image_binding = std::move(mapping);
+  impl_->current = impl_->image_binding.get();
+}
+
+bool Jit::requires_image() const noexcept {
+  return impl_->image_binding != nullptr;
+}
+
+Fault Jit::validate_instruction(const Address pc, const std::span<const Byte> bytes) const {
+  const auto &mapping = *impl_->current;
+  if (!mapping.image) { return Fault::unprepared_execution; }
+  const auto *instruction = mapping.image->program(mapping.variant).instruction(pc);
+  if (instruction == nullptr) { return Fault::unprepared_execution; }
+  if (instruction->length != bytes.size()) { return Fault::invalid_input; }
+  for (std::size_t offset = 0; offset < bytes.size(); ++offset) {
+    const auto source = immutable_bytes(mapping.memory, static_cast<Address>(pc + offset));
+    if (source.empty() || source.front() != bytes[offset]) { return Fault::invalid_input; }
+  }
+  return Fault::none;
+}
+
 PreparationReport Jit::prepare(const std::span<const Address> established_entries) {
   auto *const mapping = impl_->current;
+  if (requires_image()) {
+    PreparationReport report;
+    std::bitset<address_bytes> unresolved;
+    if (mapping->image) {
+      report.prepared_entries = mapping->image->instructions(mapping->variant).size();
+    }
+    for (const auto address : established_entries) {
+      if (!mapping->image || mapping->image->program(mapping->variant).find(address) == nullptr) {
+        if (report.failure.fault == Fault::none) {
+          report.failure = {
+              .fault = Fault::unprepared_execution, .pc = address, .address = address};
+        }
+        unresolved[address] = true;
+      }
+    }
+    if (!mapping->image && established_entries.empty()) {
+      report.failure.fault = Fault::unprepared_execution;
+    }
+    report.unresolved_entries = unresolved.count();
+    return report;
+  }
   auto graph = preparation_graph(mapping->memory, established_entries);
   PreparationReport report{.failure = graph.failure};
   std::bitset<address_bytes> unresolved;
@@ -237,6 +331,7 @@ Jit::~Jit() = default;
 bool Jit::execute(const std::span<const std::uint8_t> bytes,
                   Registers &registers,
                   NativeContext &context) {
+  if (requires_image()) { return false; }
   constexpr unsigned length_shift = 48;
   constexpr unsigned opcode_shift = 40;
   constexpr unsigned postbyte_shift = 32;
@@ -285,8 +380,37 @@ bool Jit::execute(const std::span<const std::uint8_t> bytes,
   return true;
 }
 
+NativeResult
+Jit::run_prepared(const std::uint32_t budget, Registers &registers, NativeContext &context) {
+  auto &mapping = *impl_->current;
+  const auto address = unsigned{registers.pc};
+  const auto *page = mapping.native_regions[address >> native_page_shift];
+  const auto *entry = page != nullptr ? page[address & page_mask] : nullptr;
+  if (!mapping.image || entry == nullptr) {
+    unprepared(context, registers.pc);
+    return {.location = {.pc = registers.pc}};
+  }
+  const bool returned = context.cpu.returned_frame;
+  const auto *instruction =
+      returned ? mapping.image->program(mapping.variant).instruction(registers.pc) : nullptr;
+  const auto previous = registers.ccr;
+  const auto delay = context.cpu.irq_delay;
+  const auto grant = delay != 0 || returned ? std::min(budget, 1U) : budget;
+  const auto result = mapping.run(entry, registers, context, grant);
+  if (result.retired != 0 && context.fault == Fault::none) {
+    constexpr unsigned irq = 0x10;
+    const bool unmasked = (previous & irq) != 0 && (registers.ccr & irq) == 0;
+    if (delay != 0 && context.cpu.irq_delay != 0 && !unmasked) { --context.cpu.irq_delay; }
+    if (instruction != nullptr && instruction->kind != Kind::return_interrupt) {
+      context.cpu.returned_frame = false;
+    }
+  }
+  return result;
+}
+
 std::optional<NativeResult>
 Jit::run_block(const std::uint32_t budget, Registers &registers, NativeContext &context) {
+  if (requires_image()) { return run_prepared(budget, registers, context); }
   if (context.cpu.returned_frame) { return std::nullopt; }
   auto &mapping = *impl_->current;
   const auto address = unsigned{registers.pc};
@@ -313,19 +437,19 @@ Jit::run_block(const std::uint32_t budget, Registers &registers, NativeContext &
 }
 
 void Jit::interrupt(const InterruptRequest request, Registers &registers, NativeContext &context) {
-  constexpr unsigned kind_shift = 16;
-  constexpr auto event_tag = std::uint64_t{1} << 63U;
-  constexpr unsigned frame_shift = 17;
   auto frame = InterruptFrame::push;
   if (context.cpu.execution != ExecutionState::running) {
     frame = InterruptFrame::waiting;
   } else if (context.cpu.returned_frame) {
     frame = InterruptFrame::returned;
   }
-  const auto key = event_tag | (static_cast<std::uint64_t>(frame) << frame_shift) |
-                   (static_cast<std::uint64_t>(request.kind) << kind_shift) | request.vector;
+  const auto key = event_key(request, frame);
   auto found = impl_->current->blocks.find(key);
   if (found == impl_->current->blocks.end()) {
+    if (requires_image()) {
+      unprepared(context, request.vector);
+      return;
+    }
     found = impl_->current->blocks
                 .emplace(key,
                          Entry{.code = impl_->arena.append(
@@ -337,12 +461,15 @@ void Jit::interrupt(const InterruptRequest request, Registers &registers, Native
 }
 
 void Jit::resume_stop(Registers &registers, NativeContext &context) {
-  constexpr auto key = std::uint64_t{3} << 62U;
-  auto found = impl_->current->blocks.find(key);
+  auto found = impl_->current->blocks.find(stop_key);
   if (found == impl_->current->blocks.end()) {
-    found =
-        impl_->current->blocks.emplace(key, Entry{.code = impl_->arena.append(emit_stop_wake())})
-            .first;
+    if (requires_image()) {
+      unprepared(context, registers.pc);
+      return;
+    }
+    found = impl_->current->blocks
+                .emplace(stop_key, Entry{.code = impl_->arena.append(emit_stop_wake())})
+                .first;
     ++impl_->statistics.compiled_entries;
   }
   enter(found->second.code, registers, context);

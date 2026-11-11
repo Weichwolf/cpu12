@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-only
+#include "code_image.hpp"
 #include "image_support.hpp"
 #include "jit/llvm/program.hpp"
 

@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-only
+#include "code_image.hpp"
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
 #include "entries.hpp"
-#include "image_support.hpp"
 #include "jit/block.hpp"
 #include "runtime.hpp"
 

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "jit/llvm/image.hpp"
 
+#include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
 #include "immutable.hpp"
 #include "jit/block.hpp"
@@ -158,6 +159,15 @@ const void *ImageProgram::entry(const std::uint64_t id, const Address pc) const 
 
 std::span<const BlockInstruction> ImageProgram::instructions(const std::uint64_t id) const {
   return impl_->variant(id).instructions;
+}
+
+PreparationReport ImageProgram::report() const noexcept {
+  PreparationReport result;
+  for (const auto &variant : impl_->plan.variants()) {
+    result.prepared_entries += variant.instructions.size();
+    result.native_bytes += impl_->programs.at(variant.id)->native_bytes();
+  }
+  return result;
 }
 
 void ImageProgram::validate_binding(const std::uint64_t id, const Memory &memory) const {

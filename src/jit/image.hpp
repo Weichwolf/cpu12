@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #pragma once
+#include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
 #include "jit/block.hpp"
 
@@ -8,20 +9,9 @@
 #include <vector>
 
 namespace cpu12::detail {
-struct CodeSpan {
-  Address address;
-  std::span<const Byte> words;
-};
-
-struct CodeVariant {
-  std::uint64_t id;
-  std::span<const CodeSpan> code;
-  std::span<const Address> entries;
-};
-
-struct CodeImage {
-  std::span<const CodeVariant> variants;
-};
+using cpu12::CodeImage;
+using cpu12::CodeSpan;
+using cpu12::CodeVariant;
 
 class ImagePlan {
 public:

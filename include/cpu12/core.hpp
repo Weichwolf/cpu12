@@ -51,7 +51,8 @@ enum class Fault : std::uint8_t {
   memory_write,
   reentrant,
   unsupported_state,
-  instruction_fetch
+  instruction_fetch,
+  unprepared_execution
 };
 
 enum class ExecutionState : std::uint8_t { running, waiting, stopped };
@@ -110,6 +111,49 @@ struct PreparationReport {
   RunResult failure;
 };
 
+struct CodeSpan {
+  Address address;
+  std::span<const Byte> words;
+};
+
+struct CodeVariant {
+  std::uint64_t id;
+  std::span<const CodeSpan> code;
+  std::span<const Address> entries;
+};
+
+struct CodeImage {
+  std::span<const CodeVariant> variants;
+};
+
+struct RegionLayout {
+  Address first;
+  std::size_t size;
+  bool writable = true, tracked = false;
+};
+
+struct VariantLayout {
+  std::uint64_t id;
+  std::span<const RegionLayout> memory;
+};
+
+struct CompileOptions {
+  std::span<const VariantLayout> memory;
+  std::span<const InterruptRequest> interrupts;
+};
+
+class NativeImage {
+public:
+  NativeImage() = default;
+  [[nodiscard]] PreparationReport report() const noexcept;
+
+private:
+  class Impl;
+  explicit NativeImage(std::shared_ptr<const Impl> image) noexcept;
+  std::shared_ptr<const Impl> impl_;
+  friend class Core;
+};
+
 // The board owns clocks, pending-source arbitration and acknowledgement. Native
 // faults latch until explicit register replacement or a recovered reset boundary.
 class Core {
@@ -118,13 +162,16 @@ public:
   ~Core();
   Core(const Core &) = delete;
   Core &operator=(const Core &) = delete;
+  [[nodiscard]] static NativeImage compile(CodeImage image, CompileOptions options);
+  // Cold owner boundary: validate code/layout and bind RAM/events before publishing.
+  void install(const NativeImage &image, std::uint64_t variant);
   [[nodiscard]] Registers registers() const noexcept;
   // A live read-only view, valid for this Core lifetime; inspect on the execution owner.
   [[nodiscard]] const State &state() const noexcept;
   [[nodiscard]] Progress progress() const noexcept;
   // An explicit fresh boundary clears a latched fault; coordinate bus state externally.
   void set_registers(Registers registers);
-  // Explicit retirement-boundary remap; CPU state and previous translations remain intact.
+  // An installed image requires a matching install after every explicit remap.
   void set_memory(Memory memory);
   [[nodiscard]] PreparationReport prepare(std::span<const Address> established_entries);
   [[nodiscard]] RunResult run_instruction(std::span<const std::uint8_t> bytes);

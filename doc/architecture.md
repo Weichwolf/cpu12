@@ -57,24 +57,46 @@ count caps, budget-specific recompilation, continuous hashing or cache eviction.
 Changed executable identities require an explicit owner transition; unrelated
 programs use a fresh core.
 
-Provide an explicit synchronous `Core::prepare(established_entries)` before run.
-The stopped owner binds an initialized immutable program/mapping revision; the
-consumer may transfer that ownership to a preparation worker. Discover code only
-from established entries and actual direct edges. Retain unknown indirect edges
-and unavailable code as unresolved. Preparation executes no guest instructions,
-fetch/read/write/device callbacks or architectural time/state changes. Return
-existing rich fault information without latching it into State/Progress. Validate
-the captured binding before installing retained native entries.
+Compile an explicit `CodeImage` through owner-free `Core::compile(image, options)`.
+Declare all instruction streams and valid entries per source variant, separately
+from readable inline data. A call's saved return address need not be executable.
+Own source bytes, instruction boundaries, layout descriptors and interrupt
+contracts before returning the immutable shareable `NativeImage`. Compile every
+declared start, including starts not reachable from the supplied root entries;
+reject inconsistent overlaps, missing operands, undeclared encoded targets and
+missing semantic lowering. Pointer-free layouts describe each variant's memory
+requirements; concrete RAM addresses belong only to execution owners.
+
+Install a selected variant with `Core::install(image, variant)` on its stopped
+owner. Validate original immutable source bytes and the actual complete memory
+layout, build the native entry index, and cold-prepare declared IRQ vector/kind
+frames plus stop wake. Publish only the complete successful binding and retain
+shared code ownership. Installation executes no guest instructions or device
+callbacks and changes no architectural state, memory or time. A rejected install
+preserves the complete previous binding. Fault recovery remains an explicit
+register/reset boundary.
+
+Installed execution uses prepared native entries exclusively through run, step
+and explicit instruction APIs. An unknown PC or undeclared hardware event fails
+with `unprepared_execution`, PC and address before fetch, instruction emission or
+new event code. An explicit memory remap invalidates the installed binding even
+when addresses are reused. Select and install the matching already prepared
+source version before resuming; source writes and variant transitions retain
+all original observable effects. Mutable data remains owner-bound RAM.
+Prepare every required per-owner variant binding before playback. Runtime
+variant selection must reuse its prepared entry/frame bindings; it must not
+emit event glue or guest code on the first loader, bank or template transition.
 
 Lift exact ISA integer, flag, memory and ordered device effects into semantic
 LLVM 19 IR. Optimize connected control flow/SSA with target-aware `default<O3>`
 and native code generation, keeping LLVM types private. Preparation has no fixed
-time budget; substantial cold work is acceptable for better execution. New code
-requires a new immutable revision and preparation. Resolve executable frontiers before complete preparation succeeds. Distinguish discovery,
+time budget; substantial cold work is acceptable for better execution. Resolve
+executable frontiers before complete preparation succeeds. Distinguish discovery,
 optimized coverage, code bytes, preparation, first-use misses and warm execution.
 Coordinate one process-wide native-target initialization before parallel LLVM
-work; separate contexts, modules and executable ownership per prepared core.
-Never shut down LLVM while any core retains LLVM objects or code.
+work; immutable images may serve independent execution owners. Keep source IR,
+compiler state, executable ownership and per-instance mutable data distinct.
+Never shut down LLVM while any image retains LLVM objects or code.
 
 Partition prepared code by connected established direct control flow, not length
 or execution grants. Keep independent regions in separate functions within one
@@ -82,9 +104,10 @@ module/runtime, with region-specific native entry routing. Verify our generated
 IR at optimization boundaries; per-pass verification of packaged transforms is
 a compiler diagnostic, not production execution work. Extending reachability
 retains existing immutable translations and compiles only new entries.
-Lower complete acyclic single-instruction regions directly through the qualified
-native emitter; there is no inter-instruction work to optimize. Natural cycles,
-including one-opcode cycles, retain optimizing loop lowering.
+Lower every declared guest instruction through the shared semantic pipeline;
+an ordinary emitter is not a fallback for missing AOT lowering. Hardware event
+frame bindings are cold owner work and preserve their precise native contracts.
+Natural cycles, including one-opcode cycles, retain optimizing loop lowering.
 Rebinding unrelated RAM must not retranslate code whose complete instruction
 region and compiled binding requirements remain unchanged. Captured RAM pointers
 require matching grants; parameterized functions use the current context.

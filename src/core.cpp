@@ -4,6 +4,7 @@
 #include "cpu12/memory.hpp"
 #include "cycles.hpp"
 #include "fetch.hpp"
+#include "image.hpp"
 #include "jit.hpp"
 #include "jit/block.hpp"
 #include "memory_access.hpp"
@@ -106,6 +107,15 @@ public:
     return result;
   }
 
+  EventResult failed_event(EventResult result) noexcept {
+    const auto failure = failed({.pc = result.pc});
+    result.fault = failure.fault;
+    result.address = failure.address;
+    result.value = failure.value;
+    result.access_size = failure.access_size;
+    return result;
+  }
+
   RunResult execute(const std::span<const std::uint8_t> bytes) {
     RunResult result{.pc = context.cpu.registers.pc, .opcode = bytes[0]};
     if (!jit.execute(bytes, context.cpu.registers, context)) {
@@ -133,6 +143,9 @@ public:
   }
 
   RunResult step() {
+    if (jit.requires_image()) {
+      return block_result(jit.run_prepared(1, context.cpu.registers, context));
+    }
     RunResult result{.state = context.cpu.execution, .pc = context.cpu.registers.pc};
     const auto capture = detail::fetch(jit.memory(), context, result.pc);
     if (capture.size != 0) { result.opcode = capture.bytes[0]; }
@@ -147,6 +160,15 @@ public:
     return result;
   }
 
+  [[gnu::always_inline]] RunResult segment(const std::uint32_t budget, bool &suffix) {
+    const auto block =
+        suffix ? std::nullopt : jit.run_block(budget, context.cpu.registers, context);
+    if (block && block->retired == 0 && context.fault == Fault::none && !jit.requires_image()) {
+      suffix = true;
+    }
+    return block && !suffix ? block_result(*block) : step();
+  }
+
   template <bool Timed>
   [[gnu::always_inline]] RunResult run_native(const std::uint32_t instruction_budget) {
     RunResult result;
@@ -156,11 +178,8 @@ public:
       const auto masks =
           Timed ? static_cast<Byte>(context.cpu.registers.ccr & interrupt_masks) : Byte{};
       const auto delay = Timed ? context.cpu.irq_delay : Byte{};
-      const auto block =
-          suffix ? std::nullopt
-                 : jit.run_block(instruction_budget - retired, context.cpu.registers, context);
-      if (block && block->retired == 0 && context.fault == Fault::none) { suffix = true; }
-      result = block && !suffix ? block_result(*block) : step();
+      result = segment(instruction_budget - retired, suffix);
+      const auto count = result.retired;
       if constexpr (Timed) { observe_interrupt_boundary(masks, delay); }
       retired += result.retired;
       result.retired = retired;
@@ -168,7 +187,7 @@ public:
         if (context.progress.estimated_cycles >= context.cycle_deadline) { break; }
       }
       if (result.fault != Fault::none || result.state != ExecutionState::running ||
-          context.yield_requested) {
+          context.yield_requested || count == 0) {
         break;
       }
     }
@@ -180,6 +199,18 @@ Core::Core(const Memory memory, Io *const io)
     : impl_(std::make_unique<Impl>(memory, io != nullptr ? *io : Io{})) {}
 
 Core::~Core() = default;
+
+NativeImage Core::compile(const CodeImage image, const CompileOptions options) {
+  if (!native_supported()) { throw std::runtime_error("Unsupported CPU12 native image host"); }
+  return NativeImage(std::make_shared<NativeImage::Impl>(image, options));
+}
+
+void Core::install(const NativeImage &image, const std::uint64_t variant) {
+  if (impl_->active) { throw std::logic_error("Cannot install an active CPU12 image"); }
+  if (!image.impl_) { throw std::invalid_argument("Cannot install an empty CPU12 image"); }
+  impl_->jit.install(image.impl_->program, variant, image.impl_->interrupts);
+  impl_->context.memory_bindings = impl_->jit.bindings();
+}
 
 Registers Core::registers() const noexcept {
   return impl_->context.cpu.registers;
@@ -256,6 +287,14 @@ RunResult Core::run_instruction(const std::span<const std::uint8_t> bytes) {
   if (bytes.empty() || bytes.size() > maximum_capture_bytes) {
     result.fault = Fault::invalid_input;
     return result;
+  }
+  if (impl_->jit.requires_image()) {
+    const auto pc = impl_->context.cpu.registers.pc;
+    if (impl_->jit.validate_instruction(pc, bytes) == Fault::invalid_input) {
+      result.fault = Fault::invalid_input;
+      return result;
+    }
+    return step();
   }
   impl_->active = true;
   try {
@@ -359,11 +398,7 @@ EventResult Core::reset(const std::uint16_t vector) noexcept {
   impl_->active = true;
   const auto target = reset_vector(impl_->jit.memory(), impl_->context, vector);
   if (target == detail::failed_word_read) {
-    const auto failed = impl_->failed({.pc = result.pc});
-    result.fault = failed.fault;
-    result.address = failed.address;
-    result.value = failed.value;
-    result.access_size = failed.access_size;
+    result = impl_->failed_event(result);
   } else {
     constexpr unsigned masks = 0xd0;
     impl_->context.cpu.registers.pc = static_cast<Address>(target);
@@ -430,11 +465,7 @@ EventResult Core::interrupt(const InterruptRequest request) {
   try {
     impl_->jit.interrupt(request, impl_->context.cpu.registers, impl_->context);
     if (impl_->context.fault != Fault::none) {
-      const auto failed = impl_->failed({.pc = result.pc});
-      result.fault = failed.fault;
-      result.address = failed.address;
-      result.value = failed.value;
-      result.access_size = failed.access_size;
+      result = impl_->failed_event(result);
     } else {
       result.accepted = true;
       impl_->context.progress.estimated_cycles += reuse ? 6U : 9U;
@@ -477,6 +508,7 @@ EventResult Core::resume_from_stop() {
     throw;
   }
   impl_->active = false;
+  if (impl_->context.fault != Fault::none) { return impl_->failed_event(result); }
   result.accepted = true;
   return result;
 }

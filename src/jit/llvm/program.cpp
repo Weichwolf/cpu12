@@ -4,6 +4,7 @@
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
 #include "immutable.hpp"
+#include "instruction.hpp"
 #include "jit/block.hpp"
 #include "jit/llvm/artifact.hpp"
 #include "jit/llvm/lifetime.hpp"
@@ -211,6 +212,11 @@ LLVMErrorRef measure_object(void *owner, LLVMMemoryBufferRef *buffer) noexcept {
 
 class Program::Impl {
 public:
+  struct Entry {
+    const void *function;
+    Instruction instruction;
+  };
+
   std::vector<std::vector<BlockInstruction>>
   prepare(const std::span<const BlockInstruction> instructions, const ProgramMemory memory) {
     std::vector<std::vector<BlockInstruction>> optimizing;
@@ -227,7 +233,7 @@ public:
 
   std::uint64_t native_bytes = 0;
   Engine engine;
-  std::map<Address, const void *> entries;
+  std::map<Address, Entry> entries;
   std::map<Address, std::string> symbols;
   std::vector<std::byte> bitcode, object;
   std::map<Address, std::vector<Encoding>> sources;
@@ -300,7 +306,9 @@ Program::Program(const std::span<const BlockInstruction> instructions, const Pro
     LLVMOrcExecutorAddress symbol = 0;
     require(LLVMOrcLLJITLookup(impl_->engine.get(), &symbol, name(region).c_str()));
     for (const auto &operation : region) {
-      impl_->entries.emplace(operation.pc, std::bit_cast<const void *>(symbol));
+      impl_->entries.emplace(operation.pc,
+                             Impl::Entry{.function = std::bit_cast<const void *>(symbol),
+                                         .instruction = operation.instruction});
       if (options.output == ArtifactOutput::native) {
         impl_->symbols.emplace(operation.pc, name(region));
       }
@@ -311,12 +319,17 @@ Program::Program(const std::span<const BlockInstruction> instructions, const Pro
 Program::~Program() = default;
 
 const void *Program::entry(const Address address) const {
-  return impl_->entries.at(address);
+  return impl_->entries.at(address).function;
 }
 
 const void *Program::find(const Address address) const {
   const auto found = impl_->entries.find(address);
-  return found != impl_->entries.end() ? found->second : nullptr;
+  return found != impl_->entries.end() ? found->second.function : nullptr;
+}
+
+const Instruction *Program::instruction(const Address address) const noexcept {
+  const auto found = impl_->entries.find(address);
+  return found != impl_->entries.end() ? &found->second.instruction : nullptr;
 }
 
 std::string_view Program::symbol(const Address address) const {

@@ -11,11 +11,20 @@
 #include <span>
 
 namespace cpu12::detail {
+namespace llvm19 {
+class ImageProgram;
+}
+
 class Jit {
 public:
   explicit Jit(const Memory &ram);
   ~Jit();
   void set_memory(const Memory &memory);
+  void install(std::shared_ptr<const llvm19::ImageProgram> image,
+               std::uint64_t variant,
+               std::span<const InterruptRequest> interrupts);
+  [[nodiscard]] bool requires_image() const noexcept;
+  [[nodiscard]] Fault validate_instruction(Address pc, std::span<const Byte> bytes) const;
   [[nodiscard]] PreparationReport prepare(std::span<const Address> established_entries);
   [[nodiscard]] const Memory &memory() const noexcept;
   [[nodiscard]] const MemoryBinding *bindings() const noexcept;
@@ -26,6 +35,8 @@ public:
   execute(std::span<const std::uint8_t> bytes, Registers &registers, NativeContext &context);
   [[nodiscard]] std::optional<NativeResult>
   run_block(std::uint32_t budget, Registers &registers, NativeContext &context);
+  [[nodiscard]] NativeResult
+  run_prepared(std::uint32_t budget, Registers &registers, NativeContext &context);
   void interrupt(InterruptRequest request, Registers &registers, NativeContext &context);
   void resume_stop(Registers &registers, NativeContext &context);
   [[nodiscard]] Statistics statistics() const noexcept;

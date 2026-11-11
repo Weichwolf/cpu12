@@ -37,20 +37,37 @@ Development always runs complete AOT/optimization. Preserve validated code
 artifacts for operational startup reuse, with exact code/binding/host identity
 and safe relocation. Rebuild rejected artifacts before execution.
 
-`Core::prepare(entries)` analyzes an immutable code/mapping view without guest
-execution, real I/O or architectural state/time changes. Lift the complete known
-executable program into semantic LLVM 19 IR, optimize connected functions and
-loops with target-aware O3, and install code against validated bindings.
-Fuse compatible consumer-owned host IR before optimization. Keep LLVM handles
-private and original memory/device effects ordered.
+Declare a `CodeImage` with complete instruction streams, valid entries and
+separate source-variant IDs. Keep readable inline data outside instruction
+streams; a saved call return address may name data. Supply pointer-free
+`VariantLayout` descriptors and real interrupt vector/kind contracts through
+`CompileOptions`. `Core::compile(image, options)` owns the input descriptions,
+translates every declared instruction start and known variant, and returns a
+shareable `NativeImage`. Reject missing lowering, inconsistent code/overlaps,
+undeclared encoded targets and incompatible layouts before execution.
 
-Require complete translation before execution; report a gap with code identity,
-address and reason. Distinguish total executable coverage from optimization
-coverage. Include interrupt/indirect entries and known loader/template variants;
-preserve original writes while selecting prepared native code. Keep mutable data
-in borrowed host RAM and retain observable program words. Compilation and
-validated artifact loading run on a stopped owner; code/cache identity includes
-input hashes, binding ABI, compiler and host target/features.
+Install a concrete prepared variant on its stopped execution owner with
+`Core::install(image, variant)`. Validate its actual immutable source bytes and
+memory layout, bind instance RAM, and prepare hardware IRQ frames before
+publishing the binding. Installation preserves architectural state, musical time
+and device state. The Core retains shared code ownership after the caller's
+image handle expires.
+
+Require prepared entries for `run`, `step` and explicit instruction execution;
+`Fault::unprepared_execution` reports an unknown PC or undeclared event contract
+without decoding, emitting or replaying an instruction. An explicit
+`Core::set_memory` invalidates the installed binding even when pointers are
+reused; install a matching prepared variant before resuming. Reject a failed
+installation without changing the previous binding. Register replacement or a
+recovered reset clears a latched architectural fault; installing code does not.
+
+Keep mutable data in borrowed host RAM and retain observable program reads and
+writes. Select prepared executable variants at real loader/write boundaries.
+Fuse compatible consumer-owned host IR before LLVM O3 and preserve actual I/O
+ordering. Export linkable bitcode/objects through that same pipeline; keep LLVM
+handles private. Exact image/binding identity includes source bytes, ABI, compiler
+and native target/features. Compilation and validated artifact loading run before
+playback; development always executes the complete compilation pipeline.
 
 ## Use
 
@@ -68,19 +85,27 @@ target_link_libraries(your_app PRIVATE cpu12::core)
 #include <span>
 
 int main() {
+  constexpr std::array<cpu12::Byte, 3> program{0xa7, 0x20, 0xfe};
+  constexpr std::array<cpu12::Address, 1> entries{0};
+  const std::array code{cpu12::CodeSpan{.address = 0, .words = program}};
+  const std::array variants{cpu12::CodeVariant{.id = 0, .code = code, .entries = entries}};
+  const std::array layout{
+      cpu12::RegionLayout{.first = 0, .size = program.size(), .writable = false},
+      cpu12::RegionLayout{.first = program.size(),
+                           .size = cpu12::address_bytes - program.size()}};
+  const std::array layouts{cpu12::VariantLayout{.id = 0, .memory = layout}};
+  const auto image = cpu12::Core::compile({.variants = variants},
+                                         {.memory = layouts, .interrupts = {}});
+
   std::array<cpu12::Byte, cpu12::address_bytes> ram{};
-  constexpr std::array<cpu12::Byte, 3> program{0xa7, 0x18, 0x3e}; // NOP; STOP
   std::ranges::copy(program, ram.begin());
   const std::array regions{
       cpu12::Ram{.bytes = std::span(ram).first(program.size()), .writable = false},
-      cpu12::Ram{.first = static_cast<cpu12::Address>(program.size()),
-                 .bytes = std::span(ram).subspan(program.size())}};
+      cpu12::Ram{.first = program.size(), .bytes = std::span(ram).subspan(program.size())}};
   cpu12::Core core(cpu12::Memory::mapped(regions));
-  const std::array entries{cpu12::Address{0}};
-  const auto prepared = core.prepare(entries);
-  if (prepared.failure.fault != cpu12::Fault::none || prepared.unresolved_entries != 0) { return 1; }
-  const auto result = core.run();
-  return result.fault == cpu12::Fault::none ? 0 : 1;
+  core.install(image, 0);
+  const auto result = core.run(10);
+  return result.fault == cpu12::Fault::none && result.retired == 10 ? 0 : 1;
 }
 ```
 

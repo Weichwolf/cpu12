@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #pragma once
 #include "cpu12/memory.hpp"
+#include "instruction.hpp"
 #include "jit/block.hpp"
 
 #include <cstddef>
@@ -33,6 +34,7 @@ public:
   Program &operator=(const Program &) = delete;
   [[nodiscard]] const void *entry(Address address) const;
   [[nodiscard]] const void *find(Address address) const;
+  [[nodiscard]] const Instruction *instruction(Address address) const noexcept;
   [[nodiscard]] std::string_view symbol(Address address) const;
   [[nodiscard]] std::span<const std::byte> bitcode() const noexcept;
   [[nodiscard]] std::span<const std::byte> object() const noexcept;
