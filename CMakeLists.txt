@@ -81,6 +81,7 @@ add_library(cpu12_core STATIC
   src/jit/llvm/arithmetic.cpp src/jit/llvm/lift.cpp src/jit/llvm/program.cpp src/jit/llvm/regions.cpp
   src/jit/llvm/memory.cpp
   src/jit/llvm/indexed.cpp
+  src/jit/llvm/flow.cpp
   src/jit/llvm/registers.cpp
   src/jit/llvm/stack.cpp
   src/jit/image.cpp src/jit/llvm/image.cpp
@@ -233,6 +234,11 @@ if(BUILD_TESTING AND CPU12_BUILD_TESTING)
   target_link_libraries(cpu12-preparation-lea-test PRIVATE cpu12::core)
   add_test(NAME optimized-effective-addresses COMMAND cpu12-preparation-lea-test)
   set_tests_properties(optimized-effective-addresses PROPERTIES TIMEOUT 120)
+  add_executable(cpu12-native-flow-test test/jit/native_flow_test.cpp test/jit/native_flow_reuse.cpp)
+  target_include_directories(cpu12-native-flow-test PRIVATE src test/support)
+  target_link_libraries(cpu12-native-flow-test PRIVATE cpu12::core)
+  add_test(NAME prepared-native-transfers COMMAND cpu12-native-flow-test)
+  set_tests_properties(prepared-native-transfers PROPERTIES TIMEOUT 30)
   add_library(cpu12-image-bindings OBJECT test/jit/image_bindings.cpp)
   target_include_directories(cpu12-image-bindings PRIVATE include src)
   # Semantic IR receives native instrumentation after fusion in Program.

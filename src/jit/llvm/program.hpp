@@ -39,7 +39,7 @@ public:
   [[nodiscard]] std::span<const std::byte> bitcode() const noexcept;
   [[nodiscard]] std::span<const std::byte> object() const noexcept;
   // Generated functions contain no captured RAM pointers. Reuse requires the
-  // complete immutable region's exact bytes and any lowered memory topology.
+  // complete transitive native code and any lowered memory topology.
   [[nodiscard]] const void *find(std::span<const BlockInstruction> region,
                                  const Memory &memory) const;
   [[nodiscard]] std::uint64_t native_bytes() const noexcept;

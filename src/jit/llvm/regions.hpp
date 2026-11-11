@@ -6,8 +6,8 @@
 #include <vector>
 
 namespace cpu12::detail::llvm19 {
-// Keep every established direct edge inside a region. Unsupported boundaries
-// separate unrelated native functions; neither budgets nor length split code.
+// Keep call entries distinct; established cross-region edges become native
+// transfers. Neither budgets nor instruction counts split code.
 [[nodiscard]] std::vector<std::vector<BlockInstruction>>
 regions(std::span<const BlockInstruction> instructions);
 }

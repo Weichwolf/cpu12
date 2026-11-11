@@ -2,12 +2,14 @@
 #include "jit/llvm/regions.hpp"
 
 #include "cpu12/memory.hpp"
+#include "instruction.hpp"
 #include "jit/block.hpp"
 #include "jit/preparation.hpp"
 
 #include <algorithm>
 #include <cstddef>
 #include <map>
+#include <set>
 #include <span>
 #include <utility>
 #include <vector>
@@ -45,13 +47,21 @@ private:
 std::vector<std::vector<BlockInstruction>>
 regions(const std::span<const BlockInstruction> instructions) {
   std::map<Address, std::size_t> positions;
+  std::set<Address> heads;
   for (std::size_t index = 0; index < instructions.size(); ++index) {
     positions.emplace(instructions[index].pc, index);
+    if (instructions[index].instruction.kind == Kind::call) {
+      const auto flow = successors(instructions[index]);
+      if (flow.count > 1) { heads.insert(flow.direct[flow.count - 1]); }
+    }
   }
   Components components(instructions.size());
   for (std::size_t index = 0; index < instructions.size(); ++index) {
     const auto flow = successors(instructions[index]);
-    for (const auto address : std::span(flow.direct).first(flow.count)) {
+    for (unsigned edge = 0; edge < flow.count; ++edge) {
+      if (instructions[index].instruction.kind == Kind::call && edge != 0) { continue; }
+      const auto address = flow.direct[edge];
+      if (heads.contains(address)) { continue; }
       const auto found = positions.find(address);
       if (found != positions.end()) { components.connect(index, found->second); }
     }

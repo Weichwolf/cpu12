@@ -7,12 +7,14 @@
 #include "instruction.hpp"
 #include "jit/block.hpp"
 #include "jit/llvm/artifact.hpp"
+#include "jit/llvm/flow.hpp"
 #include "jit/llvm/lifetime.hpp"
 #include "jit/llvm/lift.hpp"
 #include "jit/llvm/memory.hpp"
 #include "jit/llvm/native.hpp"
 #include "jit/llvm/regions.hpp"
 #include "jit/llvm/stack.hpp"
+#include "jit/preparation.hpp"
 #include "runtime.hpp"
 
 #include "llvm-c/Analysis.h"
@@ -35,6 +37,7 @@
 #include <iostream>
 #include <map>
 #include <memory>
+#include <set>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -135,6 +138,23 @@ std::vector<Encoding> capture(const std::span<const BlockInstruction> region,
   return result;
 }
 
+bool matches(const std::span<const Encoding> source, const Memory &memory) {
+  for (const auto &operation : source) {
+    for (unsigned offset = 0; offset < operation.length; ++offset) {
+      const auto address = static_cast<Address>(operation.pc + offset);
+      const auto bytes = immutable_bytes(memory, address);
+      if (bytes.empty() || bytes.front() != operation.bytes[offset]) { return false; }
+    }
+  }
+  return true;
+}
+
+bool needs_bindings(const Instruction &instruction) {
+  if (instruction.kind == Kind::effective_address) { return false; }
+  if (instruction.kind == Kind::jump) { return instruction.indexed.indirect; }
+  return memory_operand(instruction) || stack_operand(instruction) || frame_operand(instruction);
+}
+
 Owner<LLVMTargetMachineRef, LLVMDisposeTargetMachine> target_machine(const ArtifactOutput output) {
   const Owner<char *, LLVMDisposeMessage> triple(LLVMGetDefaultTargetTriple());
   const Owner<char *, LLVMDisposeMessage> cpu(LLVMGetHostCPUName());
@@ -219,17 +239,62 @@ public:
 
   std::vector<std::vector<BlockInstruction>>
   prepare(const std::span<const BlockInstruction> instructions, const ProgramMemory memory) {
-    std::vector<std::vector<BlockInstruction>> optimizing;
-    for (auto &region : regions(instructions)) {
+    auto optimizing = regions(instructions);
+    std::map<Address, Address> owners;
+    for (const auto &region : optimizing) {
+      for (const auto &operation : region) { owners.emplace(operation.pc, region.front().pc); }
+    }
+    for (const auto &region : optimizing) {
       sources.emplace(region.front().pc, capture(region, memory.source));
-      const bool uses_memory = std::ranges::any_of(region, [](const auto &operation) {
-        return memory_operand(operation.instruction) || stack_operand(operation.instruction) ||
-               frame_operand(operation.instruction);
-      });
+      const bool uses_memory = std::ranges::any_of(
+          region, [](const auto &operation) { return needs_bindings(operation.instruction); });
       if (uses_memory) { layouts.emplace(region.front().pc, layout(memory.bindings)); }
-      optimizing.push_back(std::move(region));
+      dependencies(region, owners);
     }
     return optimizing;
+  }
+
+  void dependencies(const std::span<const BlockInstruction> region,
+                    const std::map<Address, Address> &owners) {
+    const auto head = region.front().pc;
+    for (const auto &operation : region) {
+      const auto flow = successors(operation);
+      const auto kind = operation.instruction.kind;
+      if (flow.indirect && kind != Kind::wait && kind != Kind::stop &&
+          kind != Kind::return_interrupt) {
+        indirect.insert(head);
+      }
+      for (const auto address : std::span(flow.direct).first(flow.count)) {
+        const auto found = owners.find(address);
+        if (found != owners.end() && found->second != head) { targets[head].insert(found->second); }
+      }
+    }
+  }
+
+  [[nodiscard]] bool binding(const Address head, const Memory &memory) const {
+    const auto found = layouts.find(head);
+    return matches(sources.at(head), memory) &&
+           (found == layouts.end() || found->second == layout(memory));
+  }
+
+  [[nodiscard]] bool dependencies(const Address head, const Memory &memory) const {
+    std::set<Address> visited;
+    std::vector<Address> pending{head};
+    while (!pending.empty()) {
+      const auto unit = pending.back();
+      pending.pop_back();
+      if (!visited.insert(unit).second) { continue; }
+      if (!binding(unit, memory)) { return false; }
+      if (indirect.contains(unit)) {
+        return std::ranges::all_of(
+            sources, [&](const auto &source) { return binding(source.first, memory); });
+      }
+      const auto found = targets.find(unit);
+      if (found != targets.end()) {
+        pending.insert(pending.end(), found->second.begin(), found->second.end());
+      }
+    }
+    return true;
   }
 
   std::uint64_t native_bytes = 0;
@@ -239,6 +304,8 @@ public:
   std::vector<std::byte> bitcode, object;
   std::map<Address, std::vector<Encoding>> sources;
   std::map<Address, std::vector<Layout>> layouts;
+  std::map<Address, std::set<Address>> targets;
+  std::set<Address> indirect;
 };
 
 Program::Program(const std::span<const BlockInstruction> instructions, const Memory &memory)
@@ -264,11 +331,11 @@ Program::Program(const std::span<const BlockInstruction> instructions, const Pro
   const auto name = [&](const auto &region) {
     return options.prefix + std::to_string(region.front().pc);
   };
-  for (const auto &region : functions) {
-    auto *function =
-        lift(module.get(), context, region, options.memory.bindings, name(region).c_str());
-    if (options.output == ArtifactOutput::native) { native_attributes(function); }
-  }
+  const Flow flow(module.get(),
+                  functions,
+                  options.memory.bindings,
+                  options.prefix,
+                  options.output == ArtifactOutput::native);
   link_bindings(module.get(), options.bindings);
   if (options.output == ArtifactOutput::native) { impl_->bitcode = llvm19::bitcode(module.get()); }
   optimize(module.get(), machine.get());
@@ -350,8 +417,7 @@ const void *Program::find(const std::span<const BlockInstruction> region,
   if (region.empty()) { return nullptr; }
   const auto found = impl_->sources.find(region.front().pc);
   if (found == impl_->sources.end() || found->second != capture(region, memory)) { return nullptr; }
-  const auto binding = impl_->layouts.find(region.front().pc);
-  if (binding != impl_->layouts.end() && binding->second != layout(memory)) { return nullptr; }
+  if (!impl_->dependencies(region.front().pc, memory)) { return nullptr; }
   return entry(region.front().pc);
 }
 

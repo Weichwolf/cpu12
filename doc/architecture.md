@@ -98,9 +98,15 @@ work; immutable images may serve independent execution owners. Keep source IR,
 compiler state, executable ownership and per-instance mutable data distinct.
 Never shut down LLVM while any image retains LLVM objects or code.
 
-Partition prepared code by connected established direct control flow, not length
-or execution grants. Keep independent regions in separate functions within one
-module/runtime, with region-specific native entry routing. Verify our generated
+Partition prepared code at natural call entries and control-flow boundaries,
+not length or execution grants. Keep distinct call entries in native functions
+within one module/runtime. Preserve every edge inside a function or as a direct
+native transfer; optimize all eligible units and bindings together with O3.
+Native transfers retain cumulative progress and the last completed operation,
+including when the next entry reaches its quota/deadline before retiring work.
+Indirect transfers select only prepared native targets. Keep the host stack
+bounded over cycles and preserve original observable stack reads/writes;
+compiler helpers may consume return addresses as data. Verify our generated
 IR at optimization boundaries; per-pass verification of packaged transforms is
 a compiler diagnostic, not production execution work. Extending reachability
 retains existing immutable translations and compiles only new entries.
@@ -109,7 +115,10 @@ an ordinary emitter is not a fallback for missing AOT lowering. Hardware event
 frame bindings are cold owner work and preserve their precise native contracts.
 Natural cycles, including one-opcode cycles, retain optimizing loop lowering.
 Rebinding unrelated RAM must not retranslate code whose complete instruction
-region and compiled binding requirements remain unchanged. Captured RAM pointers
+and binding dependencies remain unchanged. Direct native callees and prepared
+indirect targets are transitive code dependencies: changing or losing their
+source/binding invalidates a retained caller too. Keep genuinely independent
+code reusable. Captured RAM pointers
 require matching grants; parameterized functions use the current context.
 
 Keep live values in GPR/SIMD registers across instructions and backedges. Preserve

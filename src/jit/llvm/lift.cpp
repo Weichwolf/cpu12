@@ -7,6 +7,7 @@
 #include "instruction.hpp"
 #include "jit/block.hpp"
 #include "jit/llvm/builder.hpp"
+#include "jit/llvm/flow.hpp"
 #include "jit/llvm/indexed.hpp"
 #include "jit/llvm/memory.hpp"
 #include "jit/llvm/registers.hpp"
@@ -29,53 +30,61 @@ namespace cpu12::detail::llvm19 {
 namespace {
 constexpr std::uint32_t carry = 1, overflow = 2, zero = 4, negative = 8;
 
-LLVMValueRef make_function(LLVMModuleRef module, LLVMContextRef context, const char *name) {
-  auto *pointer = LLVMPointerTypeInContext(context, 0);
-  std::array fields{LLVMInt64TypeInContext(context), LLVMInt64TypeInContext(context)};
-  auto *result = LLVMStructTypeInContext(context, fields.data(), fields.size(), 0);
-  std::array parameters{pointer, pointer, LLVMInt32TypeInContext(context)};
-  auto *type = LLVMFunctionType(result, parameters.data(), parameters.size(), 0);
-  return LLVMAddFunction(module, name, type);
-}
-
 class FlowLifter {
 public:
-  FlowLifter(LLVMModuleRef module,
-             LLVMContextRef context,
+  FlowLifter(LLVMValueRef function,
+             const Flow &flow,
              const std::span<const BlockInstruction> instructions,
-             const Memory &memory,
-             const char *name)
-      : context_(context),
-        function_(make_function(module, context, name)),
-        builder_(context, LLVMAppendBasicBlockInContext(context, function_, "entry")),
+             const Memory &memory)
+      : context_(LLVMGetModuleContext(LLVMGetGlobalParent(function))),
+        function_(function),
+        flow_(flow),
+        builder_(context_, LLVMAppendBasicBlockInContext(context_, function_, "entry")),
         instructions_(instructions),
         memory_(memory),
         registers_(LLVMGetParam(function_, 0)),
         owner_(LLVMGetParam(function_, 1)),
         budget_(LLVMGetParam(function_, 2)),
-        done_(LLVMAppendBasicBlockInContext(context, function_, "done")),
-        dispatch_(LLVMAppendBasicBlockInContext(context, function_, "dispatch")) {}
+        done_(LLVMAppendBasicBlockInContext(context_, function_, "done")),
+        dispatch_(LLVMAppendBasicBlockInContext(context_, function_, "dispatch")),
+        outward_(LLVMAppendBasicBlockInContext(context_, function_, "outward")) {}
 
-  LLVMValueRef lift() {
+  void lift() {
     initialize();
     for (const auto &operation : instructions_) {
       blocks_.emplace(operation.pc,
                       LLVMAppendBasicBlockInContext(
                           context_, function_, ("pc" + std::to_string(operation.pc)).c_str()));
     }
-    LLVMBuildBr(builder_.get(), dispatch_);
+    dispatch(done_);
     LLVMPositionBuilderAtEnd(builder_.get(), dispatch_);
-    auto *dispatch = LLVMBuildSwitch(builder_.get(),
-                                     load(pc_, builder_.getInt16Ty()),
-                                     done_,
-                                     static_cast<unsigned>(blocks_.size()));
-    for (const auto &[pc, block] : blocks_) { LLVMAddCase(dispatch, builder_.getInt16(pc), block); }
+    dispatch(outward_);
     for (const auto &operation : instructions_) { emit(operation); }
+    for (const auto &[pc, block] : bridges_) { transfer(block, flow_.target(pc)); }
+    transfer(outward_, flow_.dispatcher());
     finish();
-    return function_;
   }
 
 private:
+  void dispatch(LLVMBasicBlockRef missing) {
+    auto *select = LLVMBuildSwitch(builder_.get(),
+                                   load(pc_, builder_.getInt16Ty()),
+                                   missing,
+                                   static_cast<unsigned>(blocks_.size()));
+    for (const auto &[pc, block] : blocks_) { LLVMAddCase(select, builder_.getInt16(pc), block); }
+  }
+
+  void transfer(LLVMBasicBlockRef block, LLVMValueRef target) {
+    LLVMPositionBuilderAtEnd(builder_.get(), block);
+    publish();
+    std::array arguments{registers_,
+                         owner_,
+                         budget_,
+                         load(retired_, builder_.getInt32Ty()),
+                         load(location_, builder_.getInt64Ty())};
+    flow_.transfer(builder_, target, arguments);
+  }
+
   LLVMValueRef address(LLVMValueRef base, std::size_t offset) {
     return builder_.CreateGEP(builder_.getInt8Ty(), base, builder_.getInt64(offset));
   }
@@ -121,9 +130,8 @@ private:
         sp_);
     auto *initial_pc = field(offsetof(cpu12::Registers, pc), builder_.getInt16Ty());
     builder_.CreateStore(initial_pc, pc_);
-    builder_.CreateStore(builder_.CreateZExt(initial_pc, LLVMInt64TypeInContext(context_)),
-                         location_);
-    builder_.CreateStore(builder_.getInt32(0), retired_);
+    builder_.CreateStore(LLVMGetParam(function_, 4), location_);
+    builder_.CreateStore(LLVMGetParam(function_, 3), retired_);
     builder_.CreateStore(load(address(owner_, progress_offset), LLVMInt64TypeInContext(context_)),
                          cycles_);
     deadline_ = load(address(owner_, offsetof(cpu12::detail::NativeContext, cycle_deadline)),
@@ -477,9 +485,15 @@ private:
     return access.join(result);
   }
 
-  [[nodiscard]] LLVMBasicBlockRef target(Address address) const {
+  [[nodiscard]] LLVMBasicBlockRef target(Address address) {
     const auto found = blocks_.find(address);
-    return found == blocks_.end() ? done_ : found->second;
+    if (found != blocks_.end()) { return found->second; }
+    if (flow_.target(address) == nullptr) { return done_; }
+    const auto [bridge, inserted] = bridges_.try_emplace(address, nullptr);
+    if (inserted) {
+      bridge->second = LLVMAppendBasicBlockInContext(context_, function_, "transfer");
+    }
+    return bridge->second;
   }
 
   void publish() {
@@ -526,27 +540,27 @@ private:
                                           offsetof(cpu12::Progress, estimated_cycles);
   LLVMContextRef context_;
   LLVMValueRef function_;
+  const Flow &flow_;
   Builder builder_;
   const std::span<const BlockInstruction> instructions_;
   const Memory &memory_;
   LLVMValueRef registers_, owner_, budget_;
-  LLVMBasicBlockRef done_, dispatch_;
+  LLVMBasicBlockRef done_, dispatch_, outward_;
   LLVMValueRef d_ = nullptr, ccr_ = nullptr, pc_ = nullptr, cycles_ = nullptr;
   LLVMValueRef x_ = nullptr, y_ = nullptr;
   LLVMValueRef sp_ = nullptr;
   LLVMValueRef retired_ = nullptr, location_ = nullptr, deadline_ = nullptr;
   LLVMValueRef boundary_ = nullptr;
-  std::map<cpu12::Address, LLVMBasicBlockRef> blocks_;
+  std::map<cpu12::Address, LLVMBasicBlockRef> blocks_, bridges_;
 };
 
 }
 
-LLVMValueRef lift(LLVMModuleRef module,
-                  LLVMContextRef context,
-                  std::span<const BlockInstruction> instructions,
-                  const Memory &memory,
-                  const char *name) {
-  return FlowLifter(module, context, instructions, memory, name).lift();
+void lift(LLVMValueRef function,
+          const Flow &flow,
+          std::span<const BlockInstruction> instructions,
+          const Memory &memory) {
+  FlowLifter(function, flow, instructions, memory).lift();
 }
 
 bool supports(const Instruction &instruction) noexcept {

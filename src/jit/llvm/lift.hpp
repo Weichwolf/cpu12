@@ -9,6 +9,8 @@
 #include <span>
 
 namespace cpu12::detail::llvm19 {
+class Flow;
+
 struct Values {
   LLVMValueRef d;
   LLVMValueRef x;
@@ -24,9 +26,8 @@ void lower(Builder &builder,
            Instruction instruction,
            LLVMValueRef operand = nullptr);
 [[nodiscard]] bool supports(const Instruction &instruction) noexcept;
-[[nodiscard]] LLVMValueRef lift(LLVMModuleRef module,
-                                LLVMContextRef context,
-                                std::span<const BlockInstruction> instructions,
-                                const Memory &memory,
-                                const char *name);
+void lift(LLVMValueRef function,
+          const Flow &flow,
+          std::span<const BlockInstruction> instructions,
+          const Memory &memory);
 }
