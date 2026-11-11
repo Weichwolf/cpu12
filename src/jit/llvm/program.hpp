@@ -16,7 +16,7 @@ struct ProgramMemory {
   Memory source, bindings;
 };
 
-enum class ArtifactOutput : std::uint8_t { none, native };
+enum class ArtifactOutput : std::uint8_t { none, native, semantic };
 
 struct ProgramOptions {
   ProgramMemory memory;
@@ -41,6 +41,7 @@ public:
   [[nodiscard]] std::span<const std::byte> bitcode() const noexcept;
   [[nodiscard]] std::span<const std::byte> object() const noexcept;
   [[nodiscard]] const void *event(std::uint64_t key) const;
+  [[nodiscard]] std::string_view event_symbol(std::uint64_t key) const;
   // Generated functions contain no captured RAM pointers. Reuse requires the
   // complete transitive native code and any lowered memory topology.
   [[nodiscard]] const void *find(std::span<const BlockInstruction> region,

@@ -164,7 +164,7 @@ Owner<LLVMTargetMachineRef, LLVMDisposeTargetMachine> target_machine(const Artif
   const Owner<char *, LLVMDisposeMessage> cpu(LLVMGetHostCPUName());
   const Owner<char *, LLVMDisposeMessage> features(LLVMGetHostCPUFeatures());
   const auto native =
-      output == ArtifactOutput::native ? native_features() : std::string(features.get());
+      output != ArtifactOutput::none ? native_features() : std::string(features.get());
   LLVMTargetRef target = nullptr;
   char *raw = nullptr;
   const auto status = LLVMGetTargetFromTriple(triple.get(), &target, &raw);
@@ -177,7 +177,7 @@ Owner<LLVMTargetMachineRef, LLVMDisposeTargetMachine> target_machine(const Artif
       native.c_str(),
       LLVMCodeGenLevelAggressive,
       LLVMRelocPIC,
-      output == ArtifactOutput::native ? LLVMCodeModelSmall : LLVMCodeModelJITDefault));
+      output != ArtifactOutput::none ? LLVMCodeModelSmall : LLVMCodeModelJITDefault));
   if (!machine) { throw std::runtime_error("Cannot create LLVM 19 native target machine"); }
   return machine;
 }
@@ -305,6 +305,7 @@ public:
   Engine engine;
   std::map<Address, Entry> entries;
   std::map<std::uint64_t, const void *> events;
+  std::map<std::uint64_t, std::string> event_symbols;
   std::map<Address, std::string> symbols;
   std::vector<std::byte> bitcode, object;
   std::map<Address, std::vector<Encoding>> sources;
@@ -342,15 +343,22 @@ Program::Program(const std::span<const BlockInstruction> instructions, const Pro
                   functions,
                   options.memory.bindings,
                   options.prefix,
-                  options.output == ArtifactOutput::native);
-  const auto events = options.prepare_events ? lift_events(module.get(),
-                                                           options.memory.bindings,
-                                                           options.prefix,
-                                                           options.interrupts,
-                                                           options.output == ArtifactOutput::native)
-                                             : std::map<std::uint64_t, std::string>{};
+                  options.output != ArtifactOutput::none);
+  impl_->event_symbols = options.prepare_events
+                             ? lift_events(module.get(),
+                                           options.memory.bindings,
+                                           options.prefix,
+                                           options.interrupts,
+                                           options.output != ArtifactOutput::none)
+                             : std::map<std::uint64_t, std::string>{};
   link_bindings(module.get(), options.bindings);
-  if (options.output == ArtifactOutput::native) { impl_->bitcode = llvm19::bitcode(module.get()); }
+  if (options.output != ArtifactOutput::none) {
+    for (const auto &region : functions) {
+      for (const auto &operation : region) { impl_->symbols.emplace(operation.pc, name(region)); }
+    }
+    impl_->bitcode = llvm19::bitcode(module.get());
+  }
+  if (options.output == ArtifactOutput::semantic) { return; }
   optimize(module.get(), machine.get());
   if (options.output == ArtifactOutput::native) {
     impl_->object = llvm19::object(module.get(), machine.get());
@@ -390,12 +398,9 @@ Program::Program(const std::span<const BlockInstruction> instructions, const Pro
       impl_->entries.emplace(operation.pc,
                              Impl::Entry{.function = std::bit_cast<const void *>(symbol),
                                          .instruction = operation.instruction});
-      if (options.output == ArtifactOutput::native) {
-        impl_->symbols.emplace(operation.pc, name(region));
-      }
     }
   }
-  for (const auto &[key, event_name] : events) {
+  for (const auto &[key, event_name] : impl_->event_symbols) {
     LLVMOrcExecutorAddress symbol = 0;
     require(LLVMOrcLLJITLookup(impl_->engine.get(), &symbol, event_name.c_str()));
     impl_->events.emplace(key, std::bit_cast<const void *>(symbol));
@@ -433,6 +438,10 @@ std::span<const std::byte> Program::object() const noexcept {
 const void *Program::event(const std::uint64_t key) const {
   const auto found = impl_->events.find(key);
   return found == impl_->events.end() ? nullptr : found->second;
+}
+
+std::string_view Program::event_symbol(const std::uint64_t key) const {
+  return impl_->event_symbols.at(key);
 }
 
 const void *Program::find(const std::span<const BlockInstruction> region,

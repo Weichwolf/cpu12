@@ -104,6 +104,7 @@ int main() {
     binding_contract();
     alternate_streams();
     artifact_contract();
+    semantic_contract();
     wrapping_stream();
     std::cout << "Verified " << count
               << " complete-image native prefixes across variants/owners, "

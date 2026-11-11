@@ -59,5 +59,6 @@ void rejected_images();
 void binding_contract();
 void alternate_streams();
 void artifact_contract();
+void semantic_contract();
 void wrapping_stream();
 }

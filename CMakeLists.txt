@@ -286,7 +286,7 @@ if(BUILD_TESTING AND CPU12_BUILD_TESTING)
   target_compile_options(cpu12-image-bindings PRIVATE -emit-llvm ${cpu12_native_option})
   set_target_properties(cpu12-image-bindings PROPERTIES INTERPROCEDURAL_OPTIMIZATION_RELEASE OFF)
   add_executable(cpu12-image-test test/jit/image_test.cpp test/jit/image_contract_test.cpp
-    test/jit/image_artifact_test.cpp)
+    test/jit/image_artifact_test.cpp test/jit/image_semantic_test.cpp)
   target_include_directories(cpu12-image-test PRIVATE src test/support)
   target_include_directories(cpu12-image-test SYSTEM PRIVATE ${LLVM_INCLUDE_DIRS})
   target_link_libraries(cpu12-image-test PRIVATE cpu12::core LLVM)
