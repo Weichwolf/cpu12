@@ -123,8 +123,9 @@ inline NativeImage compile(const Source &source, const Backing backing) {
   const std::array layouts{VariantLayout{.id = variant_id, .memory = memory}};
   const std::array variants{
       CodeVariant{.id = variant_id, .code = source.spans, .entries = source.entries}};
-  return Core::compile({.variants = variants},
-                       {.memory = layouts, .interrupts = {}, .transitions = {}});
+  return Core::compile(
+      {.variants = variants},
+      {.memory = layouts, .interrupts = {}, .transitions = {}, .callbacks = {}, .bindings = {}});
 }
 
 void bus_cases(const Source &source);

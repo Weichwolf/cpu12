@@ -57,11 +57,11 @@ count caps, budget-specific recompilation, continuous hashing or cache eviction.
 Changed executable identities require an explicit owner transition; unrelated
 programs use a fresh core.
 
-Compile an explicit `CodeImage` through owner-free `Core::compile(image, options)`.
+Lower an explicit `CodeImage` through owner-free `Core::lower(image, options)`.
 Declare all instruction streams and valid entries per source variant, separately
 from readable inline data. A call's saved return address need not be executable.
 Own source bytes, instruction boundaries, layout descriptors and interrupt
-contracts before returning the immutable shareable `NativeImage`. Compile every
+contracts before returning the immutable shareable `SemanticImage`. Lower every
 declared start, including starts not reachable from the supplied root entries;
 reject inconsistent overlaps, missing operands, undeclared encoded targets and
 missing semantic lowering. Pointer-free layouts describe each variant's memory
@@ -70,6 +70,71 @@ Compile the declared IRQ vector/kind push, waiting and returned-frame entries
 plus STOP wake in the same LLVM module as their variant. Reuse the ordinary
 memory lowering and frame-store order; load actual storage through the owner's
 runtime bindings. Link eligible host IR before final O3 for these entries too.
+
+```text
+CodeImage + CompileOptions -> Core::lower -> SemanticImage
+                                                |
+other core IR + concrete host IR ----------------+
+                                                v
+                          consumer native target + joint LLVM O3
+                                                |
+                            one object/native owner + export map
+                                                |
+                 Core::bind(semantic, NativeSymbols) -> NativeImage
+```
+
+`SemanticImage::bitcode()` owns detached LLVM 19 IR before final O3.
+`exports()` provides owned name/ABI views for every guest and event root;
+`identity()` is a content digest. Include original source bytes, entries,
+variants, layouts, transitions, IRQ and callback contracts, exact core source,
+LLVM version, target/features, embedded runtime IR and semantic IR in artifact
+identity. Use an image-derived namespace for roots. Distinct images with equal
+variant IDs must compose without symbol collisions. No runtime Core, borrowed
+RAM, device owner, native TargetMachine, object or execution engine belongs in
+lowering. Default core-owned I/O adapters stay embedded.
+
+The consumer materializer imports both core artifacts and eligible host IR into
+one native compilation. Validate targets/layouts/features and incoming callback
+definitions before linker attribute merging. Preserve every declared guest and
+event root through final O3 and relocation. Resolve every export before
+publication; initialize/finalize the shared native resource once. Guest and
+event entry ABI descriptions identify relocation contracts; consumers never
+invoke those private core entry signatures directly.
+
+Export ABI text starts with `llvm19;cc=<numeric calling convention>;type=<LLVM
+function type>`. Append `;<index>:<LLVM attribute>` for ABI attributes on the
+return value (index zero) and parameters (indices starting at one), in this
+order: signext, zeroext, inreg, sret, byval, byref, inalloca, preallocated, nest,
+swiftself, swifterror, swiftasync, returned. Optimization-inferred attributes are
+not ABI identity. Treat descriptors as versioned opaque contracts; validate
+the actual type, calling convention and ABI attributes before and after O3.
+
+Pass `NativeSymbols{owner, symbols, identity, native_bytes}` to `Core::bind`.
+Supply the exact component identity and complete component-specific export view;
+reject empty owners, wrong identities, missing/extra/duplicate names and null
+addresses. Copy typed entry maps and immutable source/layout/event metadata;
+retain the same `shared_ptr<const void>` owner in every bound component.
+Binding creates no native compiler or Core and borrows no export-name storage.
+Semantic/compiler artifacts and original symbol tables may expire after binding.
+`native_bytes` describes the entire shared owner's text resource. Count it once
+for an instrument, never once per root, variant or bound core.
+
+`CompileOptions::callbacks` selects public I/O roles by external symbol name.
+Derive selected declarations from actual Clang-compiled adapter calls. Keep
+unselected roles on their runtime route. Callback definitions may access public
+Core state, request synchronous yield and use per-instance `Io::owner`; do not
+assume owner/state disjointness. Preserve exact scalar types, calling convention,
+ABI attributes, noexcept and argument guarantees. Reject stronger parameter
+preconditions before importing definitions. Missing selected definitions fail
+materialization, not lowering.
+
+`Core::compile(image, options)` uses the same lower, standalone materialize and
+bind phases. `CompileOptions::bindings` supplies standalone host bitcode only;
+lowering neither parses nor captures it. Standalone bindings contain no absolute
+host pointers, mutable global state or implicit global initialization. Instance
+state arrives through runtime owners. Use the consumer materializer for the
+joint instrument compilation. Rebuild consumers against matching headers and
+libraries when the public value/API layout changes.
 
 Install a selected variant with `Core::install(image, variant)` on its stopped
 owner. Validate original immutable source bytes and the actual complete memory

@@ -21,7 +21,6 @@
 #include "jit/preparation.hpp"
 #include "runtime.hpp"
 
-#include "llvm-c/Analysis.h"
 #include "llvm-c/Core.h"
 #include "llvm-c/Error.h"
 #include "llvm-c/LLJIT.h"
@@ -29,7 +28,6 @@
 #include "llvm-c/Orc.h"
 #include "llvm-c/Target.h"
 #include "llvm-c/TargetMachine.h"
-#include "llvm-c/Transforms/PassBuilder.h"
 #include "llvm-c/Types.h"
 
 #include <algorithm>
@@ -55,13 +53,6 @@ void require(LLVMErrorRef error) {
   if (error == nullptr) { return; }
   const Owner<char *, LLVMDisposeErrorMessage> message(LLVMGetErrorMessage(error));
   throw std::runtime_error(message.get());
-}
-
-void verify(LLVMModuleRef module) {
-  char *raw = nullptr;
-  const auto status = LLVMVerifyModule(module, LLVMReturnStatusAction, &raw);
-  const Owner<char *, LLVMDisposeMessage> message(raw);
-  if (status != 0) { throw std::runtime_error(message.get()); }
 }
 
 void dispose_engine(LLVMOrcLLJITRef engine) noexcept {
@@ -184,29 +175,12 @@ Owner<LLVMTargetMachineRef, LLVMDisposeTargetMachine> target_machine(const Artif
   return machine;
 }
 
-void optimize(LLVMModuleRef module, LLVMTargetMachineRef machine) {
-  const Owner<LLVMPassBuilderOptionsRef, LLVMDisposePassBuilderOptions> options(
-      LLVMCreatePassBuilderOptions());
-#if __has_feature(address_sanitizer)
-  constexpr std::string_view attribute = "sanitize_address";
-  for (auto *function = LLVMGetFirstFunction(module); function != nullptr;
-       function = LLVMGetNextFunction(function)) {
-    if (LLVMIsDeclaration(function) == 0) {
-      LLVMAddAttributeAtIndex(function,
-                              static_cast<LLVMAttributeIndex>(LLVMAttributeFunctionIndex),
-                              LLVMCreateEnumAttribute(LLVMGetModuleContext(module),
-                                                      LLVMGetEnumAttributeKindForName(
-                                                          attribute.data(), attribute.size()),
-                                                      0));
-    }
-  }
-#endif
-  verify(module);
-  require(LLVMRunPasses(module, "default<O3>", machine, options.get()));
-#if __has_feature(address_sanitizer)
-  require(LLVMRunPasses(module, "asan", machine, options.get()));
-#endif
-  verify(module);
+TargetDescription description(LLVMTargetMachineRef machine) {
+  if (machine == nullptr) { return runtime_target(); }
+  const Owner<char *, LLVMDisposeMessage> triple(LLVMGetDefaultTargetTriple());
+  const Owner<LLVMTargetDataRef, LLVMDisposeTargetData> data(LLVMCreateTargetDataLayout(machine));
+  const Owner<char *, LLVMDisposeMessage> layout(LLVMCopyStringRepOfTargetData(data.get()));
+  return {.triple = triple.get(), .layout = layout.get()};
 }
 
 LLVMErrorRef measure_object(void *owner, LLVMMemoryBufferRef *buffer) noexcept {
@@ -305,6 +279,7 @@ public:
 
   std::uint64_t native_bytes = 0;
   Engine engine;
+  std::shared_ptr<const void> owner;
   std::map<Address, Entry> entries;
   std::map<std::uint64_t, const void *> events;
   std::map<std::uint64_t, std::string> event_symbols;
@@ -328,18 +303,16 @@ Program::Program(const std::span<const BlockInstruction> instructions, const Pro
   const auto functions = impl_->prepare(instructions, options.memory);
   if (functions.empty()) { return; }
   weichwolf::llvm19::initialize_native();
-  auto machine = target_machine(options.output);
-  const Owner<char *, LLVMDisposeMessage> triple(LLVMGetDefaultTargetTriple());
-  const Owner<LLVMTargetDataRef, LLVMDisposeTargetData> target_data(
-      LLVMCreateTargetDataLayout(machine.get()));
-  const Owner<char *, LLVMDisposeMessage> layout(LLVMCopyStringRepOfTargetData(target_data.get()));
+  Owner<LLVMTargetMachineRef, LLVMDisposeTargetMachine> machine;
+  if (options.output != ArtifactOutput::semantic) { machine = target_machine(options.output); }
+  const auto target = description(machine.get());
   Owner<LLVMOrcThreadSafeContextRef, LLVMOrcDisposeThreadSafeContext> thread_context(
       LLVMOrcCreateNewThreadSafeContext());
   auto *context = LLVMOrcThreadSafeContextGetContext(thread_context.get());
   Owner<LLVMModuleRef, LLVMDisposeModule> module(
       LLVMModuleCreateWithNameInContext("cpu12-prepared", context));
-  LLVMSetDataLayout(module.get(), layout.get());
-  LLVMSetTarget(module.get(), triple.get());
+  LLVMSetDataLayout(module.get(), target.layout.c_str());
+  LLVMSetTarget(module.get(), target.triple.c_str());
   const auto name = [&](const auto &region) {
     return options.prefix + std::to_string(region.front().pc);
   };
@@ -355,9 +328,14 @@ Program::Program(const std::span<const BlockInstruction> instructions, const Pro
                                            options.interrupts,
                                            options.output != ArtifactOutput::none)
                              : std::map<std::uint64_t, std::string>{};
-  if (!options.callbacks.empty()) { link_bindings(module.get(), runtime_bitcode()); }
+  if (options.runtime_io || !options.callbacks.empty()) {
+    link_bindings(module.get(), runtime_bitcode());
+  }
   link_bindings(module.get(), options.bindings);
-  link_callbacks(module.get(), options.callbacks);
+  link_callbacks(module.get(),
+                 options.callbacks,
+                 options.output == ArtifactOutput::semantic ? CallbackStage::declarations
+                                                            : CallbackStage::definitions);
   if (options.output != ArtifactOutput::none) {
     for (const auto &region : functions) {
       for (const auto &operation : region) { impl_->symbols.emplace(operation.pc, name(region)); }
@@ -365,7 +343,7 @@ Program::Program(const std::span<const BlockInstruction> instructions, const Pro
     impl_->bitcode = llvm19::bitcode(module.get());
   }
   if (options.output == ArtifactOutput::semantic) { return; }
-  optimize(module.get(), machine.get());
+  optimize_module(module.get(), machine.get());
   if (options.output == ArtifactOutput::native) {
     impl_->object = llvm19::object(module.get(), machine.get());
   }
@@ -414,6 +392,29 @@ Program::Program(const std::span<const BlockInstruction> instructions, const Pro
 }
 
 Program::~Program() = default;
+
+Program::Program(const Program &semantic,
+                 const std::span<const BlockInstruction> instructions,
+                 const NativeSymbols &symbols)
+    : impl_(std::make_unique<Impl>()) {
+  impl_->owner = symbols.owner;
+  impl_->symbols = semantic.impl_->symbols;
+  impl_->event_symbols = semantic.impl_->event_symbols;
+  impl_->sources = semantic.impl_->sources;
+  impl_->layouts = semantic.impl_->layouts;
+  impl_->targets = semantic.impl_->targets;
+  impl_->indirect = semantic.impl_->indirect;
+  std::map<std::string, const void *> addresses;
+  for (const auto symbol : symbols.symbols) { addresses.emplace(symbol.name, symbol.address); }
+  for (const auto &operation : instructions) {
+    impl_->entries.emplace(operation.pc,
+                           Impl::Entry{.function = addresses.at(impl_->symbols.at(operation.pc)),
+                                       .instruction = operation.instruction});
+  }
+  for (const auto &[key, name] : impl_->event_symbols) {
+    impl_->events.emplace(key, addresses.at(name));
+  }
+}
 
 const void *Program::entry(const Address address) const {
   return impl_->entries.at(address).function;

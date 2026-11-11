@@ -70,7 +70,11 @@ inline NativeImage compile(const Bytes code = loader,
   const std::array layouts{VariantLayout{.id = from, .memory = original},
                            VariantLayout{.id = to, .memory = loaded}};
   return Core::compile({.variants = variants},
-                       {.memory = layouts, .interrupts = requests, .transitions = transitions});
+                       {.memory = layouts,
+                        .interrupts = requests,
+                        .transitions = transitions,
+                        .callbacks = {},
+                        .bindings = {}});
 }
 
 inline void require(const bool value, const char *reason) {

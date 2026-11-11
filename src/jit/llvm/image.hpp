@@ -11,6 +11,7 @@
 #include <map>
 #include <memory>
 #include <span>
+#include <string>
 
 namespace cpu12::detail::llvm19 {
 using cpu12::RegionLayout;
@@ -23,7 +24,10 @@ public:
                std::span<const std::byte> bindings = {},
                std::span<const InterruptRequest> interrupts = {},
                std::span<const CodeTransition> transitions = {},
-               std::span<const CallbackBinding> callbacks = {});
+               std::span<const CallbackBinding> callbacks = {},
+               ArtifactOutput output = ArtifactOutput::native,
+               const std::string &prefix = "cpu12_");
+  ImageProgram(const ImageProgram &semantic, const NativeSymbols &symbols);
   ~ImageProgram();
   ImageProgram(const ImageProgram &) = delete;
   ImageProgram &operator=(const ImageProgram &) = delete;
@@ -31,6 +35,8 @@ public:
   [[nodiscard]] const void *entry(std::uint64_t id, Address pc) const;
   [[nodiscard]] std::span<const BlockInstruction> instructions(std::uint64_t id) const;
   [[nodiscard]] PreparationReport report() const noexcept;
+  [[nodiscard]] std::span<const ImagePlan::Variant> variants() const noexcept;
+  [[nodiscard]] std::span<const RegionLayout> layout(std::uint64_t id) const;
   [[nodiscard]] const std::map<Address, std::uint64_t> &transitions(std::uint64_t id) const;
   void validate_binding(std::uint64_t id, const Memory &memory) const;
 

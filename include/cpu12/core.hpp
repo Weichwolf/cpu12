@@ -7,6 +7,7 @@
 #include <limits>
 #include <memory>
 #include <span>
+#include <string_view>
 
 namespace cpu12 {
 inline constexpr std::size_t maximum_capture_bytes = 6;
@@ -142,11 +143,51 @@ struct CodeTransition {
   Address entry;
 };
 
+enum class CallbackRole : std::uint8_t { read, write, read_word, write_word, read_masked };
+
+struct CallbackBinding {
+  CallbackRole role;
+  std::string_view symbol;
+};
+
 struct CompileOptions {
   std::span<const VariantLayout> memory;
   std::span<const InterruptRequest> interrupts;
   // An absent resident target may yield only to this explicitly prepared version.
   std::span<const CodeTransition> transitions;
+  std::span<const CallbackBinding> callbacks;
+  std::span<const std::byte> bindings;
+};
+
+struct SemanticExport {
+  std::string_view name, abi;
+};
+
+struct NativeSymbol {
+  std::string_view name;
+  const void *address;
+};
+
+struct NativeSymbols {
+  std::shared_ptr<const void> owner;
+  std::span<const NativeSymbol> symbols;
+  std::string_view identity;
+  std::uint64_t native_bytes = 0;
+};
+
+class SemanticImage {
+public:
+  SemanticImage() = default;
+  [[nodiscard]] std::span<const std::byte> bitcode() const noexcept;
+  [[nodiscard]] std::span<const SemanticExport> exports() const noexcept;
+  [[nodiscard]] std::string_view identity() const noexcept;
+
+private:
+  class Impl;
+  explicit SemanticImage(std::shared_ptr<const Impl> image) noexcept;
+  std::shared_ptr<const Impl> impl_;
+  friend class Core;
+  friend class NativeImage;
 };
 
 class NativeImage {
@@ -169,6 +210,8 @@ public:
   ~Core();
   Core(const Core &) = delete;
   Core &operator=(const Core &) = delete;
+  [[nodiscard]] static SemanticImage lower(CodeImage image, CompileOptions options);
+  [[nodiscard]] static NativeImage bind(const SemanticImage &image, const NativeSymbols &symbols);
   [[nodiscard]] static NativeImage compile(CodeImage image, CompileOptions options);
   // Cold owner boundary: validate code/layout and bind RAM/events before publishing.
   void install(const NativeImage &image, std::uint64_t variant);

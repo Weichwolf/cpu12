@@ -26,6 +26,7 @@ struct ProgramOptions {
   ArtifactOutput output = ArtifactOutput::none;
   std::span<const InterruptRequest> interrupts;
   bool prepare_events = false;
+  bool runtime_io = false;
   std::span<const CallbackBinding> callbacks;
 };
 
@@ -33,6 +34,9 @@ class Program {
 public:
   Program(std::span<const BlockInstruction> instructions, const Memory &memory);
   Program(std::span<const BlockInstruction> instructions, ProgramOptions options);
+  Program(const Program &semantic,
+          std::span<const BlockInstruction> instructions,
+          const NativeSymbols &symbols);
   ~Program();
   Program(const Program &) = delete;
   Program &operator=(const Program &) = delete;

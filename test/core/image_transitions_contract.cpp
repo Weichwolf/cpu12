@@ -28,7 +28,11 @@ void declarations() {
   rejects(
       [&] {
         static_cast<void>(Core::compile({.variants = versions},
-                                        {.memory = {}, .interrupts = {}, .transitions = resident}));
+                                        {.memory = {},
+                                         .interrupts = {},
+                                         .transitions = resident,
+                                         .callbacks = {},
+                                         .bindings = {}}));
       },
       "already resident");
 }

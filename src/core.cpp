@@ -7,15 +7,21 @@
 #include "image.hpp"
 #include "jit.hpp"
 #include "jit/block.hpp"
+#include "jit/llvm/module.hpp"
 #include "memory_access.hpp"
 #include "runtime.hpp"
+#include "semantic.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <map>
 #include <memory>
 #include <optional>
 #include <span>
 #include <stdexcept>
+#include <string>
+#include <string_view>
 #if defined(__x86_64__) || defined(__aarch64__)
 #include <bit>
 #endif
@@ -200,9 +206,44 @@ Core::Core(const Memory memory, Io *const io)
 
 Core::~Core() = default;
 
-NativeImage Core::compile(const CodeImage image, const CompileOptions options) {
+SemanticImage Core::lower(const CodeImage image, const CompileOptions options) {
   if (!native_supported()) { throw std::runtime_error("Unsupported CPU12 native image host"); }
-  return NativeImage(std::make_shared<NativeImage::Impl>(image, options));
+  return SemanticImage(std::make_shared<const SemanticImage::Impl>(image, options));
+}
+
+NativeImage Core::bind(const SemanticImage &image, const NativeSymbols &symbols) {
+  if (!image.impl_ || !symbols.owner || symbols.identity != image.identity() ||
+      symbols.symbols.size() != image.exports().size()) {
+    throw std::invalid_argument(
+        "CPU12 native binding has an empty owner or incompatible image identity");
+  }
+  std::map<std::string_view, const void *> entries;
+  for (const auto entry : symbols.symbols) {
+    if (entry.name.empty() || entry.name.find('\0') != std::string_view::npos ||
+        entry.address == nullptr || !entries.emplace(entry.name, entry.address).second) {
+      throw std::invalid_argument("CPU12 native binding has an invalid or duplicate export");
+    }
+  }
+  for (const auto entry : image.exports()) {
+    if (!entries.contains(entry.name)) {
+      throw std::invalid_argument("CPU12 native binding export is missing: " +
+                                  std::string(entry.name));
+    }
+  }
+  const auto program =
+      std::make_shared<const detail::llvm19::ImageProgram>(*image.impl_->program, symbols);
+  return NativeImage(std::make_shared<const NativeImage::Impl>(image.impl_->interrupts, program));
+}
+
+NativeImage Core::compile(const CodeImage image, const CompileOptions options) {
+  const auto semantic = lower(image, options);
+  const auto native = std::make_shared<const detail::llvm19::NativeModule>(
+      semantic.bitcode(), semantic.exports(), options.bindings, semantic.impl_->callbacks);
+  return bind(semantic,
+              {.owner = native,
+               .symbols = native->symbols(),
+               .identity = semantic.identity(),
+               .native_bytes = native->native_bytes()});
 }
 
 void Core::install(const NativeImage &image, const std::uint64_t variant) {

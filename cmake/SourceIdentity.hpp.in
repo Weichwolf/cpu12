@@ -1,0 +1,7 @@
+// SPDX-License-Identifier: GPL-3.0-only
+#pragma once
+#include <string_view>
+
+namespace cpu12::detail::llvm19 {
+inline constexpr std::string_view source_identity = "@CPU12_SOURCE_ID@";
+}

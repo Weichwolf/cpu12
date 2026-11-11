@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "jit/llvm/artifact.hpp"
 
+#include "jit/llvm/callback_binding.hpp"
+#include "jit/llvm/callbacks.hpp"
 #include "jit/llvm/lifetime.hpp"
 
 #include "llvm-c/Analysis.h"
@@ -227,7 +229,9 @@ void address_constants(LLVMModuleRef module) {
 }
 }
 
-void link_bindings(LLVMModuleRef module, const std::span<const std::byte> bytes) {
+void link_bindings(LLVMModuleRef module,
+                   const std::span<const std::byte> bytes,
+                   const std::span<const CallbackBinding> callbacks) {
   if (bytes.empty()) { return; }
   const Owner<LLVMMemoryBufferRef, LLVMDisposeMemoryBuffer> input(
       LLVMCreateMemoryBufferWithMemoryRangeCopy(
@@ -239,6 +243,7 @@ void link_bindings(LLVMModuleRef module, const std::span<const std::byte> bytes)
   diagnostics.check(failed != 0 || !incoming);
   verify(incoming.get());
   compatible(module, incoming.get());
+  validate_callbacks(module, incoming.get(), callbacks);
   address_constants(incoming.get());
   LLVMSetDataLayout(incoming.get(), LLVMGetDataLayoutStr(module));
   LLVMSetTarget(incoming.get(), LLVMGetTarget(module));

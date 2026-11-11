@@ -32,8 +32,12 @@ void boundary(const Bytes instruction, const ExecutionState execution) {
                    .size = address_bytes - destination - payload.size()}};
   const std::array layouts{VariantLayout{.id = from, .memory = original},
                            VariantLayout{.id = to, .memory = loaded}};
-  const auto image = Core::compile(
-      {.variants = variants}, {.memory = layouts, .interrupts = requests, .transitions = forward});
+  const auto image = Core::compile({.variants = variants},
+                                   {.memory = layouts,
+                                    .interrupts = requests,
+                                    .transitions = forward,
+                                    .callbacks = {},
+                                    .bindings = {}});
   Fixture fixture(loop, payload, true);
   std::ranges::copy(instruction, fixture.bytes.begin() + entry);
   std::array<Ram, original.size()> grants{};

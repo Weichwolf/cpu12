@@ -157,18 +157,24 @@ void image_contracts() {
   const std::array duplicated{interrupts[0], interrupts[0]};
   rejects(
       [&] {
-        static_cast<void>(
-            Core::compile({.variants = variants},
-                          {.memory = layouts, .interrupts = duplicated, .transitions = {}}));
+        static_cast<void>(Core::compile({.variants = variants},
+                                        {.memory = layouts,
+                                         .interrupts = duplicated,
+                                         .transitions = {},
+                                         .callbacks = {},
+                                         .bindings = {}}));
       },
       "duplicate interrupt contracts");
   constexpr auto invalid = static_cast<InterruptKind>(0xff);
   constexpr std::array invalid_kind{InterruptRequest{.kind = invalid}};
   rejects(
       [&] {
-        static_cast<void>(
-            Core::compile({.variants = variants},
-                          {.memory = layouts, .interrupts = invalid_kind, .transitions = {}}));
+        static_cast<void>(Core::compile({.variants = variants},
+                                        {.memory = layouts,
+                                         .interrupts = invalid_kind,
+                                         .transitions = {},
+                                         .callbacks = {},
+                                         .bindings = {}}));
       },
       "invalid interrupt kind");
 }

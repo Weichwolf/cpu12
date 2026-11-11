@@ -7,7 +7,6 @@
 #include "isa.hpp"
 #include "jit/block.hpp"
 #include "jit/llvm/artifact.hpp"
-#include "jit/llvm/callback_binding.hpp"
 #include "jit/llvm/lifetime.hpp"
 #include "public_io.hpp"
 #include "runtime.hpp"
@@ -29,8 +28,6 @@
 
 namespace cpu12::test::image {
 namespace {
-using detail::llvm19::CallbackBinding;
-using detail::llvm19::CallbackRole;
 constexpr std::uint64_t id = 7;
 constexpr Address input = 0x1234, output = 0x2345, idle = entry + 12;
 constexpr Byte retained_flags = 0xf1;

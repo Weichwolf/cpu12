@@ -106,8 +106,9 @@ NativeImage compile(const Source &source) {
   const std::array regions{
       RegionLayout{.first = entry, .size = source.bytes.size(), .writable = false}};
   const std::array layouts{VariantLayout{.id = variant_id, .memory = regions}};
-  return Core::compile({.variants = variants},
-                       {.memory = layouts, .interrupts = {}, .transitions = {}});
+  return Core::compile(
+      {.variants = variants},
+      {.memory = layouts, .interrupts = {}, .transitions = {}, .callbacks = {}, .bindings = {}});
 }
 
 Registers expected(Registers before, const Site &site) {
@@ -178,8 +179,9 @@ void wrapping() {
     const std::array spans{CodeSpan{.address = first, .words = words}};
     const std::array variants{CodeVariant{.id = variant_id, .code = spans, .entries = entries}};
     const std::array layouts{VariantLayout{.id = variant_id, .memory = regions}};
-    const auto image = Core::compile({.variants = variants},
-                                     {.memory = layouts, .interrupts = {}, .transitions = {}});
+    const auto image = Core::compile(
+        {.variants = variants},
+        {.memory = layouts, .interrupts = {}, .transitions = {}, .callbacks = {}, .bindings = {}});
     std::array<Byte, address_bytes> bytes{};
     for (std::size_t index = 0; index < words.size(); ++index) {
       bytes[static_cast<Address>(first + index)] = words[index];

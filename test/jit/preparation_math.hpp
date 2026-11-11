@@ -88,8 +88,9 @@ inline NativeImage compile(const Source &source) {
   const std::array layouts{VariantLayout{.id = variant, .memory = regions}};
   const std::array variants{
       CodeVariant{.id = variant, .code = source.spans, .entries = source.entries}};
-  return Core::compile({.variants = variants},
-                       {.memory = layouts, .interrupts = {}, .transitions = {}});
+  return Core::compile(
+      {.variants = variants},
+      {.memory = layouts, .interrupts = {}, .transitions = {}, .callbacks = {}, .bindings = {}});
 }
 
 struct Count {

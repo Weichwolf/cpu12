@@ -115,8 +115,9 @@ void wrapped_site(const Site &site, const int displacement) {
   const std::array variants{CodeVariant{.id = variant, .code = spans, .entries = entries}};
   const std::array regions{RegionLayout{.first = 0, .size = address_bytes, .writable = false}};
   const std::array layouts{VariantLayout{.id = variant, .memory = regions}};
-  const auto image = Core::compile({.variants = variants},
-                                   {.memory = layouts, .interrupts = {}, .transitions = {}});
+  const auto image = Core::compile(
+      {.variants = variants},
+      {.memory = layouts, .interrupts = {}, .transitions = {}, .callbacks = {}, .bindings = {}});
   std::array<Byte, address_bytes> bytes{};
   for (std::size_t offset = 0; offset < stream.size(); ++offset) {
     bytes[static_cast<Address>(site.pc + offset)] = stream[offset];

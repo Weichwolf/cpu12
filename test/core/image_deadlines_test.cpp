@@ -53,8 +53,9 @@ void deferral() {
   const std::array spans{CodeSpan{.address = entry, .words = code}};
   const std::array variants{CodeVariant{.id = first_id, .code = spans, .entries = entries}};
   const std::array layouts{VariantLayout{.id = first_id, .memory = layout}};
-  const auto image = Core::compile({.variants = variants},
-                                   {.memory = layouts, .interrupts = {}, .transitions = {}});
+  const auto image = Core::compile(
+      {.variants = variants},
+      {.memory = layouts, .interrupts = {}, .transitions = {}, .callbacks = {}, .bindings = {}});
   Fixture fixture{Source(negative)};
   std::ranges::copy(code, fixture.bytes.begin() + entry);
   Core core(fixture.memory());

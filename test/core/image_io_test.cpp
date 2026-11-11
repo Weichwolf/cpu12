@@ -100,8 +100,9 @@ void io_yield() {
   const std::array variants{CodeVariant{.id = first_id, .code = spans, .entries = entries}};
   const std::array regions{RegionLayout{.first = entry, .size = code.size(), .writable = false}};
   const std::array layouts{VariantLayout{.id = first_id, .memory = regions}};
-  const auto image = Core::compile({.variants = variants},
-                                   {.memory = layouts, .interrupts = {}, .transitions = {}});
+  const auto image = Core::compile(
+      {.variants = variants},
+      {.memory = layouts, .interrupts = {}, .transitions = {}, .callbacks = {}, .bindings = {}});
   const std::array grants{Ram{.first = entry, .bytes = code, .writable = false}};
   Port port;
   Io io{.owner = &port, .read = Port::read, .fetch = Port::fetch};

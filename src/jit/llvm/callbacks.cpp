@@ -5,12 +5,14 @@
 #include "jit/llvm/callback_binding.hpp"
 #include "runtime.hpp"
 
+#include "llvm-c/Core.h"
 #include "llvm-c/Types.h"
 #include "llvm/ADT/APInt.h"
 #include "llvm/IR/Attributes.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/Function.h"
+#include "llvm/IR/GlobalValue.h"
 #include "llvm/IR/InstrTypes.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Module.h"
@@ -145,22 +147,44 @@ void validate(const llvm::LoadInst &load, const llvm::Function &target) {
 
 using Replacement = std::pair<llvm::LoadInst *, llvm::Function *>;
 
+struct Target {
+  llvm::Function *function;
+  std::string_view symbol;
+};
+
+llvm::Function *declare(llvm::LoadInst &load, const std::string_view symbol) {
+  for (const auto *user : load.users()) {
+    if (const auto *call = llvm::dyn_cast<llvm::CallBase>(user);
+        call != nullptr && call->getCalledOperand() == &load) {
+      auto *target = llvm::Function::Create(
+          call->getFunctionType(), llvm::GlobalValue::ExternalLinkage, symbol, load.getModule());
+      LLVMSetFunctionCallConv(llvm::wrap(target), call->getCallingConv());
+      target->setAttributes(call->getAttributes());
+      return target;
+    }
+  }
+  throw std::invalid_argument("CPU12 adapter callback has no typed call");
+}
+
 void collect(llvm::Function &adapter,
-             llvm::Function *target,
+             Target &target,
              const std::size_t at,
              std::vector<Replacement> &replacements) {
   for (auto &block : adapter) {
     for (auto &instruction : block) {
       auto *load = llvm::dyn_cast<llvm::LoadInst>(&instruction);
       if (load == nullptr || slot(*load) != at) { continue; }
-      validate(*load, *target);
-      replacements.emplace_back(load, target);
+      if (target.function == nullptr) { target.function = declare(*load, target.symbol); }
+      validate(*load, *target.function);
+      replacements.emplace_back(load, target.function);
     }
   }
 }
 }
 
-void link_callbacks(LLVMModuleRef module, const std::span<const CallbackBinding> bindings) {
+void link_callbacks(LLVMModuleRef module,
+                    const std::span<const CallbackBinding> bindings,
+                    const CallbackStage stage) {
   auto &ir = *llvm::unwrap(module);
   std::set<CallbackRole> roles;
   std::vector<Replacement> replacements;
@@ -170,15 +194,17 @@ void link_callbacks(LLVMModuleRef module, const std::span<const CallbackBinding>
         binding.symbol.find('\0') != std::string_view::npos) {
       throw std::invalid_argument("Invalid or duplicate CPU12 callback binding");
     }
-    auto *target = ir.getFunction(binding.symbol);
-    if (target == nullptr || target->isDeclaration() || target->isVarArg()) {
+    Target target{.function = ir.getFunction(binding.symbol), .symbol = binding.symbol};
+    if ((stage == CallbackStage::definitions &&
+         (target.function == nullptr || target.function->isDeclaration())) ||
+        (target.function != nullptr && target.function->isVarArg())) {
       throw std::invalid_argument("CPU12 callback definition missing for " +
                                   std::string(binding.symbol));
     }
     const auto before = replacements.size();
     for (const auto *name : adapters) {
       auto *adapter = ir.getFunction(name);
-      if (adapter == nullptr || adapter->isDeclaration() || adapter == target) {
+      if (adapter == nullptr || adapter->isDeclaration() || adapter == target.function) {
         throw std::invalid_argument("CPU12 callback requires its core-owned adapter definition");
       }
       collect(*adapter, target, at, replacements);
@@ -190,6 +216,35 @@ void link_callbacks(LLVMModuleRef module, const std::span<const CallbackBinding>
   for (const auto [load, target] : replacements) {
     load->replaceAllUsesWith(target);
     load->eraseFromParent();
+  }
+}
+
+void validate_callbacks(LLVMModuleRef module,
+                        LLVMModuleRef incoming,
+                        const std::span<const CallbackBinding> bindings) {
+  auto &expected = *llvm::unwrap(module);
+  auto &definitions = *llvm::unwrap(incoming);
+  for (const auto binding : bindings) {
+    const auto *declaration = expected.getFunction(binding.symbol);
+    const auto *target = definitions.getFunction(binding.symbol);
+    if (declaration == nullptr || target == nullptr || target->isDeclaration()) { continue; }
+    for (const auto *user : declaration->users()) {
+      if (const auto *call = llvm::dyn_cast<llvm::CallBase>(user);
+          call != nullptr && call->getCalledOperand() == declaration) {
+        compatible(*call, *target);
+      }
+    }
+  }
+}
+
+void require_callbacks(LLVMModuleRef module, const std::span<const CallbackBinding> bindings) {
+  const auto &ir = *llvm::unwrap(module);
+  for (const auto binding : bindings) {
+    const auto *target = ir.getFunction(binding.symbol);
+    if (target == nullptr || target->isDeclaration() || target->isVarArg()) {
+      throw std::invalid_argument("CPU12 callback definition missing for " +
+                                  std::string(binding.symbol));
+    }
   }
 }
 }

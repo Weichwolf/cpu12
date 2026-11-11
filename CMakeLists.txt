@@ -68,7 +68,7 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(arm64|aarch64)$")
     src/jit/a64/run.cpp)
 endif()
 add_library(cpu12_core STATIC
-  src/core.cpp src/cycles.cpp src/image.cpp
+  src/core.cpp src/cycles.cpp src/image.cpp src/semantic.cpp
   src/fetch.cpp src/immutable.cpp
   src/decode.cpp
   src/indexed.cpp
@@ -88,6 +88,7 @@ add_library(cpu12_core STATIC
   src/jit/llvm/stack.cpp
   src/jit/image.cpp src/jit/llvm/image.cpp
   src/jit/llvm/artifact.cpp
+  src/jit/llvm/abi.cpp src/jit/llvm/module.cpp src/jit/llvm/optimize.cpp
   src/jit/llvm/callbacks.cpp src/jit/llvm/runtime_bitcode.cpp
   src/jit/block_parse.cpp src/jit/preparation.cpp
   src/jit/block_plan.cpp
@@ -119,6 +120,18 @@ add_custom_command(OUTPUT "${cpu12_runtime_bitcode}"
   DEPENDS cpu12-runtime-bitcode $<TARGET_OBJECTS:cpu12-runtime-bitcode> cmake/EmbedBitcode.cmake VERBATIM)
 target_sources(cpu12_core PRIVATE "${cpu12_runtime_bitcode}")
 target_include_directories(cpu12_core PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
+file(GLOB_RECURSE cpu12_identity_files CONFIGURE_DEPENDS
+  include/*.hpp src/*.hpp src/*.cpp cmake/*)
+list(APPEND cpu12_identity_files "${CMAKE_CURRENT_SOURCE_DIR}/CMakeLists.txt")
+set(cpu12_identity_input "")
+foreach(source IN LISTS cpu12_identity_files)
+  file(SHA256 "${source}" digest)
+  file(RELATIVE_PATH name "${CMAKE_CURRENT_SOURCE_DIR}" "${source}")
+  string(APPEND cpu12_identity_input "${name}:${digest}\n")
+endforeach()
+string(SHA256 CPU12_SOURCE_ID "${cpu12_identity_input}")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${cpu12_identity_files})
+configure_file(cmake/SourceIdentity.hpp.in source_identity.hpp @ONLY)
 if(NOT APPLE)
   target_link_options(cpu12_core PUBLIC -fuse-ld=lld)
 endif()
@@ -317,6 +330,16 @@ if(BUILD_TESTING AND CPU12_BUILD_TESTING)
   add_dependencies(cpu12-image-test cpu12-image-bindings cpu12-public-bindings)
   add_test(NAME complete-code-images COMMAND cpu12-image-test)
   set_tests_properties(complete-code-images PROPERTIES TIMEOUT 30)
+  add_executable(cpu12-semantic-image-test test/core/semantic_test.cpp test/core/semantic_native.cpp
+    test/core/semantic_calls.cpp)
+  target_include_directories(cpu12-semantic-image-test PRIVATE test/support)
+  target_include_directories(cpu12-semantic-image-test SYSTEM PRIVATE ${LLVM_INCLUDE_DIRS})
+  target_link_libraries(cpu12-semantic-image-test PRIVATE cpu12::core LLVM ${CMAKE_DL_LIBS})
+  target_compile_definitions(cpu12-semantic-image-test PRIVATE
+    CPU12_PUBLIC_BINDINGS="$<TARGET_OBJECTS:cpu12-public-bindings>")
+  add_dependencies(cpu12-semantic-image-test cpu12-public-bindings)
+  add_test(NAME public-semantic-images COMMAND cpu12-semantic-image-test)
+  set_tests_properties(public-semantic-images PROPERTIES TIMEOUT 30)
   add_executable(cpu12-image-export test/jit/image_export.cpp)
   target_include_directories(cpu12-image-export PRIVATE src test/support)
   target_link_libraries(cpu12-image-export PRIVATE cpu12::core)
