@@ -12,7 +12,6 @@
 #include "runtime.hpp"
 #include "semantic.hpp"
 
-#include <cstddef>
 #include <cstdint>
 #include <limits>
 #include <map>

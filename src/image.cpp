@@ -4,7 +4,6 @@
 #include "cpu12/core.hpp"
 #include "jit/llvm/image.hpp"
 
-#include <cstddef>
 #include <memory>
 #include <span>
 #include <utility>
