@@ -12,6 +12,7 @@
 #include "jit/llvm/lift.hpp"
 #include "jit/llvm/program.hpp"
 #include "jit/llvm/runtime_bitcode.hpp"
+#include "jit/prefixes.hpp"
 #include "source_identity.hpp"
 
 #include "llvm/Config/llvm-config.h"
@@ -118,11 +119,15 @@ struct ImageSource {
                                       ": instruction has no LLVM lowering");
         }
       }
+      const auto memory = std::make_unique<CompilerMemory>(variant, found->second);
+      prefixes.emplace(variant.id,
+                       foreground_prefixes(variant.instructions, Memory::mapped(memory->memory)));
     }
   }
 
   const ImagePlan plan;
   std::map<std::uint64_t, std::vector<RegionLayout>> bindings;
+  std::map<std::uint64_t, std::map<Address, std::uint64_t>> prefixes;
 
   [[nodiscard]] std::string
   namespace_prefix(const std::span<const InterruptRequest> interrupts,
@@ -277,6 +282,10 @@ std::span<const ImagePlan::Variant> ImageProgram::variants() const noexcept {
 std::span<const RegionLayout> ImageProgram::layout(const std::uint64_t id) const {
   static_cast<void>(impl_->variant(id));
   return impl_->source->bindings.at(id);
+}
+
+std::uint64_t ImageProgram::foreground_prefix(const std::uint64_t id, const Address pc) const {
+  return impl_->source->prefixes.at(id).at(pc);
 }
 
 void ImageProgram::validate_binding(const std::uint64_t id, const Memory &memory) const {
