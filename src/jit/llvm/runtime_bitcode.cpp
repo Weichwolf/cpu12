@@ -13,11 +13,15 @@
 #include <stdexcept>
 
 namespace cpu12::detail::llvm19 {
+namespace {
+template <std::size_t Size> using Bitcode = std::array<unsigned char, Size>;
+}
+
 std::span<const std::byte> runtime_bitcode() noexcept {
-  static constexpr auto bytes = std::to_array(
+  static constexpr auto bytes =
 #include "runtime_bitcode.inc"
-  );
-  return std::as_bytes(std::span(bytes).first(bytes.size() - 1));
+      ;
+  return std::as_bytes(std::span(bytes));
 }
 
 TargetDescription runtime_target() {

@@ -16,6 +16,7 @@
 #include "llvm/ExecutionEngine/Orc/LLJIT.h"
 #include "llvm/Support/Error.h"
 
+#include <array>
 #include <bit>
 #include <cstddef>
 #include <cstdint>
@@ -33,6 +34,11 @@
 
 namespace cpu12::test::semantic {
 namespace {
+constexpr std::array interfaces{"_ZNK5cpu124Core9registersEv",
+                                "_ZNK5cpu124Core5stateEv",
+                                "_ZNK5cpu124Core8progressEv",
+                                "_ZN5cpu124Core13request_yieldEv"};
+
 template <auto Dispose> struct Delete {
   void operator()(auto *value) const noexcept { Dispose(value); }
 };
@@ -47,6 +53,28 @@ void checked(LLVMErrorRef error) {
   if (error == nullptr) { return; }
   const Owner<char *, LLVMDisposeErrorMessage> message(LLVMGetErrorMessage(error));
   throw std::runtime_error(message.get());
+}
+
+void retained_interfaces(LLVMModuleRef module) {
+  constexpr std::string_view attribute = "alwaysinline";
+  const auto kind = LLVMGetEnumAttributeKindForName(attribute.data(), attribute.size());
+  for (const auto *name : interfaces) {
+    auto *function = LLVMGetNamedFunction(module, name);
+    require(function != nullptr && LLVMIsDeclaration(function) == 0 &&
+                LLVMGetLinkage(function) == LLVMWeakODRLinkage &&
+                LLVMGetEnumAttributeAtIndex(
+                    function, static_cast<LLVMAttributeIndex>(LLVMAttributeFunctionIndex), kind) !=
+                    nullptr,
+            "Detached public observer/yield bodies survive composition before host uses exist");
+  }
+}
+
+void fused_interfaces(LLVMModuleRef module) {
+  for (const auto *name : interfaces) {
+    auto *function = LLVMGetNamedFunction(module, name);
+    require(function == nullptr || LLVMGetFirstUse(function) == nullptr,
+            "Final O3 fuses every public core observer/yield call into the host binding");
+  }
 }
 
 llvm::orc::LLJIT &native(LLVMOrcLLJITRef jit) {
@@ -183,11 +211,13 @@ Code::Code(const std::span<const SemanticImage> images, const std::span<const st
   const Owner<LLVMModuleRef, LLVMDisposeModule> module(
       LLVMModuleCreateWithNameInContext("consumer", context.get()));
   for (const auto &image : images) { merge(module.get(), image.bitcode()); }
+  retained_interfaces(module.get());
   exports_valid(module.get(), images);
   merge(module.get(), host);
   auto machine = target(module.get());
   require(machine != nullptr, "Create the actual native optimizer target");
   optimize(module.get(), machine.get());
+  fused_interfaces(module.get());
   exports_valid(module.get(), images);
   char *raw_error = nullptr;
   LLVMMemoryBufferRef raw_object = nullptr;

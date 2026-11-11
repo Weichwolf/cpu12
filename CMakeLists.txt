@@ -107,17 +107,33 @@ else()
   set(cpu12_native_option -march=native)
 endif()
 target_compile_options(cpu12_core PUBLIC $<$<CONFIG:Release>:${cpu12_native_option}>)
-add_library(cpu12-runtime-bitcode OBJECT src/runtime.cpp)
-target_include_directories(cpu12-runtime-bitcode PRIVATE include src)
 # Instrument adapter IR with the generated program after fusion.
-target_link_libraries(cpu12-runtime-bitcode PRIVATE cpu12_diagnostics)
-target_compile_options(cpu12-runtime-bitcode PRIVATE -O3 -emit-llvm ${cpu12_native_option})
-set_target_properties(cpu12-runtime-bitcode PROPERTIES INTERPROCEDURAL_OPTIMIZATION_RELEASE OFF)
+foreach(part runtime core)
+  add_library(cpu12-${part}-bitcode OBJECT src/${part}.cpp)
+  target_include_directories(cpu12-${part}-bitcode PRIVATE include src "${CMAKE_CURRENT_BINARY_DIR}")
+  target_link_libraries(cpu12-${part}-bitcode PRIVATE cpu12_diagnostics)
+  target_compile_options(cpu12-${part}-bitcode PRIVATE -O3 -emit-llvm ${cpu12_native_option})
+  set_target_properties(cpu12-${part}-bitcode PROPERTIES INTERPROCEDURAL_OPTIMIZATION_RELEASE OFF)
+endforeach()
+find_program(CPU12_LLVM_EXTRACT NAMES llvm-extract llvm-extract-19
+  HINTS "${LLVM_TOOLS_BINARY_DIR}" REQUIRED NO_DEFAULT_PATH)
+find_program(CPU12_LLVM_LINK NAMES llvm-link llvm-link-19
+  HINTS "${LLVM_TOOLS_BINARY_DIR}" REQUIRED NO_DEFAULT_PATH)
 set(cpu12_runtime_bitcode "${CMAKE_CURRENT_BINARY_DIR}/runtime_bitcode.inc")
 add_custom_command(OUTPUT "${cpu12_runtime_bitcode}"
-  COMMAND "${CMAKE_COMMAND}" "-DINPUT=$<TARGET_OBJECTS:cpu12-runtime-bitcode>"
+  COMMAND "${CPU12_LLVM_EXTRACT}" $<TARGET_OBJECTS:cpu12-core-bitcode>
+    --func=_ZNK5cpu124Core9registersEv --func=_ZNK5cpu124Core5stateEv
+    --func=_ZNK5cpu124Core8progressEv --func=_ZN5cpu124Core13request_yieldEv
+    -o "${CMAKE_CURRENT_BINARY_DIR}/core_interfaces.bc"
+  COMMAND "${CPU12_LLVM_LINK}" $<TARGET_OBJECTS:cpu12-runtime-bitcode>
+    "${CMAKE_CURRENT_BINARY_DIR}/core_interfaces.bc"
+    -o "${CMAKE_CURRENT_BINARY_DIR}/runtime.bc"
+  COMMAND "${CMAKE_COMMAND}" "-DINPUT=${CMAKE_CURRENT_BINARY_DIR}/runtime.bc"
     "-DOUTPUT=${cpu12_runtime_bitcode}" -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedBitcode.cmake"
-  DEPENDS cpu12-runtime-bitcode $<TARGET_OBJECTS:cpu12-runtime-bitcode> cmake/EmbedBitcode.cmake VERBATIM)
+  DEPENDS cpu12-runtime-bitcode cpu12-core-bitcode $<TARGET_OBJECTS:cpu12-runtime-bitcode>
+    $<TARGET_OBJECTS:cpu12-core-bitcode> cmake/EmbedBitcode.cmake
+  BYPRODUCTS "${CMAKE_CURRENT_BINARY_DIR}/core_interfaces.bc" "${CMAKE_CURRENT_BINARY_DIR}/runtime.bc"
+  VERBATIM)
 target_sources(cpu12_core PRIVATE "${cpu12_runtime_bitcode}")
 target_include_directories(cpu12_core PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
 file(GLOB_RECURSE cpu12_identity_files CONFIGURE_DEPENDS

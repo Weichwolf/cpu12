@@ -129,20 +129,19 @@ struct Observation {
   Core &core;
   const public_io::Bus &bus;
   std::array<Progress, 2> progress{};
-  bool yield = false;
 
   static void notify(void *owner) noexcept {
     auto &self = *static_cast<Observation *>(owner);
     if (self.bus.calls < self.progress.size()) {
       self.progress[self.bus.calls] = self.core.progress();
     }
-    if (self.yield) { self.core.request_yield(); }
   }
 };
 
 void execute(Core &core, public_io::Bus &bus, const Address input) {
   const auto observed = calls();
   Observation observation{.core = core, .bus = bus};
+  bus.core = &core;
   bus.state = &core.state();
   bus.observer = &observation;
   bus.notify = Observation::notify;
@@ -171,6 +170,9 @@ void execute(Core &core, public_io::Bus &bus, const Address input) {
               bus.memory[output] == value &&
               bus.trace[0].state == State{.registers = before, .failure = {}} &&
               bus.trace[1].state == State{.registers = store, .failure = {}} &&
+              bus.observed_state == &core.state() &&
+              bus.trace[0].progress == Progress{.estimated_cycles = ticks} &&
+              bus.trace[1].progress == Progress{.estimated_cycles = ticks + 3} &&
               observation.progress[0] == Progress{.estimated_cycles = ticks} &&
               observation.progress[1] == Progress{.estimated_cycles = ticks + 3},
           "Public bind executes exact native state/I/O/progress after all compiler inputs expire");
@@ -185,7 +187,9 @@ void resume(Core &core, public_io::Bus &bus, const Address input) {
   const Registers initial{.pc = entry, .d = 0x5aa5, .sp = 0x9000};
   core.set_registers(initial);
   const auto ticks = core.progress().estimated_cycles;
-  Observation observation{.core = core, .bus = bus, .yield = true};
+  Observation observation{.core = core, .bus = bus};
+  bus.core = &core;
+  bus.yield = true;
   bus.state = &core.state();
   bus.observer = &observation;
   bus.notify = Observation::notify;
@@ -211,7 +215,7 @@ void resume(Core &core, public_io::Bus &bus, const Address input) {
               core.state() == State{.registers = expected, .failure = {}} &&
               core.progress() == Progress{.estimated_cycles = ticks + 6},
           "Resuming does not replay the read and preserves the write yield");
-  observation.yield = false;
+  bus.yield = false;
   const auto branched = core.run(1);
   require(branched.retired == 1 && branched.fault == Fault::none && bus.calls == 2 &&
               core.state() == State{.registers = expected, .failure = {}} &&
@@ -330,6 +334,17 @@ void standalone() {
   core.install(image, variant);
   execute(core, bus, first_port);
   resume(core, bus, first_port);
+  Io unowned;
+  Core nullable(Memory::window({.first = entry, .bytes = source, .writable = false}), &unowned);
+  const Registers initial{.pc = entry, .sp = 0x9000};
+  nullable.set_registers(initial);
+  nullable.install(image, variant);
+  const auto denied = nullable.run(1);
+  require(denied.fault == Fault::memory_read && denied.retired == 0 &&
+              denied.address == first_port && denied.value == 0 && denied.access_size == 1 &&
+              nullable.registers() == initial && nullable.progress() == Progress{},
+          "Nullable public callback owners reject a real access without undefined behavior or "
+          "retirement");
 }
 }
 }

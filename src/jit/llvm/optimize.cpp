@@ -10,9 +10,7 @@
 #include "llvm-c/Types.h"
 
 #include <stdexcept>
-#if __has_feature(address_sanitizer)
 #include <string_view>
-#endif
 
 namespace cpu12::detail::llvm19 {
 namespace {
@@ -31,6 +29,16 @@ void verify(LLVMModuleRef module) {
 }
 
 void optimize_module(LLVMModuleRef module, LLVMTargetMachineRef machine) {
+  constexpr std::string_view interface = "cpu12-core-interface";
+  for (auto *function = LLVMGetFirstFunction(module); function != nullptr;
+       function = LLVMGetNextFunction(function)) {
+    if (LLVMGetStringAttributeAtIndex(function,
+                                      static_cast<LLVMAttributeIndex>(LLVMAttributeFunctionIndex),
+                                      interface.data(),
+                                      interface.size()) != nullptr) {
+      LLVMSetLinkage(function, LLVMInternalLinkage);
+    }
+  }
   const Owner<LLVMPassBuilderOptionsRef, LLVMDisposePassBuilderOptions> options(
       LLVMCreatePassBuilderOptions());
 #if __has_feature(address_sanitizer)

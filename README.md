@@ -5,7 +5,7 @@ macOS ARM64, GPL-3.0-only. See OBJECTIVE.md for complete-ISA acceptance.
 
 ## Build
 
-LLVM 19.1 development libraries, CMake, Ninja, clang-format-19 and clang-tidy-19
+LLVM 19.1 development libraries, llvm-extract, llvm-link, CMake, Ninja, clang-format-19 and clang-tidy-19
 are required. Linux packages include `llvm-19-dev`; Homebrew `llvm@19` contains
 the compiler, headers and shared library.
 
@@ -68,6 +68,13 @@ ordering. Export linkable bitcode/objects through that same pipeline; keep LLVM
 handles private. Exact image/binding identity includes source bytes, ABI, compiler
 and native target/features. Compilation and validated artifact loading run before
 playback; development always executes the complete compilation pipeline.
+
+Supply the public `Core::registers`, `state`, `progress` and `request_yield`
+implementations as eligible IR from the same C++ definitions as the native
+library. Host bindings call these methods directly; consumers do not reproduce
+private state offsets or depend on executable symbol exports. Retain weak ODR,
+always-inline definitions while composing detached components, then internalize
+eligible helpers before final O3 and preserve every declared guest/event export.
 
 ## Use
 

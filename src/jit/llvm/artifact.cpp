@@ -91,6 +91,14 @@ std::string name(LLVMValueRef value) {
   return {text, size};
 }
 
+bool core_interface(const std::string_view symbol) {
+  constexpr std::array interfaces{"_ZNK5cpu124Core9registersEv",
+                                  "_ZNK5cpu124Core5stateEv",
+                                  "_ZNK5cpu124Core8progressEv",
+                                  "_ZN5cpu124Core13request_yieldEv"};
+  return std::ranges::find(interfaces, symbol) != interfaces.end();
+}
+
 std::string attribute(LLVMValueRef function, const std::string_view key) {
   auto *value =
       LLVMGetStringAttributeAtIndex(function,
@@ -268,7 +276,23 @@ void link_bindings(LLVMModuleRef module,
   diagnostics.check(LLVMLinkModules2(module, incoming.release()) != 0);
   for (const auto &symbol : functions) {
     if (auto *function = LLVMGetNamedFunction(module, symbol.c_str())) {
-      LLVMSetLinkage(function, LLVMPrivateLinkage);
+      if (core_interface(symbol)) {
+        constexpr auto index = static_cast<LLVMAttributeIndex>(LLVMAttributeFunctionIndex);
+        constexpr std::string_view always = "alwaysinline";
+        constexpr std::string_view noinline = "noinline";
+        LLVMSetLinkage(function, LLVMWeakODRLinkage);
+        LLVMAddTargetDependentFunctionAttr(function, "cpu12-core-interface", "");
+        LLVMRemoveEnumAttributeAtIndex(
+            function, index, LLVMGetEnumAttributeKindForName(noinline.data(), noinline.size()));
+        LLVMAddAttributeAtIndex(
+            function,
+            index,
+            LLVMCreateEnumAttribute(LLVMGetModuleContext(module),
+                                    LLVMGetEnumAttributeKindForName(always.data(), always.size()),
+                                    0));
+      } else {
+        LLVMSetLinkage(function, LLVMPrivateLinkage);
+      }
     }
   }
   for (const auto &symbol : globals) {

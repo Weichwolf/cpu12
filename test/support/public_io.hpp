@@ -23,6 +23,9 @@ struct Bus {
   std::array<Access, 16> trace{};
   const State *state = nullptr;
   const Progress *progress = nullptr;
+  Core *core = nullptr;
+  const State *observed_state = nullptr;
+  bool yield = false;
   unsigned calls = 0, fail_at = std::numeric_limits<unsigned>::max();
   void *observer = nullptr;
   void (*notify)(void *) noexcept = nullptr;
