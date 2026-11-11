@@ -34,3 +34,9 @@ extern "C" std::uint32_t cpu12_write_word(cpu12::detail::NativeContext *context,
   bytes[next] = static_cast<std::uint8_t>(value);
   return 1;
 }
+
+extern "C" std::uint32_t cpu12_read_masked_byte(cpu12::detail::NativeContext *context,
+                                                const std::uint16_t address,
+                                                const std::uint8_t mask) noexcept {
+  return static_cast<const std::uint8_t *>(context->io.owner)[address] & mask;
+}

@@ -8,6 +8,7 @@
 #include "jit/block.hpp"
 #include "jit/llvm/artifact.hpp"
 #include "jit/llvm/flow.hpp"
+#include "jit/llvm/io_abi.hpp"
 #include "jit/llvm/lifetime.hpp"
 #include "jit/llvm/lift.hpp"
 #include "jit/llvm/memory.hpp"
@@ -72,6 +73,7 @@ using Engine = Owner<LLVMOrcLLJITRef, dispose_engine>;
 
 void bind_io(LLVMOrcLLJITRef engine) {
   const std::array bindings{
+      std::pair{"cpu12_read_masked_byte", std::bit_cast<std::uintptr_t>(&cpu12_read_masked_byte)},
       std::pair{"cpu12_read_byte", std::bit_cast<std::uintptr_t>(&read_byte)},
       std::pair{"cpu12_read_word", std::bit_cast<std::uintptr_t>(&read_word)},
       std::pair{"cpu12_write_byte", std::bit_cast<std::uintptr_t>(&write_byte)},

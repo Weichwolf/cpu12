@@ -7,6 +7,7 @@
 #include "instruction.hpp"
 #include "jit/block.hpp"
 #include "jit/llvm/builder.hpp"
+#include "jit/llvm/flags.hpp"
 #include "jit/llvm/flow.hpp"
 #include "jit/llvm/indexed.hpp"
 #include "jit/llvm/memory.hpp"
@@ -146,7 +147,9 @@ private:
     LLVMPositionBuilderAtEnd(builder_.get(), body);
   }
 
-  LLVMValueRef branch_condition(const Instruction &instruction, Values &state) {
+  LLVMValueRef branch_condition(const BlockInstruction &operation, Values &state) {
+    const auto &instruction = operation.instruction;
+    if (instruction.kind == Kind::bit_branch) { return memory_bits(operation, state); }
     if (instruction.kind == Kind::loop) { return loop_condition(instruction, state); }
     auto *ccr = state.ccr;
     if (instruction.condition == 0) { return LLVMConstInt(LLVMInt1TypeInContext(context_), 1, 0); }
@@ -209,46 +212,17 @@ private:
     LLVMValueRef taken = nullptr;
     LLVMValueRef destination = builder_.getInt16(next);
     LLVMValueRef cost = builder_.getInt64(timing.base);
-    if (instruction.kind == Kind::branch || instruction.kind == Kind::loop) {
-      taken = branch_condition(instruction, state);
+    if (instruction.kind == Kind::branch || instruction.kind == Kind::loop ||
+        instruction.kind == Kind::bit_branch) {
+      taken = branch_condition(operation, state);
       destination = builder_.CreateSelect(
           taken,
           builder_.getInt16(static_cast<cpu12::Address>(next + instruction.operand)),
           destination);
       cost =
           builder_.CreateSelect(taken, builder_.getInt64(timing.base + timing.taken_extra), cost);
-    } else if (instruction.kind == Kind::call || instruction.kind == Kind::jump) {
-      destination = control_value(operation, state);
-    } else if (frame_operand(instruction)) {
-      destination = instruction.kind == Kind::return_interrupt ? return_frame(operation, state)
-                                                               : wait_frame(operation, state, cost);
-    } else if (instruction.kind == Kind::effective_address) {
-      auto *value = effective_address(builder_, state, operation);
-      commit_index(builder_, state, instruction);
-      register_value(builder_, state, {.word = true, .target = instruction.target}, value);
-    } else if (stack_operand(instruction)) {
-      auto *previous = state.ccr;
-      destination = stack_value(operation, state);
-      if (mask_operation(instruction)) { interrupt_masks(previous, state.ccr, false); }
-    } else if (instruction.kind == Kind::memory_unary) {
-      memory_unary(operation, state);
-    } else if (instruction.kind == Kind::register_operation) {
-      if (instruction.operation == RegisterOp::decimal_adjust) {
-        validate_decimal(operation, state);
-      }
-      auto *previous = state.ccr;
-      lower_register(builder_, state, instruction);
-      if (mask_operation(instruction)) { interrupt_masks(previous, state.ccr); }
-    } else if (instruction.kind == Kind::transfer) {
-      auto *previous = state.ccr;
-      lower_transfer(builder_, state, instruction);
-      if (transfer_masks(instruction)) {
-        constexpr unsigned ignored = 8;
-        interrupt_masks(previous, state.ccr, (instruction.operand & ~ignored) == 2);
-      }
-    } else if (instruction.kind != Kind::nop) {
-      auto *operand = memory_operand(instruction) ? memory_value(operation, state) : nullptr;
-      lower(builder_, state, instruction, operand);
+    } else {
+      destination = effect(operation, state, destination, cost);
     }
     builder_.CreateStore(state.d, d_);
     builder_.CreateStore(state.x, x_);
@@ -270,6 +244,49 @@ private:
       LLVMPositionBuilderAtEnd(builder_.get(), flow_block);
     }
     continue_flow(operation, taken);
+  }
+
+  LLVMValueRef effect(const BlockInstruction &operation,
+                      Values &state,
+                      LLVMValueRef destination,
+                      LLVMValueRef &cost) {
+    const auto &instruction = operation.instruction;
+    if (instruction.kind == Kind::call || instruction.kind == Kind::jump) {
+      destination = control_value(operation, state);
+    } else if (frame_operand(instruction)) {
+      destination = instruction.kind == Kind::return_interrupt ? return_frame(operation, state)
+                                                               : wait_frame(operation, state, cost);
+    } else if (instruction.kind == Kind::effective_address) {
+      auto *value = effective_address(builder_, state, operation);
+      commit_index(builder_, state, instruction);
+      register_value(builder_, state, {.word = true, .target = instruction.target}, value);
+    } else if (stack_operand(instruction)) {
+      auto *previous = state.ccr;
+      destination = stack_value(operation, state);
+      if (mask_operation(instruction)) { interrupt_masks(previous, state.ccr, false); }
+    } else if (instruction.kind == Kind::memory_bits) {
+      static_cast<void>(memory_bits(operation, state));
+    } else if (instruction.kind == Kind::memory_unary) {
+      memory_unary(operation, state);
+    } else if (instruction.kind == Kind::register_operation) {
+      if (instruction.operation == RegisterOp::decimal_adjust) {
+        validate_decimal(operation, state);
+      }
+      auto *previous = state.ccr;
+      lower_register(builder_, state, instruction);
+      if (mask_operation(instruction)) { interrupt_masks(previous, state.ccr); }
+    } else if (instruction.kind == Kind::transfer) {
+      auto *previous = state.ccr;
+      lower_transfer(builder_, state, instruction);
+      if (transfer_masks(instruction)) {
+        constexpr unsigned ignored = 8;
+        interrupt_masks(previous, state.ccr, (instruction.operand & ~ignored) == 2);
+      }
+    } else if (instruction.kind != Kind::nop) {
+      auto *operand = memory_operand(instruction) ? memory_value(operation, state) : nullptr;
+      lower(builder_, state, instruction, operand);
+    }
+    return destination;
   }
 
   void continue_flow(const BlockInstruction &operation, LLVMValueRef taken) {
@@ -485,6 +502,39 @@ private:
     return result;
   }
 
+  LLVMValueRef memory_bits(const BlockInstruction &operation, Values &state) {
+    const auto &instruction = operation.instruction;
+    auto *at = effective_address(builder_, state, operation);
+    constexpr unsigned byte_mask = 0xff;
+    const bool branch = instruction.kind == Kind::bit_branch;
+    const Instruction read{.kind = branch ? Kind::bit_branch : Kind::load,
+                           .addressing = Addressing::indexed,
+                           .bit_mask = instruction.bit_mask};
+    auto *source = transfer(operation, read, {.address = at});
+    auto *mask = builder_.getInt32(instruction.bit_mask);
+    LLVMValueRef taken = nullptr;
+    if (branch) {
+      auto *selected = builder_.CreateAnd(source, mask);
+      taken =
+          builder_.CreateICmpEQ(selected, instruction.condition == 0 ? mask : builder_.getInt32(0));
+    } else {
+      auto *value =
+          instruction.condition == 0
+              ? builder_.CreateOr(source, mask)
+              : builder_.CreateAnd(source, builder_.getInt32(byte_mask ^ instruction.bit_mask));
+      const Instruction write{.kind = Kind::store, .addressing = Addressing::indexed};
+      static_cast<void>(transfer(operation, write, {.address = at, .value = value}));
+      state.ccr = flags(builder_,
+                        state.ccr,
+                        {.value = value,
+                         .carry_bit = builder_.CreateAnd(state.ccr, builder_.getInt32(carry)),
+                         .overflow_bit = builder_.getInt32(0),
+                         .width = 8});
+    }
+    commit_index(builder_, state, instruction);
+    return taken;
+  }
+
   void memory_unary(const BlockInstruction &operation, Values &state) {
     const auto &instruction = operation.instruction;
     auto *at = effective_address(builder_, state, operation);
@@ -625,7 +675,10 @@ bool supports(const Instruction &instruction) noexcept {
     return false;
   }
   if (instruction.kind == Kind::store) { return memory_operand(instruction); }
-  if (instruction.kind == Kind::memory_unary) { return memory_operand(instruction); }
+  if (instruction.kind == Kind::memory_unary || instruction.kind == Kind::memory_bits ||
+      instruction.kind == Kind::bit_branch) {
+    return memory_operand(instruction);
+  }
   if (instruction.kind == Kind::load || instruction.kind == Kind::compare) { return true; }
   if (instruction.kind == Kind::add || instruction.kind == Kind::subtract) {
     return !instruction.word || instruction.target == WordTarget::d;

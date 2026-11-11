@@ -172,8 +172,11 @@ void compatible(LLVMModuleRef module, LLVMModuleRef incoming) {
           "CPU12 binding bitcode requires explicit initialization outside compilation");
     }
   }
-  constexpr std::array names{
-      "cpu12_read_byte", "cpu12_read_word", "cpu12_write_byte", "cpu12_write_word"};
+  constexpr std::array names{"cpu12_read_byte",
+                             "cpu12_read_word",
+                             "cpu12_write_byte",
+                             "cpu12_write_word",
+                             "cpu12_read_masked_byte"};
   for (const auto *name : names) {
     auto *expected = LLVMGetNamedFunction(module, name);
     auto *actual = LLVMGetNamedFunction(incoming, name);

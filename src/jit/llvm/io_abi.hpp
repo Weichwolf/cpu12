@@ -7,6 +7,9 @@ struct NativeContext;
 }
 
 extern "C" {
+[[nodiscard]] std::uint32_t cpu12_read_masked_byte(cpu12::detail::NativeContext *context,
+                                                   std::uint16_t address,
+                                                   std::uint8_t mask) noexcept;
 [[nodiscard]] std::uint32_t cpu12_read_byte(cpu12::detail::NativeContext *context,
                                             std::uint16_t address) noexcept;
 [[nodiscard]] std::uint32_t cpu12_read_word(cpu12::detail::NativeContext *context,

@@ -143,33 +143,37 @@ void MemoryAccess::direct(const Memory &memory) {
 
 LLVMValueRef MemoryAccess::external() {
   const bool write = instruction_.kind == Kind::store;
+  const bool selected = instruction_.kind == Kind::bit_branch;
+  const unsigned count = write || selected ? 3U : 2U;
   auto *module = LLVMGetGlobalParent(function_);
   auto *context = LLVMGetModuleContext(module);
   const char *name = nullptr;
   if (write) {
     name = instruction_.word ? "cpu12_write_word" : "cpu12_write_byte";
+  } else if (selected) {
+    name = "cpu12_read_masked_byte";
   } else {
     name = instruction_.word ? "cpu12_read_word" : "cpu12_read_byte";
   }
   auto *value_type = instruction_.word ? builder_.getInt16Ty() : builder_.getInt8Ty();
   std::array parameters{LLVMTypeOf(owner_), builder_.getInt16Ty(), value_type};
-  auto *type = LLVMFunctionType(builder_.getInt32Ty(), parameters.data(), write ? 3U : 2U, 0);
+  auto *type = LLVMFunctionType(builder_.getInt32Ty(), parameters.data(), count, 0);
   auto *function = LLVMGetNamedFunction(module, name);
   if (function == nullptr) {
     function = LLVMAddFunction(module, name, type);
-    for (unsigned index = 2; index <= (write ? 3U : 2U); ++index) {
+    for (unsigned index = 2; index <= count; ++index) {
       LLVMAddAttributeAtIndex(
           function,
           index,
           LLVMCreateEnumAttribute(context, LLVMGetEnumAttributeKindForName("zeroext", 7), 0));
     }
   }
-  std::array arguments{owner_,
-                       builder_.CreateTrunc(address_, builder_.getInt16Ty()),
-                       write ? builder_.CreateTrunc(value_, value_type) : nullptr};
-  auto *call =
-      LLVMBuildCall2(builder_.get(), type, function, arguments.data(), write ? 3U : 2U, "");
-  for (unsigned index = 2; index <= (write ? 3U : 2U); ++index) {
+  LLVMValueRef last = nullptr;
+  if (write) { last = builder_.CreateTrunc(value_, value_type); }
+  if (selected) { last = builder_.getInt8(instruction_.bit_mask); }
+  std::array arguments{owner_, builder_.CreateTrunc(address_, builder_.getInt16Ty()), last};
+  auto *call = LLVMBuildCall2(builder_.get(), type, function, arguments.data(), count, "");
+  for (unsigned index = 2; index <= count; ++index) {
     LLVMAddCallSiteAttribute(
         call,
         index,

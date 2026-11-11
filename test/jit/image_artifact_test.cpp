@@ -142,6 +142,152 @@ void binding_execution(const ImageProgram &image, const std::pair<Byte, Byte> sa
   }
 }
 
+enum class BitSite : std::uint8_t {
+  set = 0,
+  select = 4,
+  clear_one = 9,
+  skip = 13,
+  clear_two = 15,
+  clear_branch = 19,
+  set_one = 24,
+  idle = 28
+};
+
+struct BitResult {
+  Registers registers = initial;
+  std::uint64_t cycles = 0;
+  Byte data;
+};
+
+struct BitInput {
+  unsigned budget;
+  Byte data;
+};
+
+BitResult bit_prefix(const BitInput point) {
+  BitResult result{.data = point.data};
+  auto pc = BitSite::set;
+  constexpr unsigned select = 0x80;
+  constexpr unsigned set = 0x40;
+  constexpr unsigned condition = 8;
+  constexpr unsigned retained = 0xf1;
+  for (unsigned retired = 0; retired < point.budget; ++retired) {
+    bool changed = false;
+    unsigned cycles = 4;
+    switch (pc) {
+      case BitSite::set:
+        result.data |= set;
+        pc = BitSite::select;
+        changed = true;
+        break;
+      case BitSite::select:
+        pc = (result.data & select) != 0 ? BitSite::clear_two : BitSite::clear_one;
+        cycles = 5;
+        break;
+      case BitSite::clear_one:
+        result.data &= byte_mask ^ 1U;
+        pc = BitSite::skip;
+        changed = true;
+        break;
+      case BitSite::skip:
+        pc = BitSite::clear_branch;
+        cycles = 3;
+        break;
+      case BitSite::clear_two:
+        result.data &= byte_mask ^ 2U;
+        pc = BitSite::clear_branch;
+        changed = true;
+        break;
+      case BitSite::clear_branch:
+        pc = (result.data & condition) == 0 ? BitSite::idle : BitSite::set_one;
+        cycles = 5;
+        break;
+      case BitSite::set_one:
+        result.data |= 1;
+        pc = BitSite::idle;
+        changed = true;
+        break;
+      case BitSite::idle: cycles = 3; break;
+      default: throw std::logic_error("Invalid independent bit prefix");
+    }
+    if (changed) {
+      result.registers.ccr =
+          static_cast<Byte>((result.registers.ccr & retained) | (result.data >= select ? 8U : 0U) |
+                            (result.data == 0 ? 4U : 0U));
+    }
+    result.cycles += cycles;
+  }
+  result.registers.pc = static_cast<Address>(entry + static_cast<Address>(pc));
+  return result;
+}
+
+void bit_artifacts(const std::span<const std::byte> bindings) {
+  const auto byte = [](const isa::Opcode operation) { return static_cast<Byte>(operation); };
+  const std::array<Byte, 30> code{byte(isa::Opcode::bset_extended),
+                                  0x12,
+                                  0x34,
+                                  0x40,
+                                  byte(isa::Opcode::brset_extended),
+                                  0x12,
+                                  0x34,
+                                  0x80,
+                                  6,
+                                  byte(isa::Opcode::bclr_extended),
+                                  0x12,
+                                  0x34,
+                                  1,
+                                  bra,
+                                  4,
+                                  byte(isa::Opcode::bclr_extended),
+                                  0x12,
+                                  0x34,
+                                  2,
+                                  byte(isa::Opcode::brclr_extended),
+                                  0x12,
+                                  0x34,
+                                  8,
+                                  4,
+                                  byte(isa::Opcode::bset_extended),
+                                  0x12,
+                                  0x34,
+                                  1,
+                                  bra,
+                                  backedge};
+  const std::array source{CodeSpan{.address = entry, .words = code}};
+  const std::array declarations{CodeVariant{.id = id, .code = source, .entries = entries}};
+  const std::array regions{RegionLayout{.first = entry, .size = code.size(), .writable = false}};
+  const std::array memory{VariantLayout{.id = id, .memory = regions}};
+  const ImageProgram image({.variants = declarations}, memory, bindings);
+  no_call_relocations(image.program(id).object());
+  auto executable = code;
+  Owner owner(image, id, Memory::window({.first = entry, .bytes = executable, .writable = false}));
+  for (unsigned data = 0; data <= byte_mask; ++data) {
+    for (unsigned budget = 0; budget <= 12; ++budget) {
+      std::array<Byte, address_bytes> ram{};
+      ram[input] = static_cast<Byte>(data);
+      auto wanted = ram;
+      const auto result = bit_prefix({.budget = budget, .data = static_cast<Byte>(data)});
+      wanted[input] = result.data;
+      owner.seed(initial);
+      owner.context.io.owner = ram.data();
+      require(owner.run(budget).retired == budget &&
+                  owner.context.cpu == State{.registers = result.registers, .failure = {}} &&
+                  owner.context.progress.estimated_cycles == result.cycles && ram == wanted,
+              "Fused C++ selected-byte bindings preserve actual bit branches, memory, flags and "
+              "prefixes");
+    }
+  }
+  const auto invalid =
+      binding("define i64 @cpu12_read_masked_byte(ptr %p, i16 %a, i8 %m) { ret i64 0 }");
+  bool rejected = false;
+  try {
+    static_cast<void>(ImageProgram({.variants = declarations}, memory, invalid));
+  } catch (const std::invalid_argument &error) {
+    rejected = std::string_view(error.what()).contains("ABI mismatch");
+  }
+  require(rejected, "Masked-byte bindings reject incompatible ABI before installation");
+}
+
 void rejected_bindings() {
   constexpr std::array<std::pair<std::string_view, std::string_view>, 9> inputs{
       {{"define i64 @cpu12_read_byte(ptr %p, i16 %a) { ret i64 0 }", "ABI mismatch"},
@@ -189,6 +335,7 @@ void artifact_contract() {
   no_call_relocations(program.object());
   for (const auto sample : std::span(samples).first(3)) { binding_execution(image, sample); }
   rejected_bindings();
+  bit_artifacts(bindings);
   binding_execution(image, samples.back());
 }
 }
