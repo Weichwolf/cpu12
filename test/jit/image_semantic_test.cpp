@@ -71,7 +71,8 @@ Semantic lower() {
                                          .bindings = {},
                                          .output = detail::llvm19::ArtifactOutput::semantic,
                                          .interrupts = requests,
-                                         .prepare_events = true});
+                                         .prepare_events = true,
+                                         .callbacks = {}});
   require(
       !program.bitcode().empty() && program.object().empty() && program.native_bytes() == 0 &&
           program.find(entry) == nullptr && bytes == original,

@@ -3,6 +3,7 @@
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
 #include "jit/image.hpp"
+#include "jit/llvm/callback_binding.hpp"
 #include "jit/llvm/program.hpp"
 
 #include <cstddef>
@@ -21,7 +22,8 @@ public:
                std::span<const VariantLayout> layouts,
                std::span<const std::byte> bindings = {},
                std::span<const InterruptRequest> interrupts = {},
-               std::span<const CodeTransition> transitions = {});
+               std::span<const CodeTransition> transitions = {},
+               std::span<const CallbackBinding> callbacks = {});
   ~ImageProgram();
   ImageProgram(const ImageProgram &) = delete;
   ImageProgram &operator=(const ImageProgram &) = delete;

@@ -6,6 +6,7 @@
 #include "immutable.hpp"
 #include "jit/block.hpp"
 #include "jit/image.hpp"
+#include "jit/llvm/callback_binding.hpp"
 #include "jit/llvm/lift.hpp"
 #include "jit/llvm/program.hpp"
 
@@ -88,7 +89,8 @@ public:
                 const std::span<const VariantLayout> layouts,
                 const std::span<const std::byte> linked,
                 const std::span<const InterruptRequest> interrupts,
-                const std::span<const CodeTransition> transitions)
+                const std::span<const CodeTransition> transitions,
+                const std::span<const CallbackBinding> callbacks)
       : plan(image, transitions) {
     for (const auto layout : layouts) {
       if (!bindings.emplace(layout.id, std::vector(layout.memory.begin(), layout.memory.end()))
@@ -125,7 +127,8 @@ public:
                              .bindings = linked,
                              .output = ArtifactOutput::native,
                              .interrupts = interrupts,
-                             .prepare_events = true}));
+                             .prepare_events = true,
+                             .callbacks = callbacks}));
     }
   }
 
@@ -147,8 +150,9 @@ ImageProgram::ImageProgram(const CodeImage image,
                            const std::span<const VariantLayout> layouts,
                            const std::span<const std::byte> bindings,
                            const std::span<const InterruptRequest> interrupts,
-                           const std::span<const CodeTransition> transitions)
-    : impl_(std::make_unique<Impl>(image, layouts, bindings, interrupts, transitions)) {}
+                           const std::span<const CodeTransition> transitions,
+                           const std::span<const CallbackBinding> callbacks)
+    : impl_(std::make_unique<Impl>(image, layouts, bindings, interrupts, transitions, callbacks)) {}
 
 ImageProgram::~ImageProgram() = default;
 

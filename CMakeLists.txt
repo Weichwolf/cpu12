@@ -88,6 +88,7 @@ add_library(cpu12_core STATIC
   src/jit/llvm/stack.cpp
   src/jit/image.cpp src/jit/llvm/image.cpp
   src/jit/llvm/artifact.cpp
+  src/jit/llvm/callbacks.cpp src/jit/llvm/runtime_bitcode.cpp
   src/jit/block_parse.cpp src/jit/preparation.cpp
   src/jit/block_plan.cpp
   src/jit/arena.cpp
@@ -105,6 +106,19 @@ else()
   set(cpu12_native_option -march=native)
 endif()
 target_compile_options(cpu12_core PUBLIC $<$<CONFIG:Release>:${cpu12_native_option}>)
+add_library(cpu12-runtime-bitcode OBJECT src/runtime.cpp)
+target_include_directories(cpu12-runtime-bitcode PRIVATE include src)
+# Instrument adapter IR with the generated program after fusion.
+target_link_libraries(cpu12-runtime-bitcode PRIVATE cpu12_diagnostics)
+target_compile_options(cpu12-runtime-bitcode PRIVATE -O3 -emit-llvm ${cpu12_native_option})
+set_target_properties(cpu12-runtime-bitcode PROPERTIES INTERPROCEDURAL_OPTIMIZATION_RELEASE OFF)
+set(cpu12_runtime_bitcode "${CMAKE_CURRENT_BINARY_DIR}/runtime_bitcode.inc")
+add_custom_command(OUTPUT "${cpu12_runtime_bitcode}"
+  COMMAND "${CMAKE_COMMAND}" "-DINPUT=$<TARGET_OBJECTS:cpu12-runtime-bitcode>"
+    "-DOUTPUT=${cpu12_runtime_bitcode}" -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedBitcode.cmake"
+  DEPENDS cpu12-runtime-bitcode $<TARGET_OBJECTS:cpu12-runtime-bitcode> cmake/EmbedBitcode.cmake VERBATIM)
+target_sources(cpu12_core PRIVATE "${cpu12_runtime_bitcode}")
+target_include_directories(cpu12_core PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
 if(NOT APPLE)
   target_link_options(cpu12_core PUBLIC -fuse-ld=lld)
 endif()
@@ -285,14 +299,22 @@ if(BUILD_TESTING AND CPU12_BUILD_TESTING)
   target_link_libraries(cpu12-image-bindings PRIVATE cpu12_diagnostics)
   target_compile_options(cpu12-image-bindings PRIVATE -emit-llvm ${cpu12_native_option})
   set_target_properties(cpu12-image-bindings PROPERTIES INTERPROCEDURAL_OPTIMIZATION_RELEASE OFF)
+  add_library(cpu12-public-bindings OBJECT test/jit/public_io_bindings.cpp)
+  target_include_directories(cpu12-public-bindings PRIVATE include test/support)
+  target_link_libraries(cpu12-public-bindings PRIVATE cpu12_diagnostics)
+  target_compile_options(cpu12-public-bindings PRIVATE -emit-llvm ${cpu12_native_option})
+  set_target_properties(cpu12-public-bindings PROPERTIES INTERPROCEDURAL_OPTIMIZATION_RELEASE OFF)
   add_executable(cpu12-image-test test/jit/image_test.cpp test/jit/image_contract_test.cpp
-    test/jit/image_artifact_test.cpp test/jit/image_semantic_test.cpp)
+    test/jit/image_artifact_test.cpp test/jit/image_semantic_test.cpp
+    test/jit/image_callbacks_test.cpp test/jit/image_callbacks_events.cpp
+    test/jit/image_callbacks_masked.cpp test/jit/public_io_bindings.cpp)
   target_include_directories(cpu12-image-test PRIVATE src test/support)
   target_include_directories(cpu12-image-test SYSTEM PRIVATE ${LLVM_INCLUDE_DIRS})
   target_link_libraries(cpu12-image-test PRIVATE cpu12::core LLVM)
   target_compile_definitions(cpu12-image-test PRIVATE
-    CPU12_IMAGE_BINDINGS="$<TARGET_OBJECTS:cpu12-image-bindings>")
-  add_dependencies(cpu12-image-test cpu12-image-bindings)
+    CPU12_IMAGE_BINDINGS="$<TARGET_OBJECTS:cpu12-image-bindings>"
+    CPU12_PUBLIC_BINDINGS="$<TARGET_OBJECTS:cpu12-public-bindings>")
+  add_dependencies(cpu12-image-test cpu12-image-bindings cpu12-public-bindings)
   add_test(NAME complete-code-images COMMAND cpu12-image-test)
   set_tests_properties(complete-code-images PROPERTIES TIMEOUT 30)
   add_executable(cpu12-image-export test/jit/image_export.cpp)

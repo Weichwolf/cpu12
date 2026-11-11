@@ -240,6 +240,7 @@ void link_bindings(LLVMModuleRef module, const std::span<const std::byte> bytes)
   verify(incoming.get());
   compatible(module, incoming.get());
   address_constants(incoming.get());
+  LLVMSetDataLayout(incoming.get(), LLVMGetDataLayoutStr(module));
   LLVMSetTarget(incoming.get(), LLVMGetTarget(module));
   std::vector<std::string> functions;
   std::vector<std::string> globals;

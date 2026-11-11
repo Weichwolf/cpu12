@@ -3,6 +3,7 @@
 #include "cpu12/memory.hpp"
 #include "instruction.hpp"
 #include "jit/block.hpp"
+#include "jit/llvm/callback_binding.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -25,6 +26,7 @@ struct ProgramOptions {
   ArtifactOutput output = ArtifactOutput::none;
   std::span<const InterruptRequest> interrupts;
   bool prepare_events = false;
+  std::span<const CallbackBinding> callbacks;
 };
 
 class Program {

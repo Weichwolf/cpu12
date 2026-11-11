@@ -7,6 +7,7 @@
 #include "instruction.hpp"
 #include "jit/block.hpp"
 #include "jit/llvm/artifact.hpp"
+#include "jit/llvm/callbacks.hpp"
 #include "jit/llvm/events.hpp"
 #include "jit/llvm/flow.hpp"
 #include "jit/llvm/io_abi.hpp"
@@ -15,6 +16,7 @@
 #include "jit/llvm/memory.hpp"
 #include "jit/llvm/native.hpp"
 #include "jit/llvm/regions.hpp"
+#include "jit/llvm/runtime_bitcode.hpp"
 #include "jit/llvm/stack.hpp"
 #include "jit/preparation.hpp"
 #include "runtime.hpp"
@@ -315,9 +317,11 @@ public:
 };
 
 Program::Program(const std::span<const BlockInstruction> instructions, const Memory &memory)
-    : Program(
-          instructions,
-          {.memory = {.source = memory, .bindings = memory}, .bindings = {}, .interrupts = {}}) {}
+    : Program(instructions,
+              {.memory = {.source = memory, .bindings = memory},
+               .bindings = {},
+               .interrupts = {},
+               .callbacks = {}}) {}
 
 Program::Program(const std::span<const BlockInstruction> instructions, const ProgramOptions options)
     : impl_(std::make_unique<Impl>()) {
@@ -351,7 +355,9 @@ Program::Program(const std::span<const BlockInstruction> instructions, const Pro
                                            options.interrupts,
                                            options.output != ArtifactOutput::none)
                              : std::map<std::uint64_t, std::string>{};
+  if (!options.callbacks.empty()) { link_bindings(module.get(), runtime_bitcode()); }
   link_bindings(module.get(), options.bindings);
+  link_callbacks(module.get(), options.callbacks);
   if (options.output != ArtifactOutput::none) {
     for (const auto &region : functions) {
       for (const auto &operation : region) { impl_->symbols.emplace(operation.pc, name(region)); }
