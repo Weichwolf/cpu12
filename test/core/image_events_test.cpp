@@ -7,7 +7,6 @@
 #include "isa.hpp"
 
 #include <array>
-#include <cstddef>
 #include <cstdint>
 
 namespace cpu12::test::image {

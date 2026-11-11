@@ -7,7 +7,6 @@
 #include "isa.hpp"
 
 #include <array>
-#include <cstddef>
 #include <span>
 
 namespace cpu12::test::image {
