@@ -35,7 +35,7 @@ std::vector<InterruptRequest> interrupts(const std::span<const InterruptRequest>
 NativeImage::Impl::Impl(const CodeImage image, const CompileOptions options)
     : interrupts(cpu12::interrupts(options.interrupts)),
       program(std::make_shared<const detail::llvm19::ImageProgram>(
-          image, options.memory, std::span<const std::byte>{}, interrupts)),
+          image, options.memory, std::span<const std::byte>{}, interrupts, options.transitions)),
       report(program->report()) {}
 
 NativeImage::NativeImage(std::shared_ptr<const Impl> image) noexcept : impl_(std::move(image)) {}

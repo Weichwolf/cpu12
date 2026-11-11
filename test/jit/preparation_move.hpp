@@ -198,7 +198,8 @@ inline NativeImage compile(const Source &source, const bool external) {
       .id = variant, .memory = std::span(regions).first(external ? 1 : regions.size())}};
   const std::array variants{
       CodeVariant{.id = variant, .code = source.spans, .entries = source.entries}};
-  return Core::compile({.variants = variants}, {.memory = layouts, .interrupts = {}});
+  return Core::compile({.variants = variants},
+                       {.memory = layouts, .interrupts = {}, .transitions = {}});
 }
 
 void bus_cases();

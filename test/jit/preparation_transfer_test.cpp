@@ -123,7 +123,8 @@ NativeImage compile(const Source &source) {
   const std::array regions{
       RegionLayout{.first = entry, .size = source.bytes.size(), .writable = false}};
   const std::array layouts{VariantLayout{.id = variant_id, .memory = regions}};
-  return Core::compile({.variants = variants}, {.memory = layouts, .interrupts = {}});
+  return Core::compile({.variants = variants},
+                       {.memory = layouts, .interrupts = {}, .transitions = {}});
 }
 
 Registers seed(const Site site, const std::size_t index, const Byte ccr) {

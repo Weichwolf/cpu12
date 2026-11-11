@@ -87,8 +87,9 @@ public:
   explicit Impl(const CodeImage image,
                 const std::span<const VariantLayout> layouts,
                 const std::span<const std::byte> linked,
-                const std::span<const InterruptRequest> interrupts)
-      : plan(image) {
+                const std::span<const InterruptRequest> interrupts,
+                const std::span<const CodeTransition> transitions)
+      : plan(image, transitions) {
     for (const auto layout : layouts) {
       if (!bindings.emplace(layout.id, std::vector(layout.memory.begin(), layout.memory.end()))
                .second) {
@@ -145,10 +146,15 @@ public:
 ImageProgram::ImageProgram(const CodeImage image,
                            const std::span<const VariantLayout> layouts,
                            const std::span<const std::byte> bindings,
-                           const std::span<const InterruptRequest> interrupts)
-    : impl_(std::make_unique<Impl>(image, layouts, bindings, interrupts)) {}
+                           const std::span<const InterruptRequest> interrupts,
+                           const std::span<const CodeTransition> transitions)
+    : impl_(std::make_unique<Impl>(image, layouts, bindings, interrupts, transitions)) {}
 
 ImageProgram::~ImageProgram() = default;
+
+const std::map<Address, std::uint64_t> &ImageProgram::transitions(const std::uint64_t id) const {
+  return impl_->variant(id).transitions;
+}
 
 const Program &ImageProgram::program(const std::uint64_t id) const {
   static_cast<void>(impl_->variant(id));

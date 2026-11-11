@@ -158,7 +158,8 @@ void image_contracts() {
   rejects(
       [&] {
         static_cast<void>(
-            Core::compile({.variants = variants}, {.memory = layouts, .interrupts = duplicated}));
+            Core::compile({.variants = variants},
+                          {.memory = layouts, .interrupts = duplicated, .transitions = {}}));
       },
       "duplicate interrupt contracts");
   constexpr auto invalid = static_cast<InterruptKind>(0xff);
@@ -166,7 +167,8 @@ void image_contracts() {
   rejects(
       [&] {
         static_cast<void>(
-            Core::compile({.variants = variants}, {.memory = layouts, .interrupts = invalid_kind}));
+            Core::compile({.variants = variants},
+                          {.memory = layouts, .interrupts = invalid_kind, .transitions = {}}));
       },
       "invalid interrupt kind");
 }

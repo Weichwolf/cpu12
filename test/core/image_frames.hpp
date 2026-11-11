@@ -63,7 +63,8 @@ inline NativeImage compile(const std::span<const RegionLayout> layout) {
       entry, static_cast<Address>(entry + 4), static_cast<Address>(entry + 9)};
   const std::array variants{CodeVariant{.id = variant_id, .code = spans, .entries = entries}};
   const std::array layouts{VariantLayout{.id = variant_id, .memory = layout}};
-  return Core::compile({.variants = variants}, {.memory = layouts, .interrupts = requests});
+  return Core::compile({.variants = variants},
+                       {.memory = layouts, .interrupts = requests, .transitions = {}});
 }
 
 struct Fixture {

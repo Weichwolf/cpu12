@@ -137,9 +137,16 @@ struct VariantLayout {
   std::span<const RegionLayout> memory;
 };
 
+struct CodeTransition {
+  std::uint64_t from, to;
+  Address entry;
+};
+
 struct CompileOptions {
   std::span<const VariantLayout> memory;
   std::span<const InterruptRequest> interrupts;
+  // An absent resident target may yield only to this explicitly prepared version.
+  std::span<const CodeTransition> transitions;
 };
 
 class NativeImage {
@@ -169,7 +176,7 @@ public:
   // A live read-only view, valid for this Core lifetime; inspect on the execution owner.
   [[nodiscard]] const State &state() const noexcept;
   [[nodiscard]] Progress progress() const noexcept;
-  // An explicit fresh boundary clears a latched fault; coordinate bus state externally.
+  // Clears a latched fault. Pending code transfers require installation or reset.
   void set_registers(Registers registers);
   // An installed image requires a matching install after every explicit remap.
   void set_memory(Memory memory);
@@ -184,8 +191,8 @@ public:
   [[nodiscard]] EventResult interrupt(InterruptRequest request);
   // Report an asserted masked XIRQ while stopped; no vector is serviced.
   [[nodiscard]] EventResult resume_from_stop();
-  // Runs until a fault, sleep or instruction-counter limit. Explicit limits are
-  // available for deterministic control; the default needs no consumer quantum.
+  // Runs until a fault, sleep, prepared transfer or instruction-counter limit.
+  // Explicit limits give deterministic control; the default needs no consumer quantum.
   [[nodiscard]] RunResult
   run(std::uint32_t instruction_budget = std::numeric_limits<std::uint32_t>::max());
   // Nominal internal-bus deadline; external waits and device time belong to the

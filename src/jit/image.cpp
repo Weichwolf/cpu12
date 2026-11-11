@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "jit/image.hpp"
 
+#include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
 #include "fetch.hpp"
 #include "instruction.hpp"
@@ -61,7 +62,15 @@ void decode(std::map<Address, BlockInstruction> &instructions,
   }
 }
 
-void validate(const std::map<Address, BlockInstruction> &instructions, const CodeVariant variant) {
+void validate(const std::map<Address, BlockInstruction> &instructions,
+              const CodeVariant variant,
+              const std::map<Address, std::uint64_t> &transitions) {
+  for (const auto &[entry, target] : transitions) {
+    static_cast<void>(target);
+    if (instructions.contains(entry)) {
+      reject(variant.id, entry, "transition entry is already resident in its source variant");
+    }
+  }
   for (const auto entry : variant.entries) {
     if (!instructions.contains(entry)) {
       reject(variant.id, entry, "entry is not a declared instruction boundary");
@@ -71,7 +80,7 @@ void validate(const std::map<Address, BlockInstruction> &instructions, const Cod
     const auto flow = successors(operation);
     const auto first = operation.instruction.kind == Kind::call ? 1U : 0U;
     for (unsigned edge = first; edge < flow.count; ++edge) {
-      if (!instructions.contains(flow.direct[edge])) {
+      if (!instructions.contains(flow.direct[edge]) && !transitions.contains(flow.direct[edge])) {
         reject(variant.id,
                pc,
                "direct successor=" + std::to_string(flow.direct[edge]) +
@@ -81,7 +90,8 @@ void validate(const std::map<Address, BlockInstruction> &instructions, const Cod
   }
 }
 
-ImagePlan::Variant analyze(const CodeVariant variant) {
+ImagePlan::Variant analyze(const CodeVariant variant,
+                           const std::map<Address, std::uint64_t> &transitions) {
   if (variant.code.empty() || variant.entries.empty()) {
     reject(variant.id, 0, "code spans and entries must be nonempty");
   }
@@ -89,11 +99,12 @@ ImagePlan::Variant analyze(const CodeVariant variant) {
   for (const auto span : variant.code) { collect(source, variant, span); }
   std::map<Address, BlockInstruction> instructions;
   for (const auto span : variant.code) { decode(instructions, variant, span); }
-  validate(instructions, variant);
+  validate(instructions, variant, transitions);
   ImagePlan::Variant result{.id = variant.id,
                             .code = {},
                             .instructions = {},
-                            .entries = {variant.entries.begin(), variant.entries.end()}};
+                            .entries = {variant.entries.begin(), variant.entries.end()},
+                            .transitions = transitions};
   result.instructions.reserve(instructions.size());
   for (const auto &[pc, operation] : instructions) { result.instructions.push_back(operation); }
   for (const auto span : variant.code) {
@@ -105,15 +116,36 @@ ImagePlan::Variant analyze(const CodeVariant variant) {
   result.entries.erase(unique.begin(), unique.end());
   return result;
 }
-}
 
-ImagePlan::ImagePlan(const CodeImage image) {
-  if (image.variants.empty()) { throw std::invalid_argument("CPU12 code image has no variants"); }
+std::map<std::uint64_t, std::map<Address, std::uint64_t>>
+transfers(const CodeImage image, const std::span<const CodeTransition> transitions) {
+  std::map<std::uint64_t, std::map<Address, std::uint64_t>> result;
   for (const auto variant : image.variants) {
-    if (std::ranges::any_of(variants_, [&](const auto &other) { return other.id == variant.id; })) {
+    if (!result.emplace(variant.id, std::map<Address, std::uint64_t>{}).second) {
       reject(variant.id, 0, "duplicate variant identity");
     }
-    variants_.push_back(analyze(variant));
+  }
+  for (const auto transition : transitions) {
+    if (!result.contains(transition.from) || !result.contains(transition.to) ||
+        transition.from == transition.to ||
+        !result.at(transition.from).emplace(transition.entry, transition.to).second) {
+      reject(transition.from, transition.entry, "invalid or ambiguous code transition");
+    }
+    const auto target = std::ranges::find(image.variants, transition.to, &CodeVariant::id);
+    if (std::ranges::find(target->entries, transition.entry) == target->entries.end()) {
+      reject(
+          transition.to, transition.entry, "transition target is not a declared destination entry");
+    }
+  }
+  return result;
+}
+}
+
+ImagePlan::ImagePlan(const CodeImage image, const std::span<const CodeTransition> transitions) {
+  if (image.variants.empty()) { throw std::invalid_argument("CPU12 code image has no variants"); }
+  const auto declared = transfers(image, transitions);
+  for (const auto variant : image.variants) {
+    variants_.push_back(analyze(variant, declared.at(variant.id)));
   }
 }
 }

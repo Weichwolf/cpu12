@@ -230,6 +230,9 @@ void Core::request_yield() noexcept {
 
 void Core::set_registers(const Registers registers) {
   if (impl_->active) { throw std::logic_error("Cannot replace registers during CPU12 execution"); }
+  if (impl_->jit.transition_pending()) {
+    throw std::logic_error("Cannot replace registers during a pending CPU12 transition");
+  }
   impl_->context.cpu.registers = registers;
   impl_->context.cpu.failure = {};
   impl_->context.fault = Fault::none;
@@ -279,6 +282,7 @@ RunResult Core::run_instruction(const std::span<const std::uint8_t> bytes) {
     return result;
   }
   if (impl_->context.cpu.failure.fault != Fault::none) { return impl_->context.cpu.failure; }
+  if (impl_->jit.transition_pending()) { return result; }
   if (!impl_->supported) {
     result.fault = Fault::unsupported_host;
     return result;
@@ -391,6 +395,7 @@ EventResult Core::reset(const std::uint16_t vector) noexcept {
     result.fault = Fault::unsupported_host;
     return result;
   }
+  impl_->jit.cancel_transition();
   impl_->context.cpu.failure = {};
   impl_->context.fault = Fault::none;
   impl_->context.cpu.irq_delay = 0;
@@ -412,7 +417,8 @@ EventResult Core::reset(const std::uint16_t vector) noexcept {
 }
 
 bool Core::interrupt_ready(const InterruptKind kind) const noexcept {
-  if (impl_->active || !impl_->supported || impl_->context.cpu.failure.fault != Fault::none) {
+  if (impl_->active || !impl_->supported || impl_->context.cpu.failure.fault != Fault::none ||
+      impl_->jit.transition_pending()) {
     return false;
   }
   constexpr unsigned irq = 0x10;
@@ -426,13 +432,17 @@ bool Core::interrupt_ready(const InterruptKind kind) const noexcept {
 }
 
 bool Core::interrupt_frame_available() const noexcept {
-  if (impl_->active || impl_->context.cpu.failure.fault != Fault::none) { return false; }
+  if (impl_->active || impl_->context.cpu.failure.fault != Fault::none ||
+      impl_->jit.transition_pending()) {
+    return false;
+  }
   return impl_->context.cpu.execution != ExecutionState::running ||
          impl_->context.cpu.returned_frame;
 }
 
 void Core::close_return_window() {
-  if (impl_->active || impl_->context.cpu.failure.fault != Fault::none) {
+  if (impl_->active || impl_->context.cpu.failure.fault != Fault::none ||
+      impl_->jit.transition_pending()) {
     throw std::logic_error("Cannot close an active or failed CPU12 return boundary");
   }
   impl_->context.cpu.returned_frame = false;
@@ -480,6 +490,7 @@ EventResult Core::interrupt(const InterruptRequest request) {
 
 EventResult Core::resume_from_stop() {
   EventResult result{.pc = impl_->context.cpu.registers.pc};
+  if (impl_->jit.transition_pending()) { return result; }
   if (impl_->active) {
     result.fault = Fault::reentrant;
     return result;

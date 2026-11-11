@@ -21,7 +21,8 @@ inline NativeImage compile() {
   const std::array variants{first.variant(first_id), second.variant(second_id)};
   const std::array layouts{VariantLayout{.id = first_id, .memory = layout},
                            VariantLayout{.id = second_id, .memory = layout}};
-  return Core::compile({.variants = variants}, {.memory = layouts, .interrupts = interrupts});
+  return Core::compile({.variants = variants},
+                       {.memory = layouts, .interrupts = interrupts, .transitions = {}});
 }
 
 template <class Action> void rejects(Action action, const std::string_view reason) {

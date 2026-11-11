@@ -324,6 +324,13 @@ if(BUILD_TESTING AND CPU12_BUILD_TESTING)
   target_link_libraries(cpu12-image-frames-test PRIVATE cpu12::core)
   add_test(NAME installed-native-frames COMMAND cpu12-image-frames-test)
   set_tests_properties(installed-native-frames PROPERTIES TIMEOUT 30)
+  add_executable(cpu12-image-transitions-test test/core/image_transitions_test.cpp
+    test/core/image_transitions_contract.cpp test/core/image_transitions_control.cpp
+    test/core/image_transitions_state.cpp)
+  target_include_directories(cpu12-image-transitions-test PRIVATE test/support)
+  target_link_libraries(cpu12-image-transitions-test PRIVATE cpu12::core)
+  add_test(NAME installed-image-transitions COMMAND cpu12-image-transitions-test)
+  set_tests_properties(installed-image-transitions PROPERTIES TIMEOUT 60)
   add_executable(cpu12-preparation-regions-test test/jit/preparation_regions_test.cpp)
   target_include_directories(cpu12-preparation-regions-test PRIVATE test/support)
   target_link_libraries(cpu12-preparation-regions-test PRIVATE cpu12::core)

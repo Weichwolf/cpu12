@@ -7,6 +7,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <span>
 
@@ -19,7 +20,8 @@ public:
   ImageProgram(CodeImage image,
                std::span<const VariantLayout> layouts,
                std::span<const std::byte> bindings = {},
-               std::span<const InterruptRequest> interrupts = {});
+               std::span<const InterruptRequest> interrupts = {},
+               std::span<const CodeTransition> transitions = {});
   ~ImageProgram();
   ImageProgram(const ImageProgram &) = delete;
   ImageProgram &operator=(const ImageProgram &) = delete;
@@ -27,6 +29,7 @@ public:
   [[nodiscard]] const void *entry(std::uint64_t id, Address pc) const;
   [[nodiscard]] std::span<const BlockInstruction> instructions(std::uint64_t id) const;
   [[nodiscard]] PreparationReport report() const noexcept;
+  [[nodiscard]] const std::map<Address, std::uint64_t> &transitions(std::uint64_t id) const;
   void validate_binding(std::uint64_t id, const Memory &memory) const;
 
 private:

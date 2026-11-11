@@ -5,6 +5,7 @@
 #include "jit/block.hpp"
 
 #include <cstdint>
+#include <map>
 #include <span>
 #include <vector>
 
@@ -15,7 +16,7 @@ using cpu12::CodeVariant;
 
 class ImagePlan {
 public:
-  explicit ImagePlan(CodeImage image);
+  explicit ImagePlan(CodeImage image, std::span<const CodeTransition> transitions = {});
 
   struct Variant {
     struct Source {
@@ -27,6 +28,7 @@ public:
     std::vector<Source> code;
     std::vector<BlockInstruction> instructions;
     std::vector<Address> entries;
+    std::map<Address, std::uint64_t> transitions;
   };
 
   [[nodiscard]] std::span<const Variant> variants() const noexcept { return variants_; }

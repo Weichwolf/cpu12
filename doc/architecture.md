@@ -74,11 +74,27 @@ runtime bindings. Link eligible host IR before final O3 for these entries too.
 Install a selected variant with `Core::install(image, variant)` on its stopped
 owner. Validate original immutable source bytes and the actual complete memory
 layout, build the native entry index, and bind the already compiled event entries.
-Installation generates no machine code. Publish only the complete successful binding and retain
-shared code ownership. Installation executes no guest instructions or device
+Installation generates no machine code. Publish only the complete successful
+binding and retain shared code ownership. Installation executes no guest instructions or device
 callbacks and changes no architectural state, memory or time. A rejected install
 preserves the complete previous binding. Fault recovery remains an explicit
 register/reset boundary.
+
+Declare finite source-version handoffs with `CompileOptions::transitions`, using
+`CodeTransition{from, to, entry}`. The source must not contain that instruction
+entry; the target must name it as an established entry. Reject unknown identities,
+self transfers and ambiguous declarations before lowering. An encoded absent
+successor requires such a declaration; unknown dynamic targets remain errors.
+
+After actual instruction or accepted IRQ execution reaches a declared target,
+return the completed prefix without fault and retain the required image/variant.
+The current register PC identifies the destination; subsequent execution retires
+nothing until the same image's target is installed. Preserve the pending identity
+across remaps and rejected installations, including source/layout failures.
+Register replacement, captured execution, preparation and new IRQ admission must
+not bypass this boundary. Reset cancels it through the real reset transaction.
+Selection preserves stack/flags, WAI state, RTI return windows, fresh interrupt
+deferrals and nominal progress. Never replay the loader or its final transfer.
 
 Installed execution uses prepared native entries exclusively through run, step
 and explicit instruction APIs. An unknown PC or undeclared hardware event fails

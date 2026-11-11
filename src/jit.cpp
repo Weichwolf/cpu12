@@ -24,6 +24,7 @@
 #include <bitset>
 #include <cstddef>
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <optional>
 #include <span>
@@ -110,6 +111,7 @@ struct Mapping {
   std::bitset<address_bytes> unavailable;
   std::bitset<address_bytes> prepared;
   std::shared_ptr<const llvm19::ImageProgram> image;
+  std::map<Address, std::uint64_t> transitions;
   std::uint64_t variant = 0;
 
   void install(Address address, const void *entry) {
@@ -143,12 +145,51 @@ struct Mapping {
 
 class Jit::Impl {
 public:
+  struct Transfer {
+    std::shared_ptr<const llvm19::ImageProgram> image;
+    std::uint64_t variant;
+    Address entry;
+  };
+
   ExecutableArena arena;
   std::vector<std::unique_ptr<llvm19::Program>> programs;
   std::vector<std::unique_ptr<Mapping>> mappings;
   std::unique_ptr<Mapping> image_binding;
   Mapping *current = nullptr;
   Statistics statistics;
+  std::optional<Transfer> pending;
+
+  void completed_transfer(const Address pc, NativeContext &context) {
+    const auto target = current->transitions.find(pc);
+    if (target == current->transitions.end()) { return; }
+    pending = Transfer{.image = current->image, .variant = target->second, .entry = pc};
+    context.yield_requested = true;
+  }
+
+  [[nodiscard]] PreparationReport prepared_image(const std::span<const Address> entries) const {
+    if (pending.has_value()) {
+      const auto pc = pending->entry;
+      return {.unresolved_entries = 1,
+              .failure = {.fault = Fault::unprepared_execution, .pc = pc, .address = pc}};
+    }
+    PreparationReport report;
+    std::bitset<address_bytes> unresolved;
+    if (current->image) {
+      report.prepared_entries = current->image->instructions(current->variant).size();
+    }
+    for (const auto address : entries) {
+      if (!current->image || current->image->program(current->variant).find(address) == nullptr) {
+        if (report.failure.fault == Fault::none) {
+          report.failure = {
+              .fault = Fault::unprepared_execution, .pc = address, .address = address};
+        }
+        unresolved[address] = true;
+      }
+    }
+    if (!current->image && entries.empty()) { report.failure.fault = Fault::unprepared_execution; }
+    report.unresolved_entries = unresolved.count();
+    return report;
+  }
 
   [[nodiscard]] std::vector<BlockInstruction>
   reuse_prepared(Mapping &mapping, const std::span<const BlockInstruction> instructions) {
@@ -218,10 +259,15 @@ void Jit::set_memory(const Memory &memory) {
 void Jit::install(std::shared_ptr<const llvm19::ImageProgram> image,
                   const std::uint64_t variant,
                   const std::span<const InterruptRequest> interrupts) {
+  const auto &pending = impl_->pending;
+  if (pending.has_value() && (pending->image != image || pending->variant != variant)) {
+    throw std::invalid_argument("Pending CPU12 transition requires its declared image and variant");
+  }
   image->validate_binding(variant, impl_->current->memory);
   auto mapping = std::make_unique<Mapping>(impl_->current->memory);
   mapping->image = std::move(image);
   mapping->variant = variant;
+  mapping->transitions = mapping->image->transitions(variant);
   for (const auto &operation : mapping->image->instructions(variant)) {
     mapping->install(operation.pc, mapping->image->entry(variant, operation.pc));
     mapping->prepared[operation.pc] = true;
@@ -242,10 +288,19 @@ void Jit::install(std::shared_ptr<const llvm19::ImageProgram> image,
   mapping->blocks.emplace(stop_event_key, Entry{.code = wake});
   impl_->image_binding = std::move(mapping);
   impl_->current = impl_->image_binding.get();
+  impl_->pending.reset();
 }
 
 bool Jit::requires_image() const noexcept {
   return impl_->image_binding != nullptr;
+}
+
+bool Jit::transition_pending() const noexcept {
+  return impl_->pending.has_value();
+}
+
+void Jit::cancel_transition() noexcept {
+  impl_->pending.reset();
 }
 
 Fault Jit::validate_instruction(const Address pc, const std::span<const Byte> bytes) const {
@@ -263,27 +318,7 @@ Fault Jit::validate_instruction(const Address pc, const std::span<const Byte> by
 
 PreparationReport Jit::prepare(const std::span<const Address> established_entries) {
   auto *const mapping = impl_->current;
-  if (requires_image()) {
-    PreparationReport report;
-    std::bitset<address_bytes> unresolved;
-    if (mapping->image) {
-      report.prepared_entries = mapping->image->instructions(mapping->variant).size();
-    }
-    for (const auto address : established_entries) {
-      if (!mapping->image || mapping->image->program(mapping->variant).find(address) == nullptr) {
-        if (report.failure.fault == Fault::none) {
-          report.failure = {
-              .fault = Fault::unprepared_execution, .pc = address, .address = address};
-        }
-        unresolved[address] = true;
-      }
-    }
-    if (!mapping->image && established_entries.empty()) {
-      report.failure.fault = Fault::unprepared_execution;
-    }
-    report.unresolved_entries = unresolved.count();
-    return report;
-  }
+  if (requires_image()) { return impl_->prepared_image(established_entries); }
   auto graph = preparation_graph(mapping->memory, established_entries);
   PreparationReport report{.failure = graph.failure};
   std::bitset<address_bytes> unresolved;
@@ -375,6 +410,10 @@ bool Jit::execute(const std::span<const std::uint8_t> bytes,
 
 NativeResult
 Jit::run_prepared(const std::uint32_t budget, Registers &registers, NativeContext &context) {
+  if (impl_->pending) {
+    context.yield_requested = true;
+    return {.location = {.pc = registers.pc}};
+  }
   auto &mapping = *impl_->current;
   const auto address = unsigned{registers.pc};
   const auto *page = mapping.native_regions[address >> native_page_shift];
@@ -397,6 +436,7 @@ Jit::run_prepared(const std::uint32_t budget, Registers &registers, NativeContex
     if (instruction != nullptr && instruction->kind != Kind::return_interrupt) {
       context.cpu.returned_frame = false;
     }
+    impl_->completed_transfer(registers.pc, context);
   }
   return result;
 }
@@ -451,6 +491,7 @@ void Jit::interrupt(const InterruptRequest request, Registers &registers, Native
     ++impl_->statistics.compiled_entries;
   }
   enter(found->second.code, registers, context);
+  if (context.fault == Fault::none) { impl_->completed_transfer(registers.pc, context); }
 }
 
 void Jit::resume_stop(Registers &registers, NativeContext &context) {
