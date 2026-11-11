@@ -221,6 +221,13 @@ private:
       auto *previous = state.ccr;
       lower_register(builder_, state, instruction);
       if (mask_operation(instruction)) { interrupt_masks(previous, state.ccr); }
+    } else if (instruction.kind == Kind::transfer) {
+      auto *previous = state.ccr;
+      lower_transfer(builder_, state, instruction);
+      if (transfer_masks(instruction)) {
+        constexpr unsigned ignored = 8;
+        interrupt_masks(previous, state.ccr, (instruction.operand & ~ignored) == 2);
+      }
     } else if (instruction.kind != Kind::nop) {
       auto *operand = memory_operand(instruction) ? memory_value(operation, state) : nullptr;
       lower(builder_, state, instruction, operand);
@@ -393,7 +400,8 @@ private:
     return (instruction.kind == Kind::register_operation &&
             (instruction.operation == RegisterOp::ccr_and ||
              instruction.operation == RegisterOp::ccr_or)) ||
-           (instruction.kind == Kind::pull && instruction.stack_target == StackTarget::ccr);
+           (instruction.kind == Kind::pull && instruction.stack_target == StackTarget::ccr) ||
+           transfer_masks(instruction);
   }
 
   void interrupt_masks(LLVMValueRef previous, LLVMValueRef current, const bool defer = true) {
@@ -568,7 +576,9 @@ bool supports(const Instruction &instruction) noexcept {
       instruction.kind == Kind::effective_address) {
     return true;
   }
-  if (instruction.kind == Kind::register_operation) { return true; }
+  if (instruction.kind == Kind::register_operation || instruction.kind == Kind::transfer) {
+    return true;
+  }
   if (stack_operand(instruction) || frame_operand(instruction) || instruction.kind == Kind::jump) {
     return true;
   }

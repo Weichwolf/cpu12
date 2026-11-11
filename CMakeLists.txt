@@ -83,6 +83,7 @@ add_library(cpu12_core STATIC
   src/jit/llvm/indexed.cpp
   src/jit/llvm/flow.cpp
   src/jit/llvm/registers.cpp
+  src/jit/llvm/transfer.cpp
   src/jit/llvm/stack.cpp
   src/jit/image.cpp src/jit/llvm/image.cpp
   src/jit/llvm/artifact.cpp
@@ -234,6 +235,11 @@ if(BUILD_TESTING AND CPU12_BUILD_TESTING)
   target_link_libraries(cpu12-preparation-lea-test PRIVATE cpu12::core)
   add_test(NAME optimized-effective-addresses COMMAND cpu12-preparation-lea-test)
   set_tests_properties(optimized-effective-addresses PROPERTIES TIMEOUT 120)
+  add_executable(cpu12-preparation-transfer-test test/jit/preparation_transfer_test.cpp)
+  target_include_directories(cpu12-preparation-transfer-test PRIVATE test/support)
+  target_link_libraries(cpu12-preparation-transfer-test PRIVATE cpu12::core)
+  add_test(NAME optimized-register-transfers COMMAND cpu12-preparation-transfer-test)
+  set_tests_properties(optimized-register-transfers PROPERTIES TIMEOUT 60)
   add_executable(cpu12-native-flow-test test/jit/native_flow_test.cpp test/jit/native_flow_reuse.cpp)
   target_include_directories(cpu12-native-flow-test PRIVATE src test/support)
   target_link_libraries(cpu12-native-flow-test PRIVATE cpu12::core)
