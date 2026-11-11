@@ -198,6 +198,10 @@ private:
     } else if (frame_operand(instruction)) {
       destination = instruction.kind == Kind::return_interrupt ? return_frame(operation, state)
                                                                : wait_frame(operation, state, cost);
+    } else if (instruction.kind == Kind::effective_address) {
+      auto *value = effective_address(builder_, state, operation);
+      commit_index(builder_, state, instruction);
+      register_value(builder_, state, {.word = true, .target = instruction.target}, value);
     } else if (stack_operand(instruction)) {
       auto *previous = state.ccr;
       destination = stack_value(operation, state);
@@ -546,7 +550,10 @@ LLVMValueRef lift(LLVMModuleRef module,
 }
 
 bool supports(const Instruction &instruction) noexcept {
-  if (instruction.kind == Kind::nop || instruction.kind == Kind::branch) { return true; }
+  if (instruction.kind == Kind::nop || instruction.kind == Kind::branch ||
+      instruction.kind == Kind::effective_address) {
+    return true;
+  }
   if (instruction.kind == Kind::register_operation) { return true; }
   if (stack_operand(instruction) || frame_operand(instruction) || instruction.kind == Kind::jump) {
     return true;
