@@ -8,6 +8,7 @@
 #include "jit/llvm/program.hpp"
 #include "jit/prefixes.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -194,6 +195,96 @@ void stack_counter() {
           "Actual native DBNE updates SP despite having no ordinary memory access");
 }
 
+struct Transfers {
+  static constexpr std::size_t count = 198, stride = 7;
+  std::array<Byte, count * stride> bytes{};
+  std::array<Address, count> entries{};
+
+  Transfers() {
+    constexpr auto prototype = isa::program(isa::opcode<isa::Opcode::tfr>(),
+                                            std::array<Byte, 1>{0},
+                                            isa::opcode<isa::Opcode::staa_extended>(),
+                                            std::array<Byte, 2>{0x12, 0x34},
+                                            isa::opcode<isa::Opcode::bra_relative>(),
+                                            std::array<Byte, 1>{0xfe});
+    std::size_t index = 0;
+    const auto append = [&](const Byte opcode, const Byte operand) {
+      const auto offset = index * stride;
+      std::ranges::copy(prototype, bytes.begin() + static_cast<std::ptrdiff_t>(offset));
+      bytes[offset] = opcode;
+      bytes[offset + 1] = operand;
+      entries[index++] = static_cast<Address>(entry + offset);
+    };
+    constexpr Byte transfer = 0xb7;
+    constexpr Byte prefix = 0x18;
+    constexpr unsigned selector_mask = 7;
+    constexpr unsigned source_shift = 4;
+    for (unsigned operand = 0; operand < byte_values; ++operand) {
+      if (((operand >> source_shift) & selector_mask) == 3 || (operand & selector_mask) == 3) {
+        continue;
+      }
+      append(transfer, static_cast<Byte>(operand));
+    }
+    append(prefix, 0x0e);
+    append(prefix, 0x0f);
+    require(index == count, "Exercise all TFR/EXG ignored-bit aliases and both flagged transfers");
+  }
+};
+
+void transfer_prefixes() {
+  Transfers input;
+  const std::array code{CodeSpan{.address = entry, .words = input.bytes}};
+  const std::array variants{CodeVariant{.id = variant, .code = code, .entries = input.entries}};
+  const auto memory = Memory::window({.first = entry, .bytes = input.bytes, .writable = false});
+  const detail::ImagePlan plan({.variants = variants});
+  const auto prefixes = detail::foreground_prefixes(plan.variants().front().instructions, memory);
+  constexpr std::size_t preserving = 122;
+  std::size_t positive = 0;
+  for (const auto pc : input.entries) {
+    if (prefixes.at(pc) != 0) { ++positive; }
+  }
+  require(positive == preserving,
+          "Seventy TFR aliases, fifty data-only EXG aliases and TAB/TBA preserve the context");
+  const std::array region{
+      RegionLayout{.first = entry, .size = input.bytes.size(), .writable = false}};
+  const std::array layouts{VariantLayout{.id = variant, .memory = region}};
+  const auto image = Core::compile(
+      {.variants = variants},
+      {.memory = layouts, .interrupts = {}, .transitions = {}, .callbacks = {}, .bindings = {}});
+  Probe probe;
+  Io io{.owner = &probe, .write = Probe::write};
+  Core core(memory, &io);
+  probe.core = &core;
+  core.set_registers({.pc = entry});
+  core.install(image, variant);
+  constexpr std::array seeds{Registers{.d = 0x7f80, .x = 0x1234, .y = 0xabcd, .sp = 0xfffe},
+                             Registers{.d = 0xffff, .x = 0, .y = 0x1234, .sp = 0x7000},
+                             Registers{.d = 0, .x = 0xffff, .y = 0x8000, .sp = 0}};
+  constexpr Byte irq_masks = 0x50;
+  for (const auto pc : input.entries) {
+    const auto bound = prefixes.at(pc);
+    const unsigned cycles = input.bytes[pc - entry] == 0x18 ? 2 : 1;
+    require(bound == 0 || bound == cycles,
+            "The bound reaches the next real owner write at its exact native transfer cost");
+    for (auto seed : seeds) {
+      seed.pc = pc;
+      for (unsigned masks = 0; masks < byte_values; ++masks) {
+        seed.ccr = static_cast<Byte>(masks);
+        core.set_registers(seed);
+        const auto before = core.progress().estimated_cycles;
+        const auto result = core.run(16);
+        const auto actual = core.registers();
+        require(result.fault == Fault::memory_write && result.retired == 1 && result.pc == pc + 2 &&
+                    probe.cycles - before == cycles && probe.address == output,
+                "Actual native execution reaches precisely the predicted owner-write prefix");
+        require(bound == 0 ||
+                    (actual.sp == seed.sp && (actual.ccr & irq_masks) == (seed.ccr & irq_masks)),
+                "Every positive bound preserves the actual stack and both IRQ admission masks");
+      }
+    }
+  }
+}
+
 void asynchronous_entry() {
   constexpr Address handler = 0x4100;
   constexpr Address vector = 0xfff4;
@@ -257,6 +348,7 @@ int main() try {
   native_prefixes();
   layouts_and_boundaries();
   stack_counter();
+  transfer_prefixes();
   asynchronous_entry();
 } catch (const std::exception &error) {
 

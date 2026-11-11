@@ -20,11 +20,24 @@
 
 namespace cpu12::detail {
 namespace {
+bool transfer_context(const Instruction &instruction) {
+  constexpr unsigned selector_mask = 7;
+  constexpr unsigned source_shift = 4;
+  constexpr unsigned ccr_selector = 2;
+  constexpr unsigned stack_selector = 7;
+  constexpr unsigned exchange_mask = 0x80;
+  const auto destination = instruction.operand & selector_mask;
+  const auto source = (instruction.operand >> source_shift) & selector_mask;
+  const bool exchange = (instruction.operand & exchange_mask) != 0;
+  return destination == ccr_selector || destination == stack_selector ||
+         (exchange && (source == ccr_selector || source == stack_selector));
+}
+
 bool context_boundary(const Instruction &instruction) {
   // New stack or mask state invalidates an interrupt-entry guarantee.
   return instruction.indexed.indirect ||
          (instruction.indexed.base == IndexBase::sp && instruction.indexed.update != 0) ||
-         instruction.kind == Kind::transfer ||
+         (instruction.kind == Kind::transfer && transfer_context(instruction)) ||
          ((instruction.kind == Kind::load || instruction.kind == Kind::effective_address ||
            (instruction.kind == Kind::loop && instruction.operation != RegisterOp::test)) &&
           instruction.target == WordTarget::sp) ||
