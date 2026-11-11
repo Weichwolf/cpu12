@@ -288,6 +288,58 @@ void bit_artifacts(const std::span<const std::byte> bindings) {
   require(rejected, "Masked-byte bindings reject incompatible ABI before installation");
 }
 
+void move_artifacts(const std::span<const std::byte> bindings) {
+  constexpr Byte post_one = 0x30;
+  constexpr Byte pre_one = 0x20;
+  const auto code = isa::program(isa::opcode<isa::Opcode::movw_indexed_to_indexed>(),
+                                 std::array<Byte, 2>{0, 1},
+                                 isa::opcode<isa::Opcode::movw_indexed_to_indexed>(),
+                                 std::array<Byte, 2>{post_one, pre_one},
+                                 std::array<Byte, 2>{bra, backedge});
+  const std::array source{CodeSpan{.address = entry, .words = code}};
+  const std::array declarations{CodeVariant{.id = id, .code = source, .entries = entries}};
+  const std::array regions{RegionLayout{.first = entry, .size = code.size(), .writable = false}};
+  const std::array memory{VariantLayout{.id = id, .memory = regions}};
+  const ImageProgram image({.variants = declarations}, memory, bindings);
+  no_call_relocations(image.program(id).object());
+  auto executable = code;
+  Owner owner(image, id, Memory::window({.first = entry, .bytes = executable, .writable = false}));
+  for (unsigned data = 0; data <= byte_mask; ++data) {
+    for (unsigned budget = 0; budget <= 6; ++budget) {
+      std::array<Byte, address_bytes> ram{};
+      ram[input] = static_cast<Byte>(data);
+      constexpr Byte other = 0xa5;
+      ram[input + 1] = static_cast<Byte>(data ^ other);
+      auto wanted = ram;
+      auto before = initial;
+      before.x = input;
+      auto registers = before;
+      std::uint64_t cycles = 0;
+      if (budget >= 1) {
+        wanted[input + 1] = static_cast<Byte>(data);
+        wanted[input + 2] = static_cast<Byte>(data ^ other);
+        registers.pc += 4;
+        cycles += 5;
+      }
+      if (budget >= 2) {
+        wanted[input + 2] = static_cast<Byte>(data);
+        wanted[input + 3] = static_cast<Byte>(data);
+        registers.pc += 4;
+        registers.x += 2;
+        cycles += 5;
+      }
+      if (budget > 2) { cycles += std::uint64_t{budget - 2} * 3; }
+      owner.seed(before);
+      owner.context.io.owner = ram.data();
+      require(owner.run(budget).retired == budget &&
+                  owner.context.cpu == State{.registers = registers, .failure = {}} &&
+                  owner.context.progress.estimated_cycles == cycles && ram == wanted,
+              "Fused C++ MOV word bindings preserve overlapping source snapshots, sequential "
+              "shared indices and exact native prefixes");
+    }
+  }
+}
+
 void rejected_bindings() {
   constexpr std::array<std::pair<std::string_view, std::string_view>, 9> inputs{
       {{"define i64 @cpu12_read_byte(ptr %p, i16 %a) { ret i64 0 }", "ABI mismatch"},
@@ -336,6 +388,7 @@ void artifact_contract() {
   for (const auto sample : std::span(samples).first(3)) { binding_execution(image, sample); }
   rejected_bindings();
   bit_artifacts(bindings);
+  move_artifacts(bindings);
   binding_execution(image, samples.back());
 }
 }

@@ -33,6 +33,28 @@ void indirect_binding() {
           "A standalone indirect JMP retains its actual pointer-read topology across rebinding");
 }
 
+void move_binding() {
+  constexpr Address destination = 0x2000;
+  constexpr Byte payload = 0x5a;
+  auto code = isa::program(isa::opcode<isa::Opcode::movw_immediate_to_extended>(),
+                           std::array<Byte, 4>{payload, payload, 0x20, 0},
+                           idle_code);
+  const std::array spans{CodeSpan{.address = entry, .words = code}};
+  const std::array<Address, 1> entries{entry};
+  const std::array variants{CodeVariant{.id = variant_id, .code = spans, .entries = entries}};
+  const detail::ImagePlan plan({.variants = variants});
+  const auto &instructions = plan.variants()[0].instructions;
+  std::array<Byte, 2> data{};
+  const std::array original{Ram{.first = destination, .bytes = data},
+                            Ram{.first = entry, .bytes = code, .writable = false}};
+  const std::array changed{Ram{.first = destination, .bytes = std::span(data).first(1)},
+                           original[1]};
+  const detail::llvm19::Program program(instructions, Memory::mapped(original));
+  require(program.find(instructions, Memory::mapped(original)) != nullptr &&
+              program.find(instructions, Memory::mapped(changed)) == nullptr,
+          "MOV retains its real memory topology despite its immediate outer addressing descriptor");
+}
+
 void address_binding() {
   constexpr Byte stack_base = 0x80;
   std::array<Byte, 4> code{
@@ -59,6 +81,7 @@ void address_binding() {
 void reuse() {
   indirect_binding();
   address_binding();
+  move_binding();
   const std::array variants{CodeVariant{.id = variant_id, .code = spans, .entries = entries}};
   const detail::ImagePlan plan({.variants = variants});
   const auto &instructions = plan.variants()[0].instructions;

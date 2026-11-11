@@ -154,7 +154,8 @@ bool matches(const std::span<const Encoding> source, const Memory &memory) {
 bool needs_bindings(const Instruction &instruction) {
   if (instruction.kind == Kind::effective_address) { return false; }
   if (instruction.kind == Kind::jump) { return instruction.indexed.indirect; }
-  return memory_operand(instruction) || stack_operand(instruction) || frame_operand(instruction);
+  return memory_operand(instruction) || stack_operand(instruction) || frame_operand(instruction) ||
+         instruction.kind == Kind::move;
 }
 
 Owner<LLVMTargetMachineRef, LLVMDisposeTargetMachine> target_machine(const ArtifactOutput output) {

@@ -237,7 +237,7 @@ private:
         (static_cast<std::uint64_t>(instruction.opcode) << cpu12::detail::native_opcode_shift);
     builder_.CreateStore(builder_.getInt64(location), location_);
     if (memory_operand(instruction) || stack_operand(instruction) || frame_operand(instruction) ||
-        mask_operation(instruction)) {
+        mask_operation(instruction) || instruction.kind == Kind::move) {
       auto *flow_block = LLVMAppendBasicBlockInContext(context_, function_, "resume");
       LLVMBuildCondBr(
           builder_.get(), load(boundary_, LLVMInt1TypeInContext(context_)), done_, flow_block);
@@ -264,6 +264,8 @@ private:
       auto *previous = state.ccr;
       destination = stack_value(operation, state);
       if (mask_operation(instruction)) { interrupt_masks(previous, state.ccr, false); }
+    } else if (instruction.kind == Kind::move) {
+      move(operation, state);
     } else if (instruction.kind == Kind::memory_bits) {
       static_cast<void>(memory_bits(operation, state));
     } else if (instruction.kind == Kind::memory_unary) {
@@ -502,6 +504,33 @@ private:
     return result;
   }
 
+  void move(const BlockInstruction &operation, Values &state) {
+    const auto &instruction = operation.instruction;
+    const auto operand = [&](const MoveOperand value, const Kind kind) {
+      return BlockInstruction{.instruction = {.kind = kind,
+                                              .length = instruction.length,
+                                              .addressing = value.addressing,
+                                              .address = value.value,
+                                              .word = instruction.word,
+                                              .indexed = value.indexed},
+                              .pc = operation.pc};
+    };
+    const auto source = operand(instruction.move_source, Kind::load);
+    const auto destination = operand(instruction.move_destination, Kind::store);
+    auto pending = state;
+    auto *value = source.instruction.addressing == Addressing::immediate
+                      ? builder_.getInt32(source.instruction.address)
+                      : transfer(operation,
+                                 source.instruction,
+                                 {.address = effective_address(builder_, pending, source)});
+    commit_index(builder_, pending, source.instruction);
+    auto *at = effective_address(builder_, pending, destination);
+    static_cast<void>(
+        transfer(operation, destination.instruction, {.address = at, .value = value}));
+    commit_index(builder_, pending, destination.instruction);
+    state = pending;
+  }
+
   LLVMValueRef memory_bits(const BlockInstruction &operation, Values &state) {
     const auto &instruction = operation.instruction;
     auto *at = effective_address(builder_, state, operation);
@@ -665,7 +694,8 @@ bool supports(const Instruction &instruction) noexcept {
       instruction.kind == Kind::loop || instruction.kind == Kind::effective_address) {
     return true;
   }
-  if (instruction.kind == Kind::register_operation || instruction.kind == Kind::transfer) {
+  if (instruction.kind == Kind::register_operation || instruction.kind == Kind::transfer ||
+      instruction.kind == Kind::move) {
     return true;
   }
   if (stack_operand(instruction) || frame_operand(instruction) || instruction.kind == Kind::jump) {
