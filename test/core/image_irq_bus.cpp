@@ -7,7 +7,6 @@
 #include "interrupt_model.hpp"
 
 #include <array>
-#include <cstddef>
 #include <cstdint>
 #include <span>
 
