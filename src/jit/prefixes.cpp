@@ -25,7 +25,8 @@ bool context_boundary(const Instruction &instruction) {
   return instruction.indexed.indirect ||
          (instruction.indexed.base == IndexBase::sp && instruction.indexed.update != 0) ||
          instruction.kind == Kind::transfer ||
-         ((instruction.kind == Kind::load || instruction.kind == Kind::effective_address) &&
+         ((instruction.kind == Kind::load || instruction.kind == Kind::effective_address ||
+           (instruction.kind == Kind::loop && instruction.operation != RegisterOp::test)) &&
           instruction.target == WordTarget::sp) ||
          (instruction.kind == Kind::register_operation &&
           (instruction.operation == RegisterOp::ccr_and ||

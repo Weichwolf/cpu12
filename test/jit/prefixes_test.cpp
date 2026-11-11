@@ -164,6 +164,36 @@ void layouts_and_boundaries() {
           "An indirect pointer read is not assumed to be a pure address calculation");
 }
 
+void stack_counter() {
+  constexpr Byte counter = 0x27;
+  constexpr Byte self_branch = 0xfe;
+  constexpr Address initial_stack = 3;
+  auto bytes = isa::program(isa::opcode<isa::Opcode::dbne_relative>(),
+                            std::array<Byte, 2>{counter, 0},
+                            isa::opcode<isa::Opcode::bra_relative>(),
+                            std::array<Byte, 1>{self_branch});
+  const std::array code{CodeSpan{.address = entry, .words = bytes}};
+  constexpr std::array entries{entry};
+  const std::array versions{CodeVariant{.id = variant, .code = code, .entries = entries}};
+  const auto memory = Memory::window({.first = entry, .bytes = bytes, .writable = false});
+  const detail::ImagePlan plan({.variants = versions});
+  require(detail::foreground_prefixes(plan.variants().front().instructions, memory).at(entry) == 0,
+          "A stack-pointer loop counter ends the old interrupt-entry context");
+  const std::array region{RegionLayout{.first = entry, .size = bytes.size(), .writable = false}};
+  const std::array layouts{VariantLayout{.id = variant, .memory = region}};
+  const auto image = Core::compile(
+      {.variants = versions},
+      {.memory = layouts, .interrupts = {}, .transitions = {}, .callbacks = {}, .bindings = {}});
+  Core core(memory);
+  core.set_registers({.pc = entry, .sp = initial_stack});
+  core.install(image, variant);
+  const auto result = core.run(1);
+  require(result.retired == 1 && result.fault == Fault::none &&
+              core.registers().sp == initial_stack - 1 && core.registers().pc == entry + 3 &&
+              core.progress().estimated_cycles == 3,
+          "Actual native DBNE updates SP despite having no ordinary memory access");
+}
+
 void asynchronous_entry() {
   constexpr Address handler = 0x4100;
   constexpr Address vector = 0xfff4;
@@ -226,6 +256,7 @@ int main() try {
   control_flow();
   native_prefixes();
   layouts_and_boundaries();
+  stack_counter();
   asynchronous_entry();
 } catch (const std::exception &error) {
 
