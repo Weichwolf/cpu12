@@ -158,9 +158,10 @@ struct ImageSource {
         hash.add(static_cast<std::uint64_t>(region.tracked));
       }
       hash.add(variant.transitions.size());
-      for (const auto [entry, target] : variant.transitions) {
+      for (const auto &[entry, targets] : variant.transitions) {
         hash.add(entry);
-        hash.add(target);
+        hash.add(targets.size());
+        for (const auto target : targets) { hash.add(target); }
       }
     }
     hash.add(interrupts.size());
@@ -251,7 +252,7 @@ ImageProgram::ImageProgram(const ImageProgram &semantic, const NativeSymbols &sy
 
 ImageProgram::~ImageProgram() = default;
 
-const std::map<Address, std::uint64_t> &ImageProgram::transitions(const std::uint64_t id) const {
+const CodeTargets &ImageProgram::transitions(const std::uint64_t id) const {
   return impl_->variant(id).transitions;
 }
 

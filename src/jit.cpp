@@ -11,6 +11,7 @@
 #include "jit/arena.hpp"
 #include "jit/block.hpp"
 #include "jit/emitter.hpp"
+#include "jit/image.hpp"
 #include "jit/interrupt.hpp"
 #include "jit/llvm/image.hpp"
 #include "jit/llvm/lift.hpp"
@@ -24,7 +25,6 @@
 #include <bitset>
 #include <cstddef>
 #include <cstdint>
-#include <map>
 #include <memory>
 #include <optional>
 #include <span>
@@ -111,7 +111,7 @@ struct Mapping {
   std::bitset<address_bytes> unavailable;
   std::bitset<address_bytes> prepared;
   std::shared_ptr<const llvm19::ImageProgram> image;
-  std::map<Address, std::uint64_t> transitions;
+  const CodeTargets *transitions = nullptr;
   std::uint64_t variant = 0;
 
   void install(Address address, const void *entry) {
@@ -147,7 +147,7 @@ class Jit::Impl {
 public:
   struct Transfer {
     std::shared_ptr<const llvm19::ImageProgram> image;
-    std::uint64_t variant;
+    std::span<const std::uint64_t> variants;
     Address entry;
   };
 
@@ -160,9 +160,11 @@ public:
   std::optional<Transfer> pending;
 
   void completed_transfer(const Address pc, NativeContext &context) {
-    const auto target = current->transitions.find(pc);
-    if (target == current->transitions.end()) { return; }
-    pending = Transfer{.image = current->image, .variant = target->second, .entry = pc};
+    const auto *targets = current->transitions;
+    if (targets == nullptr) { return; }
+    const auto target = targets->find(pc);
+    if (target == targets->end()) { return; }
+    pending = Transfer{.image = current->image, .variants = target->second, .entry = pc};
     context.yield_requested = true;
   }
 
@@ -260,14 +262,16 @@ void Jit::install(std::shared_ptr<const llvm19::ImageProgram> image,
                   const std::uint64_t variant,
                   const std::span<const InterruptRequest> interrupts) {
   const auto &pending = impl_->pending;
-  if (pending.has_value() && (pending->image != image || pending->variant != variant)) {
+  if (pending.has_value() &&
+      (pending->image != image ||
+       std::ranges::find(pending->variants, variant) == pending->variants.end())) {
     throw std::invalid_argument("Pending CPU12 transition requires its declared image and variant");
   }
   image->validate_binding(variant, impl_->current->memory);
   auto mapping = std::make_unique<Mapping>(impl_->current->memory);
   mapping->image = std::move(image);
   mapping->variant = variant;
-  mapping->transitions = mapping->image->transitions(variant);
+  mapping->transitions = &mapping->image->transitions(variant);
   for (const auto &operation : mapping->image->instructions(variant)) {
     mapping->install(operation.pc, mapping->image->entry(variant, operation.pc));
     mapping->prepared[operation.pc] = true;

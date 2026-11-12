@@ -56,9 +56,12 @@ register/reset boundary, not a side effect of installing code.
 
 Declared cross-version transfers return the completed prefix without replaying
 the jump. Retain registers, stacks, captured events and nominal progress; validate
-and install exactly the required prepared destination. Remaps or source changes
-revoke dependent callers/targets. Unrelated RAM must not force retranslation of
-independent code. Unknown entries and undeclared events fail before new decoding
+and install a matching declared prepared destination. A source/entry may name
+several finite destinations, checked against actual immutable code and memory
+layout; duplicate triples remain errors. Pending choices borrow immutable image
+metadata under retained ownership, including across remaps and rejected installs.
+Remaps or source changes revoke dependent callers/targets. Unrelated RAM must not
+force retranslation of independent code. Unknown entries and undeclared events fail before new decoding
 or emission; no production interpreter or ordinary-emitter coverage fallback.
 
 ## Native code and validation

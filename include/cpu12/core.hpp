@@ -153,7 +153,7 @@ struct CallbackBinding {
 struct CompileOptions {
   std::span<const VariantLayout> memory;
   std::span<const InterruptRequest> interrupts;
-  // An absent resident target may yield only to this explicitly prepared version.
+  // An absent resident target may yield only to these explicitly prepared versions.
   std::span<const CodeTransition> transitions;
   std::span<const CallbackBinding> callbacks;
   std::span<const std::byte> bindings;

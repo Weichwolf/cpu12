@@ -64,7 +64,7 @@ void decode(std::map<Address, BlockInstruction> &instructions,
 
 void validate(const std::map<Address, BlockInstruction> &instructions,
               const CodeVariant variant,
-              const std::map<Address, std::uint64_t> &transitions) {
+              const CodeTargets &transitions) {
   for (const auto &[entry, target] : transitions) {
     static_cast<void>(target);
     if (instructions.contains(entry)) {
@@ -90,8 +90,7 @@ void validate(const std::map<Address, BlockInstruction> &instructions,
   }
 }
 
-ImagePlan::Variant analyze(const CodeVariant variant,
-                           const std::map<Address, std::uint64_t> &transitions) {
+ImagePlan::Variant analyze(const CodeVariant variant, const CodeTargets &transitions) {
   if (variant.code.empty() || variant.entries.empty()) {
     reject(variant.id, 0, "code spans and entries must be nonempty");
   }
@@ -117,18 +116,17 @@ ImagePlan::Variant analyze(const CodeVariant variant,
   return result;
 }
 
-std::map<std::uint64_t, std::map<Address, std::uint64_t>>
-transfers(const CodeImage image, const std::span<const CodeTransition> transitions) {
-  std::map<std::uint64_t, std::map<Address, std::uint64_t>> result;
+std::map<std::uint64_t, CodeTargets> transfers(const CodeImage image,
+                                               const std::span<const CodeTransition> transitions) {
+  std::map<std::uint64_t, CodeTargets> result;
   for (const auto variant : image.variants) {
-    if (!result.emplace(variant.id, std::map<Address, std::uint64_t>{}).second) {
+    if (!result.emplace(variant.id, CodeTargets{}).second) {
       reject(variant.id, 0, "duplicate variant identity");
     }
   }
   for (const auto transition : transitions) {
     if (!result.contains(transition.from) || !result.contains(transition.to) ||
-        transition.from == transition.to ||
-        !result.at(transition.from).emplace(transition.entry, transition.to).second) {
+        transition.from == transition.to) {
       reject(transition.from, transition.entry, "invalid or ambiguous code transition");
     }
     const auto target = std::ranges::find(image.variants, transition.to, &CodeVariant::id);
@@ -136,6 +134,12 @@ transfers(const CodeImage image, const std::span<const CodeTransition> transitio
       reject(
           transition.to, transition.entry, "transition target is not a declared destination entry");
     }
+    auto &targets = result.at(transition.from)[transition.entry];
+    if (std::ranges::find(targets, transition.to) != targets.end()) {
+      reject(transition.from, transition.entry, "invalid or ambiguous code transition");
+    }
+    targets.push_back(transition.to);
+    std::ranges::sort(targets);
   }
   return result;
 }

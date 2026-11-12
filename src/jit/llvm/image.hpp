@@ -40,7 +40,7 @@ public:
   [[nodiscard]] std::uint64_t foreground_prefix(std::uint64_t id, Address pc) const;
   [[nodiscard]] std::uint64_t
   interrupt_entry_prefix(std::uint64_t id, const State &state, const Memory &memory) const;
-  [[nodiscard]] const std::map<Address, std::uint64_t> &transitions(std::uint64_t id) const;
+  [[nodiscard]] const CodeTargets &transitions(std::uint64_t id) const;
   void validate_binding(std::uint64_t id, const Memory &memory) const;
 
 private:

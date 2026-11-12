@@ -13,6 +13,7 @@ namespace cpu12::detail {
 using cpu12::CodeImage;
 using cpu12::CodeSpan;
 using cpu12::CodeVariant;
+using CodeTargets = std::map<Address, std::vector<std::uint64_t>>;
 
 class ImagePlan {
 public:
@@ -28,7 +29,7 @@ public:
     std::vector<Source> code;
     std::vector<BlockInstruction> instructions;
     std::vector<Address> entries;
-    std::map<Address, std::uint64_t> transitions;
+    CodeTargets transitions;
   };
 
   [[nodiscard]] std::span<const Variant> variants() const noexcept { return variants_; }
