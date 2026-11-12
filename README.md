@@ -1,13 +1,14 @@
 # cpu12
 
-Independent CPU12/HC12 native JIT. C++23, Linux x86-64,
-macOS ARM64, GPL-3.0-only. See OBJECTIVE.md for complete-ISA acceptance.
+Independent CPU12/HC12 native translator. C++23, Linux x86-64 and macOS ARM64,
+GPL-3.0-only. [OBJECTIVE.md](OBJECTIVE.md) defines acceptance;
+[doc/architecture.md](doc/architecture.md) defines the current target.
 
 ## Build
 
-LLVM 19.1 development libraries, llvm-extract, llvm-link, CMake, Ninja, clang-format-19 and clang-tidy-19
-are required. Linux packages include `llvm-19-dev`; Homebrew `llvm@19` contains
-the compiler, headers and shared library.
+Use packaged LLVM19/Clang with development headers/shared library, llvm-extract,
+llvm-link, CMake, Ninja, clang-format and clang-tidy. Linux uses llvm-19-dev;
+macOS uses brew install llvm@19 llvm ninja ccache. No foreign source builds.
 
 ```sh
 cmake --preset release
@@ -16,65 +17,16 @@ ctest --preset release
 cmake --build --preset release --target bench
 ```
 
-`strict` enables ASan/UBSan; `thread` selects separate TSan. Ccache is used when
-available. Use packaged dependencies; third-party source is not built or sanitized.
-On macOS use `brew install llvm@19 llvm ninja ccache`. The compiler remains LLVM 19;
-for current macOS versions select the packaged current Clang sanitizer runtime:
+Release selects optimized code without sanitizers. strict selects Debug with
+ASan/UBSan; thread selects separate TSan. Preserve strict warnings/linking,
+clang-tidy and formatting. Instrument our code/generated code, never packaged
+foreign libraries. On current macOS, keep the LLVM19 compiler and select the
+packaged current Clang sanitizer runtime:
 
 ```sh
 export LLVM19_RESOURCE_DIR="$("$(brew --prefix llvm)/bin/clang" -print-resource-dir)"
 cmake --preset strict
 ```
-
-## Preparation
-
-The [target architecture](doc/architecture.md) requires complete Ahead-of-Time
-Binary Translation of consumer-owned executable images and known variants.
-Prefer startup loading and complete preparation before execution. Support
-build-time export of linkable LLVM bitcode or relocatable native objects through
-the same semantic translation and optimization pipeline.
-Development always runs complete AOT/optimization. Preserve validated code
-artifacts for operational startup reuse, with exact code/binding/host identity
-and safe relocation. Rebuild rejected artifacts before execution.
-
-Declare a `CodeImage` with complete instruction streams, valid entries and
-separate source-variant IDs. Keep readable inline data outside instruction
-streams; a saved call return address may name data. Supply pointer-free
-`VariantLayout` descriptors and real interrupt vector/kind contracts through
-`CompileOptions`. `Core::compile(image, options)` owns the input descriptions,
-translates every declared instruction start and known variant, and returns a
-shareable `NativeImage`. Reject missing lowering, inconsistent code/overlaps,
-undeclared encoded targets and incompatible layouts before execution.
-
-Install a concrete prepared variant on its stopped execution owner with
-`Core::install(image, variant)`. Validate its actual immutable source bytes and
-memory layout, bind instance RAM, and prepare hardware IRQ frames before
-publishing the binding. Installation preserves architectural state, musical time
-and device state. The Core retains shared code ownership after the caller's
-image handle expires.
-
-Require prepared entries for `run`, `step` and explicit instruction execution;
-`Fault::unprepared_execution` reports an unknown PC or undeclared event contract
-without decoding, emitting or replaying an instruction. An explicit
-`Core::set_memory` invalidates the installed binding even when pointers are
-reused; install a matching prepared variant before resuming. Reject a failed
-installation without changing the previous binding. Register replacement or a
-recovered reset clears a latched architectural fault; installing code does not.
-
-Keep mutable data in borrowed host RAM and retain observable program reads and
-writes. Select prepared executable variants at real loader/write boundaries.
-Fuse compatible consumer-owned host IR before LLVM O3 and preserve actual I/O
-ordering. Export linkable bitcode/objects through that same pipeline; keep LLVM
-handles private. Exact image/binding identity includes source bytes, ABI, compiler
-and native target/features. Compilation and validated artifact loading run before
-playback; development always executes the complete compilation pipeline.
-
-Supply the public `Core::registers`, `state`, `progress` and `request_yield`
-implementations as eligible IR from the same C++ definitions as the native
-library. Host bindings call these methods directly; consumers do not reproduce
-private state offsets or depend on executable symbol exports. Retain weak ODR,
-always-inline definitions while composing detached components, then internalize
-eligible helpers before final O3 and preserve every declared guest/event export.
 
 ## Use
 
@@ -116,25 +68,46 @@ int main() {
 }
 ```
 
-Memory belongs to the consumer and must outlive Core. One thread owns execution;
-state inspection is optional. Use Io for device effects and run_until() for an
-absolute local cycle deadline. Core does not schedule an instrument or its audio.
-Unsupported operations fail explicitly.
+Memory belongs to the consumer and must outlive Core. One owner executes a core.
+Use public Io for devices and `run_until()` for an absolute local cycle deadline;
+the library does not schedule an instrument or its audio.
 
-Benchmarks check independent results and report cold/warm timing and matched
-host ratios. Continuous checksum and FFT runs also verify portable C++ host
-references compiled with Clang 19 `-O3`, reporting `host_cpp_o3_s` and
-`jit_to_cpp_o3_percent` separately from the retained ASM comparison and gates.
-Require explicit LLVM O3 preparation and report its complete executable coverage
-separately from warm timing and host/API costs.
+Declare complete code streams and valid entries per variant, pointer-free memory
+layouts and required IRQ kind/vector contracts. Keep inline readable data outside
+instruction streams; a saved return address alone is not an executable entry.
 
-JIT/host ratios use `100 * host_time / jit_time`. All scenarios have x86-64 and
-ARM64 host references. Hardware factors use stated models, not measured device
-speed. Warm populations use a fixed 100 ms warm-up after cold measurement;
-packet warm-up advances both engines continuously. Select cases with
-CPU12_BENCH_FILTER; fixtures are in test/bench/.
-See doc/architecture.md and test/ for details.
+`Core::compile` lowers, materializes and binds a shareable `NativeImage`.
+`Core::install` selects a variant on the stopped owner, validates source/layout
+and retains shared executable ownership without changing architecture or time.
+An explicit `Core::set_memory` invalidates the installed binding even when
+addresses are reused. A failed install preserves the previous binding. Installing
+code does not clear an architectural fault; recovery is an explicit reset/register
+operation.
 
-[License](LICENSE)
+For joint native composition, `Core::lower` returns owned pre-O3 `SemanticImage`
+bitcode, exact guest/event exports and identity. Link both cores and eligible
+host implementations before final optimization, resolve every export, then use
+`Core::bind` with the exact component symbol map and shared native owner.
+Public state/progress/yield definitions join eligible IR; consumers never copy
+private layouts or invoke private entry ABIs. Count shared native text once.
 
-LLVM dependency notices are retained in [THIRD_PARTY.txt](THIRD_PARTY.txt).
+Complete known code/variants before execution. Development runs full AOT;
+deployment may reuse validated relocatable artifacts, never device snapshots.
+Startup and build-time translation share one semantic pipeline. Release keeps
+arithmetic inline and removes proved checks; Debug adds diagnostic instrumentation.
+Both retain exact dynamic memory/device/fault behavior. Detailed preparation,
+binding and invalidation contracts belong in the target architecture.
+
+## Benchmarks and references
+
+Use independently authored fixtures and equivalent Clang19 O3 C++ references
+under the same CPU/features and exact numeric/state contract. Report preparation,
+coverage, cold/warm time, code size and API costs separately; verify complete
+results and prevent dead-code elimination. checksum/FFT host references and
+ASM/SIMD ratios are separate comparisons. JIT/host percent is
+100 * host_time / jit_time. Select cases with `CPU12_BENCH_FILTER`; fixtures live
+in test/bench/. Model clock ratios are not measured hardware speed, and isolated
+core results do not qualify whole-instrument throughput.
+
+Primary references are indexed from [doc/architecture.md](doc/architecture.md).
+[License](LICENSE) · [Dependency notices](THIRD_PARTY.txt)
