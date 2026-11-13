@@ -34,6 +34,7 @@ public:
   ImageProgram &operator=(const ImageProgram &) = delete;
   [[nodiscard]] const Program &program(std::uint64_t id) const;
   [[nodiscard]] const void *entry(std::uint64_t id, Address pc) const;
+  [[nodiscard]] const NativeIndex &index(std::uint64_t id) const;
   [[nodiscard]] std::span<const BlockInstruction> instructions(std::uint64_t id) const;
   [[nodiscard]] PreparationReport report() const noexcept;
   [[nodiscard]] std::span<const ImagePlan::Variant> variants() const noexcept;

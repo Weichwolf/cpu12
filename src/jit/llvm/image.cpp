@@ -200,6 +200,27 @@ struct ImageSource {
 
 class ImageProgram::Impl {
 public:
+  struct Entries {
+    std::array<std::unique_ptr<NativePage>, native_page_entries> pages;
+    NativeIndex index{};
+  };
+
+  void prepare_index(const ImagePlan::Variant &variant) {
+    auto &table = entries.try_emplace(variant.id).first->second;
+    const auto &program = *programs.at(variant.id);
+    constexpr auto mask = native_page_entries - 1;
+    for (const auto &operation : variant.instructions) {
+      const auto *entry = program.find(operation.pc);
+      if (entry == nullptr) { throw std::logic_error("CPU12 native image lacks a prepared entry"); }
+      auto &page = table.pages[operation.pc >> native_page_shift];
+      if (!page) {
+        page = std::make_unique<NativePage>();
+        table.index[operation.pc >> native_page_shift] = page->data();
+      }
+      (*page)[operation.pc & mask] = entry;
+    }
+  }
+
   Impl(const CodeImage image,
        const std::span<const VariantLayout> layouts,
        const std::span<const std::byte> linked,
@@ -234,6 +255,7 @@ public:
                                               : RegisterSource::argument,
                              .callbacks = callbacks,
                              .dynamic_memory = topology == MemoryTopology::dynamic}));
+      if (output != ArtifactOutput::semantic) { prepare_index(variant); }
     }
   }
 
@@ -243,6 +265,7 @@ public:
       programs.emplace(variant.id,
                        std::make_unique<Program>(
                            *semantic.programs.at(variant.id), variant.instructions, symbols));
+      prepare_index(variant);
     }
   }
 
@@ -258,6 +281,7 @@ public:
   std::shared_ptr<const ImageSource> source;
   std::optional<std::uint64_t> native_bytes;
   std::map<std::uint64_t, std::unique_ptr<Program>> programs;
+  std::map<std::uint64_t, Entries> entries;
 };
 
 ImageProgram::ImageProgram(const CodeImage image,
@@ -291,6 +315,10 @@ const void *ImageProgram::entry(const std::uint64_t id, const Address pc) const 
   if (const auto *entry = program(id).find(pc)) { return entry; }
   throw std::invalid_argument("CPU12 variant=" + std::to_string(id) + " PC=" + std::to_string(pc) +
                               ": undeclared instruction entry");
+}
+
+const NativeIndex &ImageProgram::index(const std::uint64_t id) const {
+  return impl_->entries.at(id).index;
 }
 
 std::span<const BlockInstruction> ImageProgram::instructions(const std::uint64_t id) const {

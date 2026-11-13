@@ -272,10 +272,8 @@ void Jit::install(std::shared_ptr<const llvm19::ImageProgram> image,
   mapping->image = std::move(image);
   mapping->variant = variant;
   mapping->transitions = &mapping->image->transitions(variant);
-  for (const auto &operation : mapping->image->instructions(variant)) {
-    mapping->install(operation.pc, mapping->image->entry(variant, operation.pc));
-    mapping->prepared[operation.pc] = true;
-  }
+  mapping->native_regions = mapping->image->index(variant);
+  mapping->native_entries = static_cast<unsigned>(mapping->image->instructions(variant).size());
   constexpr std::array frames{
       InterruptFrame::push, InterruptFrame::waiting, InterruptFrame::returned};
   for (const auto request : interrupts) {
