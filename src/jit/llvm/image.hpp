@@ -44,6 +44,7 @@ public:
   interrupt_entry_prefix(std::uint64_t id, const State &state, const Memory &memory) const;
   [[nodiscard]] const CodeTargets &transitions(std::uint64_t id) const;
   void validate_binding(std::uint64_t id, const Memory &memory) const;
+  void validate_composition(std::span<const std::uint64_t> ids, const Memory &memory) const;
 
 private:
   class Impl;

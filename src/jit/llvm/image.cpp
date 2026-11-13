@@ -19,11 +19,13 @@
 
 #include <algorithm>
 #include <array>
+#include <bitset>
 #include <cstddef>
 #include <cstdint>
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -278,6 +280,22 @@ public:
     return *found;
   }
 
+  void validate_connections(const std::span<const std::uint64_t> ids) const {
+    for (const auto from : ids) {
+      for (const auto to : ids) {
+        if (from == to) { continue; }
+        const auto &edges = variant(from).transitions;
+        for (const auto &operation : variant(to).instructions) {
+          const auto edge = edges.find(operation.pc);
+          if (edge == edges.end() || std::ranges::find(edge->second, to) == edge->second.end()) {
+            throw std::invalid_argument(
+                "Mounted CPU12 domains require every declared cross-domain entry");
+          }
+        }
+      }
+    }
+  }
+
   std::shared_ptr<const ImageSource> source;
   std::optional<std::uint64_t> native_bytes;
   std::map<std::uint64_t, std::unique_ptr<Program>> programs;
@@ -374,4 +392,34 @@ void ImageProgram::validate_binding(const std::uint64_t id, const Memory &memory
     }
   }
 }
+
+void ImageProgram::validate_composition(const std::span<const std::uint64_t> ids,
+                                        const Memory &memory) const {
+  if (ids.empty()) { throw std::invalid_argument("CPU12 installation requires prepared domains"); }
+  std::set<std::uint64_t> unique;
+  std::bitset<address_bytes> occupied;
+  for (const auto id : ids) {
+    if (!unique.insert(id).second) {
+      throw std::invalid_argument("Duplicate mounted CPU12 domain");
+    }
+    validate_binding(id, memory);
+    if (ids.size() == 1) { continue; }
+    if (impl_->source->topology != MemoryTopology::dynamic) {
+      throw std::invalid_argument("Mounted CPU12 domains require dynamic topology");
+    }
+    std::bitset<address_bytes> code;
+    for (const auto &span : impl_->variant(id).code) {
+      for (std::size_t offset = 0; offset < span.words.size(); ++offset) {
+        const auto pc = static_cast<Address>(span.address + offset);
+        code[pc] = true;
+      }
+    }
+    if ((occupied & code).any()) {
+      throw std::invalid_argument("Mounted CPU12 domains overlap executable bytes");
+    }
+    occupied |= code;
+  }
+  impl_->validate_connections(ids);
+}
+
 }

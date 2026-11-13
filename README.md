@@ -86,6 +86,10 @@ installation; neither permits runtime translation.
 `Core::compile` lowers, materializes and binds a shareable `NativeImage`.
 `Core::install` selects a variant on the stopped owner, validates source/layout
 and retains shared executable ownership without changing architecture or time.
+`Core::install(image, domain_ids)` admits compatible dynamic domains together.
+Their executable bytes must be disjoint, with complete declared cross-domain
+entry contracts. Calls between mounted domains stay native; writes or remaps
+revoke affected bindings before changed code runs.
 An explicit `Core::set_memory` invalidates the installed binding even when
 addresses are reused. A failed install preserves the previous binding. Installing
 code does not clear an architectural fault; recovery is an explicit reset/register

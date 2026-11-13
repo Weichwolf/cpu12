@@ -11,7 +11,6 @@
 #include "jit/arena.hpp"
 #include "jit/block.hpp"
 #include "jit/emitter.hpp"
-#include "jit/image.hpp"
 #include "jit/interrupt.hpp"
 #include "jit/llvm/image.hpp"
 #include "jit/llvm/lift.hpp"
@@ -111,8 +110,48 @@ struct Mapping {
   std::bitset<address_bytes> unavailable;
   std::bitset<address_bytes> prepared;
   std::shared_ptr<const llvm19::ImageProgram> image;
-  const CodeTargets *transitions = nullptr;
-  std::uint64_t variant = 0;
+  std::vector<std::uint64_t> variants;
+
+  [[nodiscard]] const void *entry(const Address pc) const noexcept {
+    const auto *page = native_regions[pc >> native_page_shift];
+    return page != nullptr ? page[pc & page_mask] : nullptr;
+  }
+
+  [[nodiscard]] std::optional<std::uint64_t> source(const Address pc) const {
+    if (!image) { return std::nullopt; }
+    for (const auto id : variants) {
+      const auto *page = image->index(id)[pc >> native_page_shift];
+      if (page != nullptr && page[pc & page_mask] != nullptr) { return id; }
+    }
+    return std::nullopt;
+  }
+
+  [[nodiscard]] const Instruction *instruction(const Address pc) const {
+    const auto id = source(pc);
+    return id ? image->program(*id).instruction(pc) : nullptr;
+  }
+
+  void mount(const std::uint64_t id) {
+    const auto &index = image->index(id);
+    for (std::size_t page = 0; page < index.size(); ++page) {
+      if (index[page] == nullptr) { continue; }
+      auto &target = native_regions[page];
+      if (target == nullptr) {
+        target = index[page];
+        continue;
+      }
+      auto &owned = pages[page];
+      if (!owned) {
+        owned = std::make_unique<NativePage>();
+        std::copy_n(target, native_page_entries, owned->begin());
+        target = owned->data();
+      }
+      for (std::size_t offset = 0; offset < native_page_entries; ++offset) {
+        if (index[page][offset] != nullptr) { (*owned)[offset] = index[page][offset]; }
+      }
+    }
+    native_entries += static_cast<unsigned>(image->instructions(id).size());
+  }
 
   void install(Address address, const void *entry) {
     auto &page = native_regions[address >> native_page_shift];
@@ -159,11 +198,12 @@ public:
   Statistics statistics;
   std::optional<Transfer> pending;
 
-  void completed_transfer(const Address pc, NativeContext &context) {
-    const auto *targets = current->transitions;
-    if (targets == nullptr) { return; }
-    const auto target = targets->find(pc);
-    if (target == targets->end()) { return; }
+  void completed_transfer(const ExitLocation from, const Address pc, NativeContext &context) {
+    if (!current->image || current->entry(pc) != nullptr) { return; }
+    const auto id = current->source(from.pc).value_or(current->variants.front());
+    const auto &targets = current->image->transitions(id);
+    const auto target = targets.find(pc);
+    if (target == targets.end()) { return; }
     pending = Transfer{.image = current->image, .variants = target->second, .entry = pc};
     context.yield_requested = true;
   }
@@ -177,10 +217,12 @@ public:
     PreparationReport report;
     std::bitset<address_bytes> unresolved;
     if (current->image) {
-      report.prepared_entries = current->image->instructions(current->variant).size();
+      for (const auto id : current->variants) {
+        report.prepared_entries += current->image->instructions(id).size();
+      }
     }
     for (const auto address : entries) {
-      if (!current->image || current->image->program(current->variant).find(address) == nullptr) {
+      if (!current->image || current->entry(address) == nullptr) {
         if (report.failure.fault == Fault::none) {
           report.failure = {
               .fault = Fault::unprepared_execution, .pc = address, .address = address};
@@ -259,31 +301,33 @@ void Jit::set_memory(const Memory &memory) {
 }
 
 void Jit::install(std::shared_ptr<const llvm19::ImageProgram> image,
-                  const std::uint64_t variant,
+                  const std::span<const std::uint64_t> variants,
                   const std::span<const InterruptRequest> interrupts) {
   const auto &pending = impl_->pending;
-  if (pending.has_value() &&
-      (pending->image != image ||
-       std::ranges::find(pending->variants, variant) == pending->variants.end())) {
+  if (pending &&
+      (pending->image != image || !std::ranges::any_of(variants, [&](const auto id) {
+         return std::ranges::find(pending->variants, id) != pending->variants.end() &&
+                image->index(id)[pending->entry >> native_page_shift] != nullptr &&
+                image->index(id)[pending->entry >> native_page_shift][pending->entry & page_mask] !=
+                    nullptr;
+       }))) {
     throw std::invalid_argument("Pending CPU12 transition requires its declared image and variant");
   }
-  image->validate_binding(variant, impl_->current->memory);
+  image->validate_composition(variants, impl_->current->memory);
   auto mapping = std::make_unique<Mapping>(impl_->current->memory);
   mapping->image = std::move(image);
-  mapping->variant = variant;
-  mapping->transitions = &mapping->image->transitions(variant);
-  mapping->native_regions = mapping->image->index(variant);
-  mapping->native_entries = static_cast<unsigned>(mapping->image->instructions(variant).size());
+  mapping->variants.assign(variants.begin(), variants.end());
+  for (const auto id : variants) { mapping->mount(id); }
   constexpr std::array frames{
       InterruptFrame::push, InterruptFrame::waiting, InterruptFrame::returned};
   for (const auto request : interrupts) {
     for (const auto frame : frames) {
-      const auto *code = mapping->image->program(variant).event(event_key(request, frame));
+      const auto *code = mapping->image->program(variants.front()).event(event_key(request, frame));
       if (code == nullptr) { throw std::invalid_argument("CPU12 image has no prepared IRQ entry"); }
       mapping->blocks.emplace(event_key(request, frame), Entry{.code = code});
     }
   }
-  const auto *wake = mapping->image->program(variant).event(stop_event_key);
+  const auto *wake = mapping->image->program(variants.front()).event(stop_event_key);
   if (wake == nullptr) {
     throw std::invalid_argument("CPU12 image has no prepared STOP-wake entry");
   }
@@ -308,7 +352,7 @@ void Jit::cancel_transition() noexcept {
 Fault Jit::validate_instruction(const Address pc, const std::span<const Byte> bytes) const {
   const auto &mapping = *impl_->current;
   if (!mapping.image) { return Fault::unprepared_execution; }
-  const auto *instruction = mapping.image->program(mapping.variant).instruction(pc);
+  const auto *instruction = mapping.instruction(pc);
   if (instruction == nullptr) { return Fault::unprepared_execution; }
   if (instruction->length != bytes.size()) { return Fault::invalid_input; }
   for (std::size_t offset = 0; offset < bytes.size(); ++offset) {
@@ -425,8 +469,7 @@ Jit::run_prepared(const std::uint32_t budget, Registers &registers, NativeContex
     return {.location = {.pc = registers.pc}};
   }
   const bool returned = context.cpu.returned_frame;
-  const auto *instruction =
-      returned ? mapping.image->program(mapping.variant).instruction(registers.pc) : nullptr;
+  const auto *instruction = returned ? mapping.instruction(registers.pc) : nullptr;
   const auto previous = registers.ccr;
   const auto delay = context.cpu.irq_delay;
   const auto grant = delay != 0 || returned ? std::min(budget, 1U) : budget;
@@ -438,7 +481,7 @@ Jit::run_prepared(const std::uint32_t budget, Registers &registers, NativeContex
     if (instruction != nullptr && instruction->kind != Kind::return_interrupt) {
       context.cpu.returned_frame = false;
     }
-    impl_->completed_transfer(registers.pc, context);
+    impl_->completed_transfer(result.location, registers.pc, context);
   }
   return result;
 }
@@ -492,8 +535,9 @@ void Jit::interrupt(const InterruptRequest request, Registers &registers, Native
                 .first;
     ++impl_->statistics.compiled_entries;
   }
+  const ExitLocation from{.pc = registers.pc};
   enter(found->second.code, registers, context);
-  if (context.fault == Fault::none) { impl_->completed_transfer(registers.pc, context); }
+  if (context.fault == Fault::none) { impl_->completed_transfer(from, registers.pc, context); }
 }
 
 void Jit::resume_stop(Registers &registers, NativeContext &context) {

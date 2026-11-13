@@ -218,6 +218,7 @@ public:
   [[nodiscard]] static NativeImage compile(CodeImage image, CompileOptions options);
   // Cold owner boundary: validate code/layout and bind RAM/events before publishing.
   void install(const NativeImage &image, std::uint64_t variant);
+  void install(const NativeImage &image, std::span<const std::uint64_t> variants);
   [[nodiscard]] Registers registers() const noexcept;
   // A live read-only view, valid for this Core lifetime; inspect on the execution owner.
   [[nodiscard]] const State &state() const noexcept;

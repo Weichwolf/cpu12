@@ -61,8 +61,14 @@ architectural state, memory or time. Rejected installation preserves the previou
 binding and pending source-version handoff. Fault recovery is an explicit
 register/reset boundary, not a side effect of installing code.
 
-Declared cross-version transfers return the completed prefix without replaying
-the jump. Retain registers, stacks, captured events and nominal progress; validate
+Admit compatible dynamic domains together: disjoint executable bytes, actual
+immutable source matches and complete declared cross-domain entries. Transfers
+among mounted domains use native targets without an execution-owner handoff.
+Keep immutable code independent of RAM/USB layouts and mutually exclusive overlays;
+never duplicate common code over their Cartesian product.
+
+Transfers to unmounted source versions return the completed prefix without
+replaying the jump. Retain registers, stacks, captured events and nominal progress; validate
 and install a matching declared prepared destination. A source/entry may name
 several finite destinations, checked against actual immutable code and memory
 layout; duplicate triples remain errors. Pending choices borrow immutable image

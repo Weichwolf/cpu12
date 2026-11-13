@@ -12,6 +12,7 @@
 #include "runtime.hpp"
 #include "semantic.hpp"
 
+#include <array>
 #include <cstdint>
 #include <limits>
 #include <map>
@@ -247,9 +248,14 @@ NativeImage Core::compile(const CodeImage image, const CompileOptions options) {
 }
 
 void Core::install(const NativeImage &image, const std::uint64_t variant) {
+  const std::array variants{variant};
+  install(image, variants);
+}
+
+void Core::install(const NativeImage &image, const std::span<const std::uint64_t> variants) {
   if (impl_->active) { throw std::logic_error("Cannot install an active CPU12 image"); }
   if (!image.impl_) { throw std::invalid_argument("Cannot install an empty CPU12 image"); }
-  impl_->jit.install(image.impl_->program, variant, image.impl_->interrupts);
+  impl_->jit.install(image.impl_->program, variants, image.impl_->interrupts);
   impl_->context.memory_bindings = impl_->jit.bindings();
   impl_->context.memory_grants = impl_->jit.memory().regions();
 }
