@@ -18,6 +18,7 @@ struct Calls {
 [[nodiscard]] Calls calls() noexcept;
 void initialized() noexcept;
 void finalized() noexcept;
+void callback_roles(std::span<const std::byte> host);
 
 class Code {
 public:

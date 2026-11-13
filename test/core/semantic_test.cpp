@@ -44,7 +44,7 @@ template <Address Input> consteval auto code() {
       std::array<Byte, 1>{backedge});
 }
 
-template <Address Input> SemanticImage lower() {
+template <Address Input> SemanticImage lower(const MemoryTopology topology) {
   const auto bytes = code<Input>();
   const std::array source{CodeSpan{.address = entry, .words = bytes}};
   constexpr std::array roots{entry};
@@ -52,11 +52,14 @@ template <Address Input> SemanticImage lower() {
   const std::array regions{RegionLayout{.first = entry, .size = bytes.size(), .writable = false}};
   const std::array layouts{VariantLayout{.id = variant, .memory = regions}};
   return Core::lower({.variants = variants},
-                     {.memory = layouts,
+                     {.memory = topology == MemoryTopology::fixed
+                                    ? std::span<const VariantLayout>(layouts)
+                                    : std::span<const VariantLayout>{},
                       .interrupts = {},
                       .transitions = {},
                       .callbacks = callbacks,
-                      .bindings = {}});
+                      .bindings = {},
+                      .topology = topology});
 }
 
 std::vector<std::byte> host_ir() {
@@ -223,14 +226,14 @@ void resume(Core &core, public_io::Bus &bus, const Address input) {
           "Resuming the write retains native code and executes only the remaining branch");
 }
 
-void lifetime() {
+void lifetime(const MemoryTopology topology) {
   const auto before = calls();
-  auto first = lower<first_port>();
-  auto second = lower<second_port>();
+  auto first = lower<first_port>(topology);
+  auto second = lower<second_port>(topology);
   require(calls() == before && first.identity() != second.identity() && !first.exports().empty() &&
               !first.bitcode().empty(),
           "Lowering distinct images emits owned IR without native machinery");
-  require(first.identity() == lower<first_port>().identity() && calls() == before,
+  require(first.identity() == lower<first_port>(topology).identity() && calls() == before,
           "Lowering identity depends on inputs/contracts/pipeline, never input buffer addresses");
   std::shared_ptr<const Code> owner;
   {
@@ -282,7 +285,8 @@ void lifetime() {
 }
 
 NativeImage compile(const std::span<const CallbackBinding> bindings,
-                    const std::span<const std::byte> host) {
+                    const std::span<const std::byte> host,
+                    const MemoryTopology topology) {
   const auto first = code<first_port>();
   const auto second = code<second_port>();
   const std::array first_source{CodeSpan{.address = entry, .words = first}};
@@ -295,32 +299,35 @@ NativeImage compile(const std::span<const CallbackBinding> bindings,
   const std::array layouts{VariantLayout{.id = variant, .memory = regions},
                            VariantLayout{.id = variant + 1, .memory = regions}};
   return Core::compile({.variants = variants},
-                       {.memory = layouts,
+                       {.memory = topology == MemoryTopology::fixed
+                                      ? std::span<const VariantLayout>(layouts)
+                                      : std::span<const VariantLayout>{},
                         .interrupts = {},
                         .transitions = {},
                         .callbacks = bindings,
-                        .bindings = host});
+                        .bindings = host,
+                        .topology = topology});
 }
 
-void standalone() {
+void standalone(const MemoryTopology topology) {
   const auto host = host_ir();
   const auto before = calls();
   for (const auto *const wrong : {"fixture_write", "fixture_read_word", "fixture_missing"}) {
     const std::array bindings{CallbackBinding{.role = CallbackRole::read, .symbol = wrong}};
     bool rejected = false;
     try {
-      static_cast<void>(compile(bindings, host));
+      static_cast<void>(compile(bindings, host, topology));
     } catch (const std::invalid_argument &) { rejected = true; }
     require(rejected && calls() == before,
             "Incompatible or absent callback definitions fail before native materialization");
   }
   bool rejected = false;
   try {
-    static_cast<void>(compile(callbacks, {}));
+    static_cast<void>(compile(callbacks, {}, topology));
   } catch (const std::invalid_argument &) { rejected = true; }
   require(rejected && calls() == before,
           "Standalone selected callbacks require definitions before creating native code");
-  const auto image = compile(callbacks, host);
+  const auto image = compile(callbacks, host, topology);
   const auto prepared = calls();
   require(prepared.machines == before.machines + 1 && prepared.engines == before.engines + 1 &&
               prepared.objects == before.objects + 1 && image.report().native_bytes != 0 &&
@@ -351,8 +358,11 @@ void standalone() {
 
 int main() {
   try {
-    cpu12::test::semantic::lifetime();
-    cpu12::test::semantic::standalone();
+    for (const auto topology : {cpu12::MemoryTopology::fixed, cpu12::MemoryTopology::dynamic}) {
+      cpu12::test::semantic::lifetime(topology);
+      cpu12::test::semantic::standalone(topology);
+    }
+    cpu12::test::semantic::callback_roles(cpu12::test::semantic::host_ir());
     std::cout << "Verified public lower/bind, one independent native owner, exact I/O/state and "
                  "resource lifetime.\n";
   } catch (const std::exception &error) {

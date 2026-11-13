@@ -40,7 +40,9 @@ noexcept and parameter/memory guarantees before linker attribute merging.
 Callbacks use public Io roles and per-instance owners; they may observe public
 Core state or request synchronous yield. Do not assume callbacks cannot alias
 Core state. Missing selected definitions fail materialization, not lowering.
-Retain unselected roles' normal owned I/O semantics.
+Bind selected roles in both ordinary and dynamic-grant adapters, including
+copies inlined while compiling core bitcode. Keep direct RAM precedence, whole
+byte/word transactions and unselected roles' normal owned I/O semantics.
 
 Core::bind requires exact identity, every declared export once, nonnull addresses
 and shared executable ownership. Reject missing/extra/duplicate symbols. Copy
