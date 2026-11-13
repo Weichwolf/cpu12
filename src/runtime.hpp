@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <limits>
+#include <span>
 
 namespace cpu12::detail {
 inline constexpr std::uint32_t failed_read = 0x100;
@@ -25,6 +26,7 @@ struct NativeContext {
   bool yield_requested = false;
   std::uint64_t cycle_deadline = std::numeric_limits<std::uint64_t>::max();
   const MemoryBinding *memory_bindings = nullptr;
+  std::span<const Ram> memory_grants{static_cast<const Ram *>(nullptr), 0};
 };
 
 [[nodiscard]] std::uint32_t read_byte(NativeContext *context, std::uint16_t address) noexcept;

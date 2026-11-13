@@ -26,7 +26,8 @@ public:
                std::span<const CodeTransition> transitions = {},
                std::span<const CallbackBinding> callbacks = {},
                ArtifactOutput output = ArtifactOutput::native,
-               const std::string &prefix = "cpu12_");
+               const std::string &prefix = "cpu12_",
+               MemoryTopology topology = MemoryTopology::fixed);
   ImageProgram(const ImageProgram &semantic, const NativeSymbols &symbols);
   ~ImageProgram();
   ImageProgram(const ImageProgram &) = delete;

@@ -82,6 +82,7 @@ class Core::Impl {
 public:
   Impl(const Memory &memory, const Io io) : context{.io = io}, jit(memory) {
     context.memory_bindings = jit.bindings();
+    context.memory_grants = jit.memory().regions();
   }
 
   const bool supported = native_supported();
@@ -250,6 +251,7 @@ void Core::install(const NativeImage &image, const std::uint64_t variant) {
   if (!image.impl_) { throw std::invalid_argument("Cannot install an empty CPU12 image"); }
   impl_->jit.install(image.impl_->program, variant, image.impl_->interrupts);
   impl_->context.memory_bindings = impl_->jit.bindings();
+  impl_->context.memory_grants = impl_->jit.memory().regions();
 }
 
 Registers Core::registers() const noexcept {
@@ -285,6 +287,7 @@ void Core::set_memory(const Memory memory) {
   if (impl_->active) { throw std::logic_error("Cannot remap active CPU12 memory"); }
   impl_->jit.set_memory(memory);
   impl_->context.memory_bindings = impl_->jit.bindings();
+  impl_->context.memory_grants = impl_->jit.memory().regions();
 }
 
 PreparationReport Core::prepare(const std::span<const Address> established_entries) {

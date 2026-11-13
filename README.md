@@ -76,6 +76,13 @@ Declare complete code streams and valid entries per variant, pointer-free memory
 layouts and required IRQ kind/vector contracts. Keep inline readable data outside
 instruction streams; a saved return address alone is not an executable entry.
 
+Fixed topology is the default and requires complete per-variant layouts. Select
+`CompileOptions::topology = MemoryTopology::dynamic` with no layouts when memory
+will be remapped independently of the prepared code domains. Native accesses use
+current grants with the same knownness, rights, byte/word/masked I/O and fault
+semantics. Both modes require actual initialized immutable executable bytes at
+installation; neither permits runtime translation.
+
 `Core::compile` lowers, materializes and binds a shareable `NativeImage`.
 `Core::install` selects a variant on the stopped owner, validates source/layout
 and retains shared executable ownership without changing architecture or time.
@@ -91,8 +98,8 @@ host implementations before final optimization, resolve every export, then use
 Public state/progress/yield definitions join eligible IR; consumers never copy
 private layouts or invoke private entry ABIs. Count shared native text once.
 
-Complete known code/variants before execution. Development runs full AOT;
-deployment may reuse validated relocatable artifacts, never device snapshots.
+Complete known code/variants before execution. Development and deployment may
+reuse validated relocatable code artifacts, never device snapshots.
 Startup and build-time translation share one semantic pipeline. Release keeps
 arithmetic inline and removes proved checks; Debug adds diagnostic instrumentation.
 Both retain exact dynamic memory/device/fault behavior. Detailed preparation,

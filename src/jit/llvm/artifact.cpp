@@ -186,7 +186,12 @@ void compatible(LLVMModuleRef module, LLVMModuleRef incoming) {
                              "cpu12_read_word",
                              "cpu12_write_byte",
                              "cpu12_write_word",
-                             "cpu12_read_masked_byte"};
+                             "cpu12_read_masked_byte",
+                             "cpu12_mapped_read_byte",
+                             "cpu12_mapped_read_word",
+                             "cpu12_mapped_write_byte",
+                             "cpu12_mapped_write_word",
+                             "cpu12_mapped_read_masked_byte"};
   for (const auto *name : names) {
     auto *expected = LLVMGetNamedFunction(module, name);
     auto *actual = LLVMGetNamedFunction(incoming, name);

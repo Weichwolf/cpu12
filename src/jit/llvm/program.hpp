@@ -30,6 +30,7 @@ struct ProgramOptions {
   bool runtime_io = false;
   RegisterSource registers = RegisterSource::argument;
   std::span<const CallbackBinding> callbacks;
+  bool dynamic_memory = false;
 };
 
 class Program {

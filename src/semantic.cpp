@@ -88,7 +88,8 @@ SemanticImage::Impl::Impl(const CodeImage image, const CompileOptions options)
                                                            options.transitions,
                                                            callbacks,
                                                            detail::llvm19::ArtifactOutput::semantic,
-                                                           "");
+                                                           "",
+                                                           options.topology);
   const detail::llvm19::Owner<LLVMContextRef, LLVMContextDispose> context(LLVMContextCreate());
   const detail::llvm19::Owner<LLVMModuleRef, LLVMDisposeModule> module(
       LLVMModuleCreateWithNameInContext("cpu12-image", context.get()));

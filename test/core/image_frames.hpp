@@ -57,6 +57,8 @@ inline void require(const bool accepted, const char *message) {
   if (!accepted) { throw std::runtime_error(message); }
 }
 
+inline MemoryTopology topology = MemoryTopology::fixed;
+
 inline NativeImage compile(const std::span<const RegionLayout> layout) {
   const std::array spans{CodeSpan{.address = entry, .words = code}};
   constexpr std::array entries{
@@ -64,11 +66,14 @@ inline NativeImage compile(const std::span<const RegionLayout> layout) {
   const std::array variants{CodeVariant{.id = variant_id, .code = spans, .entries = entries}};
   const std::array layouts{VariantLayout{.id = variant_id, .memory = layout}};
   return Core::compile({.variants = variants},
-                       {.memory = layouts,
+                       {.memory = topology == MemoryTopology::fixed
+                                      ? std::span<const VariantLayout>{layouts}
+                                      : std::span<const VariantLayout>{},
                         .interrupts = requests,
                         .transitions = {},
                         .callbacks = {},
-                        .bindings = {}});
+                        .bindings = {},
+                        .topology = topology});
 }
 
 struct Fixture {

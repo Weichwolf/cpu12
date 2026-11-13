@@ -34,7 +34,8 @@ namespace cpu12::detail::llvm19 {
 namespace {
 struct CompilerMemory {
   explicit CompilerMemory(const ImagePlan::Variant &variant,
-                          const std::span<const RegionLayout> layout) {
+                          const std::span<const RegionLayout> layout,
+                          const MemoryTopology topology) {
     for (const auto &span : variant.code) {
       for (std::size_t offset = 0; offset < span.words.size(); ++offset) {
         const auto address = static_cast<Address>(span.address + offset);
@@ -65,6 +66,7 @@ struct CompilerMemory {
                                      : std::span<Byte>{},
                         .writable = region.writable});
     }
+    if (topology == MemoryTopology::dynamic) { return; }
     const auto bindings = Memory::mapped(memory);
     for (const auto &span : variant.code) {
       for (std::size_t offset = 0; offset < span.words.size(); ++offset) {
@@ -97,8 +99,20 @@ struct ImageSource {
   ImageSource(const CodeImage image,
               const std::span<const VariantLayout> layouts,
               const std::span<const CodeTransition> transitions,
-              const std::span<const InterruptRequest> interrupts)
-      : plan(image, transitions), events(interrupts.begin(), interrupts.end()) {
+              const std::span<const InterruptRequest> interrupts,
+              const MemoryTopology selected)
+      : plan(image, transitions), events(interrupts.begin(), interrupts.end()), topology(selected) {
+    if (topology != MemoryTopology::fixed && topology != MemoryTopology::dynamic) {
+      throw std::invalid_argument("CPU12 image has an invalid memory topology");
+    }
+    if (topology == MemoryTopology::dynamic) {
+      if (!layouts.empty()) {
+        throw std::invalid_argument("Dynamic CPU12 images cannot declare fixed memory layouts");
+      }
+      for (const auto &variant : plan.variants()) {
+        bindings.emplace(variant.id, std::vector<RegionLayout>{});
+      }
+    }
     for (const auto layout : layouts) {
       if (!bindings.emplace(layout.id, std::vector(layout.memory.begin(), layout.memory.end()))
                .second) {
@@ -120,14 +134,18 @@ struct ImageSource {
                                       ": instruction has no LLVM lowering");
         }
       }
-      const auto memory = std::make_unique<CompilerMemory>(variant, found->second);
+      const auto memory = std::make_unique<CompilerMemory>(variant, found->second, topology);
       prefixes.emplace(variant.id,
-                       foreground_prefixes(variant.instructions, Memory::mapped(memory->memory)));
+                       foreground_prefixes(variant.instructions,
+                                           topology == MemoryTopology::dynamic
+                                               ? Memory::external()
+                                               : Memory::mapped(memory->memory)));
     }
   }
 
   const ImagePlan plan;
   const std::vector<InterruptRequest> events;
+  const MemoryTopology topology;
   std::map<std::uint64_t, std::vector<RegionLayout>> bindings;
   std::map<std::uint64_t, std::map<Address, std::uint64_t>> prefixes;
 
@@ -139,6 +157,7 @@ struct ImageSource {
     hash.add(LLVM_VERSION_STRING);
     hash.add(runtime_bitcode());
     hash.add(native_features());
+    hash.add(static_cast<std::uint64_t>(topology));
     hash.add(plan.variants().size());
     for (const auto &variant : plan.variants()) {
       hash.add(variant.id);
@@ -188,18 +207,22 @@ public:
        const std::span<const CodeTransition> transitions,
        const std::span<const CallbackBinding> callbacks,
        const ArtifactOutput output,
-       const std::string &prefix)
-      : source(std::make_shared<const ImageSource>(image, layouts, transitions, interrupts)) {
+       const std::string &prefix,
+       const MemoryTopology topology)
+      : source(std::make_shared<const ImageSource>(
+            image, layouts, transitions, interrupts, topology)) {
     const auto names = prefix.empty() ? source->namespace_prefix(interrupts, callbacks) : prefix;
     for (const auto &variant : source->plan.variants()) {
       const auto memory =
-          std::make_unique<CompilerMemory>(variant, source->bindings.at(variant.id));
+          std::make_unique<CompilerMemory>(variant, source->bindings.at(variant.id), topology);
       programs.emplace(
           variant.id,
           std::make_unique<Program>(
               variant.instructions,
               ProgramOptions{.memory = {.source = Memory::mapped(memory->code),
-                                        .bindings = Memory::mapped(memory->memory)},
+                                        .bindings = topology == MemoryTopology::dynamic
+                                                        ? Memory::external()
+                                                        : Memory::mapped(memory->memory)},
                              .prefix = names + "variant_" + std::to_string(variant.id) + "_region_",
                              .bindings = linked,
                              .output = output,
@@ -209,7 +232,8 @@ public:
                              .registers = output == ArtifactOutput::semantic
                                               ? RegisterSource::owner
                                               : RegisterSource::argument,
-                             .callbacks = callbacks}));
+                             .callbacks = callbacks,
+                             .dynamic_memory = topology == MemoryTopology::dynamic}));
     }
   }
 
@@ -243,9 +267,11 @@ ImageProgram::ImageProgram(const CodeImage image,
                            const std::span<const CodeTransition> transitions,
                            const std::span<const CallbackBinding> callbacks,
                            const ArtifactOutput output,
-                           const std::string &prefix)
+                           const std::string &prefix,
+                           const MemoryTopology topology)
     : impl_(std::make_unique<Impl>(
-          image, layouts, bindings, interrupts, transitions, callbacks, output, prefix)) {}
+          image, layouts, bindings, interrupts, transitions, callbacks, output, prefix, topology)) {
+}
 
 ImageProgram::ImageProgram(const ImageProgram &semantic, const NativeSymbols &symbols)
     : impl_(std::make_unique<Impl>(*semantic.impl_, symbols)) {}
@@ -304,7 +330,8 @@ std::uint64_t ImageProgram::interrupt_entry_prefix(const std::uint64_t id,
 
 void ImageProgram::validate_binding(const std::uint64_t id, const Memory &memory) const {
   const auto &variant = impl_->variant(id);
-  if (!same_layout(impl_->source->bindings.at(id), memory)) {
+  if (impl_->source->topology == MemoryTopology::fixed &&
+      !same_layout(impl_->source->bindings.at(id), memory)) {
     throw std::invalid_argument("CPU12 image memory layout does not match variant=" +
                                 std::to_string(id));
   }

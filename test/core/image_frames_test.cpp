@@ -12,6 +12,7 @@
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 
 namespace cpu12::test::image_frames {
 namespace {
@@ -152,9 +153,12 @@ void events(Core &core, Fixture &fixture) {
 }
 }
 
-int main() {
+int main(const int argc, const char *const *const argv) {
   try {
     using namespace cpu12::test::image_frames;
+    const bool dynamic = argc == 2 && std::string_view(argv[1]) == "dynamic";
+    require(argc == 1 || dynamic, "Expected no argument or dynamic topology");
+    topology = dynamic ? cpu12::MemoryTopology::dynamic : cpu12::MemoryTopology::fixed;
     const auto image = compile(full);
     Fixture fixture(full);
     cpu12::Io io{

@@ -313,6 +313,14 @@ Program::Program(const std::span<const BlockInstruction> instructions, const Pro
       LLVMModuleCreateWithNameInContext("cpu12-prepared", context));
   LLVMSetDataLayout(module.get(), target.layout.c_str());
   LLVMSetTarget(module.get(), target.triple.c_str());
+  if (options.dynamic_memory) {
+    constexpr std::string_view key = "cpu12-dynamic-memory";
+    LLVMAddModuleFlag(module.get(),
+                      LLVMModuleFlagBehaviorError,
+                      key.data(),
+                      key.size(),
+                      LLVMValueAsMetadata(LLVMConstInt(LLVMInt1TypeInContext(context), 1, 0)));
+  }
   const auto name = [&](const auto &region) {
     return options.prefix + std::to_string(region.front().pc);
   };
@@ -329,7 +337,7 @@ Program::Program(const std::span<const BlockInstruction> instructions, const Pro
                                            options.interrupts,
                                            options.output != ArtifactOutput::none)
                              : std::map<std::uint64_t, std::string>{};
-  if (options.runtime_io || !options.callbacks.empty()) {
+  if (options.runtime_io || options.dynamic_memory || !options.callbacks.empty()) {
     link_bindings(module.get(), runtime_bitcode());
   }
   link_bindings(module.get(), options.bindings);

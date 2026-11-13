@@ -11,6 +11,8 @@
 
 #include <array>
 #include <cstddef>
+#include <string>
+#include <string_view>
 
 namespace cpu12::detail::llvm19 {
 namespace {
@@ -155,6 +157,10 @@ LLVMValueRef MemoryAccess::external() {
   } else {
     name = instruction_.word ? "cpu12_read_word" : "cpu12_read_byte";
   }
+  constexpr std::string_view key = "cpu12-dynamic-memory";
+  const bool dynamic = LLVMGetModuleFlag(module, key.data(), key.size()) != nullptr;
+  const std::string mapped = dynamic ? "cpu12_mapped_" + std::string(name + 6) : name;
+  name = mapped.c_str();
   auto *value_type = instruction_.word ? builder_.getInt16Ty() : builder_.getInt8Ty();
   std::array parameters{LLVMTypeOf(owner_), builder_.getInt16Ty(), value_type};
   auto *type = LLVMFunctionType(builder_.getInt32Ty(), parameters.data(), count, 0);

@@ -9,6 +9,8 @@
 #include <cstdint>
 #include <exception>
 #include <iostream>
+#include <span>
+#include <string_view>
 
 namespace cpu12::test::transitions {
 namespace {
@@ -26,7 +28,7 @@ constexpr auto third = isa::program(
 constexpr std::array choices{forward[0],
                              CodeTransition{.from = from, .to = alternative, .entry = destination}};
 
-NativeImage prepare() {
+NativeImage prepare(const MemoryTopology topology) {
   const std::array caller{CodeSpan{.address = start, .words = source}};
   const std::array first_code{CodeSpan{.address = destination, .words = payload}};
   const std::array second_code{CodeSpan{.address = destination, .words = second}};
@@ -41,12 +43,15 @@ NativeImage prepare() {
                            VariantLayout{.id = to, .memory = loaded},
                            VariantLayout{.id = alternative, .memory = loaded},
                            VariantLayout{.id = excluded, .memory = loaded}};
+  const auto memory = topology == MemoryTopology::fixed ? std::span<const VariantLayout>{layouts}
+                                                        : std::span<const VariantLayout>{};
   return Core::compile({.variants = variants},
-                       {.memory = layouts,
+                       {.memory = memory,
                         .interrupts = {},
                         .transitions = choices,
                         .callbacks = {},
-                        .bindings = {}});
+                        .bindings = {},
+                        .topology = topology});
 }
 
 void bind_choice(Core &core, Fixture &fixture, const NativeImage &image, const Byte value) {
@@ -129,9 +134,12 @@ void prefix(const NativeImage &image, const Case &choice) {
 }
 }
 
-int main() try {
+int main(const int argc, const char *const *const argv) try {
   using namespace cpu12::test::transitions;
-  const auto image = prepare();
+  const bool dynamic = argc == 2 && std::string_view(argv[1]) == "dynamic";
+  require(argc == 1 || dynamic, "Expected no argument or dynamic topology");
+  const auto image =
+      prepare(dynamic ? cpu12::MemoryTopology::dynamic : cpu12::MemoryTopology::fixed);
   require(image.report().prepared_entries == 8 && image.report().unresolved_entries == 0,
           "Complete AOT retains the caller and all three real helper versions");
   for (unsigned flags = 0; flags < 256; ++flags) {

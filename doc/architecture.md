@@ -48,8 +48,15 @@ typed maps; borrowed symbol names/compiler inputs may expire after binding.
 Initialize/finalize the shared native owner once and count native text once,
 not per component/variant. Consumers never invoke private guest entry ABIs.
 
-Install only on a stopped owner after validating actual source, complete layout
-and the relevant revision. Installation emits no guest/event code and changes no
+Executable source is independent of optional memory-topology knowledge. Fixed
+layouts provide complete validated topology for direct specialized accesses.
+Explicit dynamic topology uses the current typed grants through the same native
+ISA semantics, including byte/word boundaries, knownness, rights and exact I/O
+fault prefixes. Neither mode admits writable, unknown or mismatched executable
+bytes; memory remapping never decodes or compiles new code.
+
+Install only on a stopped owner after validating actual source, declared layout
+facts and the relevant revision. Installation emits no guest/event code and changes no
 architectural state, memory or time. Rejected installation preserves the previous
 binding and pending source-version handoff. Fault recovery is an explicit
 register/reset boundary, not a side effect of installing code.

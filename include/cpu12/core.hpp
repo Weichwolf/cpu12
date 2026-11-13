@@ -150,6 +150,8 @@ struct CallbackBinding {
   std::string_view symbol;
 };
 
+enum class MemoryTopology : std::uint8_t { fixed, dynamic };
+
 struct CompileOptions {
   std::span<const VariantLayout> memory;
   std::span<const InterruptRequest> interrupts;
@@ -157,6 +159,7 @@ struct CompileOptions {
   std::span<const CodeTransition> transitions;
   std::span<const CallbackBinding> callbacks;
   std::span<const std::byte> bindings;
+  MemoryTopology topology = MemoryTopology::fixed;
 };
 
 struct SemanticExport {
