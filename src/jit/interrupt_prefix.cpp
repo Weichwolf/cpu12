@@ -76,6 +76,24 @@ std::uint64_t private_operation_prefix(const Instruction &instruction,
   return private_storage(memory, {.first = address, .width = width, .write = write}) ? cycles : 0;
 }
 
+std::uint64_t isolated_store_prefix(const Instruction &instruction,
+                                    const Registers &registers,
+                                    const std::span<const ByteWrite> isolated) {
+  if (instruction.kind != Kind::store || instruction.word ||
+      (instruction.addressing != Addressing::direct &&
+       instruction.addressing != Addressing::extended)) {
+    return 0;
+  }
+  const auto value =
+      static_cast<Byte>(instruction.accumulator_b ? registers.d : registers.d >> byte_bits);
+  return std::ranges::any_of(isolated,
+                             [&](const auto write) {
+                               return write.address == instruction.address && write.value == value;
+                             })
+             ? instruction_timing(instruction).base
+             : 0;
+}
+
 std::uint64_t interrupt_entry_prefix(const State &state,
                                      const Memory &memory,
                                      const PrefixLookup foreground,

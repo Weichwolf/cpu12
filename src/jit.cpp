@@ -387,7 +387,9 @@ bool Jit::transition_pending() const noexcept {
   return impl_->pending.has_value();
 }
 
-std::uint64_t Jit::foreground_prefix(const State &state, const bool local) const {
+std::uint64_t Jit::foreground_prefix(const State &state,
+                                     const bool local,
+                                     const std::span<const ByteWrite> isolated) const {
   if (impl_->pending) { return 0; }
   const auto &mapping = *impl_->current;
   const auto pc = state.registers.pc;
@@ -406,13 +408,16 @@ std::uint64_t Jit::foreground_prefix(const State &state, const bool local) const
                    local ? mapping.local_effects.prefix(pc, state.registers) : 0,
                    local && instruction != nullptr
                        ? private_operation_prefix(*instruction, mapping.memory, state.registers.sp)
+                       : 0,
+                   local && instruction != nullptr
+                       ? isolated_store_prefix(*instruction, state.registers, isolated)
                        : 0});
 }
 
-std::uint64_t
-Jit::event_prefix(const State &state,
-                  const bool local,
-                  const std::optional<std::span<const InterruptRequest>> incoming) const {
+std::uint64_t Jit::event_prefix(const State &state,
+                                const bool local,
+                                const std::optional<std::span<const InterruptRequest>> incoming,
+                                const std::span<const ByteWrite> isolated) const {
   if (impl_->pending || !impl_->current->image) { return 0; }
   const auto &mapping = *impl_->current;
   const auto requests = incoming.value_or(mapping.interrupts);
@@ -433,7 +438,7 @@ Jit::event_prefix(const State &state,
       }};
   auto foreground = state.execution == ExecutionState::waiting
                         ? std::numeric_limits<std::uint64_t>::max()
-                        : foreground_prefix(state, local);
+                        : foreground_prefix(state, local, isolated);
   if (state.returned_frame) {
     const auto *next = mapping.instruction(state.registers.pc);
     if (next == nullptr) { return 0; }

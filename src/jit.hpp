@@ -26,11 +26,14 @@ public:
   void isolate_accesses(std::span<const LocalAccess> accesses);
   [[nodiscard]] bool requires_image() const noexcept;
   [[nodiscard]] bool transition_pending() const noexcept;
-  [[nodiscard]] std::uint64_t foreground_prefix(const State &state, bool local = false) const;
+  [[nodiscard]] std::uint64_t foreground_prefix(const State &state,
+                                                bool local = false,
+                                                std::span<const ByteWrite> isolated = {}) const;
   [[nodiscard]] std::uint64_t
   event_prefix(const State &state,
                bool local = false,
-               std::optional<std::span<const InterruptRequest>> incoming = {}) const;
+               std::optional<std::span<const InterruptRequest>> incoming = {},
+               std::span<const ByteWrite> isolated = {}) const;
   void cancel_transition() noexcept;
   [[nodiscard]] Fault validate_instruction(Address pc, std::span<const Byte> bytes) const;
   [[nodiscard]] PreparationReport prepare(std::span<const Address> established_entries);

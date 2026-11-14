@@ -244,9 +244,13 @@ public:
   // Uses current masks/bindings; conditional permission must stop at its first real input.
   [[nodiscard]] std::uint64_t event_prefix() const;
   // Event admission allowing the bound isolated accesses; native accesses remain unchanged.
-  [[nodiscard]] std::uint64_t channel_prefix(PrefixScope scope = PrefixScope::events) const;
+  // Exact byte writes are owner-certified total/isolated for this stopped query only.
+  // A matching direct store ends the prefix at its real instruction completion.
+  [[nodiscard]] std::uint64_t channel_prefix(PrefixScope scope = PrefixScope::events,
+                                             std::span<const ByteWrite> isolated = {}) const;
   // The owner bounds excluded IRQs by local deadlines; requests must be installed.
-  [[nodiscard]] std::uint64_t channel_prefix(std::span<const InterruptRequest> incoming) const;
+  [[nodiscard]] std::uint64_t channel_prefix(std::span<const InterruptRequest> incoming,
+                                             std::span<const ByteWrite> isolated = {}) const;
   // Clears a latched fault. Pending code transfers require installation or reset.
   void set_registers(Registers registers);
   // An installed image requires a matching install after every explicit remap.

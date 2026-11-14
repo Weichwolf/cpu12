@@ -31,6 +31,7 @@ struct Bus {
   unsigned reads = 0, writes = 0, masked = 0;
   WordWrite last_write;
   bool stopped = true;
+  bool accept_writes = true;
 
   void inspect() noexcept {
     ++reads;
@@ -60,7 +61,7 @@ struct Bus {
     auto &bus = *static_cast<Bus *>(owner);
     ++bus.writes;
     bus.last_write = {.address = access.address, .value = access.value};
-    return true;
+    return bus.accept_writes;
   }
 
   static bool write_word(void *owner, const WordWrite access) noexcept {
@@ -249,6 +250,79 @@ void stores(const bool word_store) {
   }
 }
 
+void exact_writes(const isa::Opcode opcode) {
+  constexpr Address direct = 0x80;
+  constexpr unsigned byte_values = 256;
+  constexpr unsigned byte_bits = 8;
+  const bool extended =
+      opcode == isa::Opcode::staa_extended || opcode == isa::Opcode::stab_extended;
+  const bool accumulator_b =
+      opcode == isa::Opcode::stab_direct || opcode == isa::Opcode::stab_extended;
+  const auto address = extended ? local_first : direct;
+  const auto cycles = extended ? 3U : 2U;
+  std::vector<Byte> operation{static_cast<Byte>(opcode)};
+  if (extended) { operation.push_back(static_cast<Byte>(address >> byte_bits)); }
+  operation.push_back(static_cast<Byte>(address));
+  Fixture fixture(operation);
+  for (unsigned value = 0; value < byte_values; ++value) {
+    const auto other = byte_values - 1 - value;
+    const auto data = static_cast<Address>(accumulator_b ? (other << byte_bits) | value
+                                                         : (value << byte_bits) | other);
+    fixture.core.set_registers({.pc = entry, .d = data});
+    const auto before = fixture.core.state();
+    const auto time = fixture.core.progress();
+    const auto calls = fixture.bus.writes;
+    const std::array exact{ByteWrite{.address = address, .value = static_cast<Byte>(value)}};
+    const std::array wrong_value{ByteWrite{.address = address, .value = static_cast<Byte>(other)}};
+    const std::array wrong_address{
+        ByteWrite{.address = static_cast<Address>(address + 1), .value = static_cast<Byte>(value)}};
+    const std::array undeclared{InterruptRequest{.vector = 0xfff4, .kind = InterruptKind::xirq}};
+    require(fixture.core.channel_prefix(PrefixScope::foreground, exact) == cycles &&
+                fixture.core.channel_prefix(PrefixScope::events, exact) == cycles &&
+                fixture.core.channel_prefix(std::span<const InterruptRequest>{}, exact) == cycles &&
+                fixture.core.channel_prefix(undeclared, exact) == 0 &&
+                fixture.core.channel_prefix(PrefixScope::events, wrong_value) == 0 &&
+                fixture.core.channel_prefix(PrefixScope::events, wrong_address) == 0 &&
+                fixture.core.channel_prefix() == 0 && fixture.core.foreground_prefix() == 0 &&
+                fixture.core.event_prefix() == 0 && fixture.core.state() == before &&
+                fixture.core.progress() == time && fixture.bus.writes == calls &&
+                fixture.bus.reads == 0,
+            "Exact stopped write admission is value/address scoped, read-only and not retained");
+    fixture.bus.accept_writes = value != byte_values - 1;
+    const auto result = fixture.core.run_until(time.estimated_cycles + cycles);
+    const auto accepted = fixture.bus.accept_writes;
+    require(result.fault == (accepted ? Fault::none : Fault::memory_write) &&
+                result.retired == unsigned{accepted} && fixture.bus.writes == calls + 1 &&
+                fixture.bus.last_write.address == address &&
+                fixture.bus.last_write.value == value &&
+                fixture.core.progress().estimated_cycles ==
+                    time.estimated_cycles + (accepted ? cycles : 0) &&
+                fixture.core.registers().pc == entry + (accepted ? operation.size() : 0) &&
+                fixture.core.registers().d == data &&
+                (!accepted ||
+                 fixture.core.registers().ccr ==
+                     ((unsigned{value == 0} * 4U) | (unsigned{value >= byte_values / 2} * 8U))),
+            "Certified writes retain the actual native callback, flags, fault and timing");
+  }
+}
+
+void nonexact_writes() {
+  constexpr auto indexed =
+      isa::program(isa::opcode<isa::Opcode::staa_indexed>(), std::array<Byte, 1>{0});
+  constexpr auto word_store =
+      isa::program(isa::opcode<isa::Opcode::std_extended>(), std::array<Byte, 2>{0x20, 0});
+  constexpr auto read_modify_write =
+      isa::program(isa::opcode<isa::Opcode::inc_extended>(), std::array<Byte, 2>{0x20, 0});
+  for (const auto operation : {std::span<const Byte>(indexed),
+                               std::span<const Byte>(word_store),
+                               std::span<const Byte>(read_modify_write)}) {
+    const Fixture fixture(operation);
+    const std::array exact{ByteWrite{.address = local_first, .value = 0}};
+    require(fixture.core.channel_prefix(PrefixScope::events, exact) == 0,
+            "An exact byte write does not certify indexed, word or read-modify-write effects");
+  }
+}
+
 void read_write() {
   const auto operation =
       isa::program(isa::opcode<isa::Opcode::inc_indexed>(), std::array<Byte, 1>{0});
@@ -282,6 +356,13 @@ int main() try {
   stores(false);
   stores(true);
   read_write();
+  for (const auto opcode : {isa::Opcode::staa_direct,
+                            isa::Opcode::stab_direct,
+                            isa::Opcode::staa_extended,
+                            isa::Opcode::stab_extended}) {
+    exact_writes(opcode);
+  }
+  nonexact_writes();
 } catch (const std::exception &error) {
 
   std::cerr << error.what() << '\n';
