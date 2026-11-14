@@ -109,7 +109,7 @@ void native_prefixes() {
   Core core(input.memory(), &io);
   probe.core = &core;
   core.set_registers({.pc = entry});
-  require(core.foreground_prefix() == 0,
+  require(core.foreground_prefix() == 0 && core.event_prefix() == 0,
           "An uninstalled owner has no native event-prefix guarantee");
   core.install(image, variant);
   constexpr std::array<Address, 8> pcs{0, 1, 3, 4, 5, 6, 9, 10};
@@ -134,7 +134,8 @@ void native_prefixes() {
                 probe.address == output && probe.value == incremented &&
                 probe.cycles - before == expected && probe.prefix == 0,
             "Actual native callback prefixes independently match both branch timing paths");
-    require(core.foreground_prefix() == 0 && core.state().failure.fault == Fault::memory_write,
+    require(core.foreground_prefix() == 0 && core.event_prefix() == 0 &&
+                core.state().failure.fault == Fault::memory_write,
             "A faulted owner cannot certify execution or clear its failure");
   }
 }
@@ -161,7 +162,8 @@ void state_alias() {
   const auto progress = core.progress();
   core.set_memory(Memory::mapped(memory));
   core.install(image, variant);
-  require(core.foreground_prefix() == 0 && core.state() == before && core.progress() == progress,
+  require(core.foreground_prefix() == 0 && core.event_prefix() == 0 && core.state() == before &&
+              core.progress() == progress,
           "RAM that aliases hidden CPU state cannot certify a context-free prefix");
 }
 

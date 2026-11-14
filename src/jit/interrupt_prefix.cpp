@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <limits>
 #include <map>
+#include <optional>
 #include <span>
 
 namespace cpu12::detail {
@@ -31,7 +32,7 @@ bool private_frame(const Memory &memory, const Address stack) {
 
 std::uint64_t interrupt_entry_prefix(const State &state,
                                      const Memory &memory,
-                                     const std::map<Address, std::uint64_t> &foreground,
+                                     const PrefixLookup foreground,
                                      const std::span<const InterruptRequest> interrupts) {
   if (state.failure.fault != Fault::none) { return 0; }
   const auto running = state.execution == ExecutionState::running;
@@ -47,8 +48,8 @@ std::uint64_t interrupt_entry_prefix(const State &state,
     const auto vector = immutable_bytes(memory, request.vector);
     if (vector.size() < 2 || (!reuse && !private_frame(memory, state.registers.sp))) { return 0; }
     const auto target = static_cast<Address>((unsigned{vector[0]} << byte_bits) | vector[1]);
-    const auto found = foreground.find(target);
-    if (found == foreground.end()) { return 0; }
+    const auto found = foreground.find(foreground.owner, target);
+    if (!found) { return 0; }
     auto entered = state;
     entered.registers.pc = target;
     entered.registers.ccr = static_cast<Byte>(entered.registers.ccr | mask_i | mask);
@@ -60,9 +61,23 @@ std::uint64_t interrupt_entry_prefix(const State &state,
     entered.irq_delay = 0;
     entered.returned_frame = false;
     const auto after =
-        std::min(found->second, interrupt_entry_prefix(entered, memory, foreground, interrupts));
+        std::min(*found, interrupt_entry_prefix(entered, memory, foreground, interrupts));
     earliest = std::min(earliest, plus(reuse ? 6U : 9U, after));
   }
   return earliest;
+}
+
+std::uint64_t interrupt_entry_prefix(const State &state,
+                                     const Memory &memory,
+                                     const std::map<Address, std::uint64_t> &foreground,
+                                     const std::span<const InterruptRequest> interrupts) {
+  const PrefixLookup lookup{
+      .owner = &foreground,
+      .find = [](const void *owner, const Address pc) -> std::optional<std::uint64_t> {
+        const auto &prefixes = *static_cast<const std::map<Address, std::uint64_t> *>(owner);
+        const auto found = prefixes.find(pc);
+        return found == prefixes.end() ? std::nullopt : std::optional{found->second};
+      }};
+  return interrupt_entry_prefix(state, memory, lookup, interrupts);
 }
 }

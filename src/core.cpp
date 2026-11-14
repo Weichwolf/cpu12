@@ -92,6 +92,10 @@ public:
   bool deadline_active = false;
   bool prefix_admitted = false;
 
+  [[nodiscard]] bool prefix_ready() const noexcept {
+    return !active && supported && prefix_admitted && context.cpu.failure.fault == Fault::none;
+  }
+
   void admit_prefix_memory() noexcept {
     const auto owner = std::bit_cast<std::uintptr_t>(this);
     const auto outside = [&](const std::span<const Byte> bytes) {
@@ -287,12 +291,20 @@ Progress Core::progress() const noexcept {
 
 std::uint64_t Core::foreground_prefix() const {
   const auto &state = impl_->context.cpu;
-  if (impl_->active || !impl_->supported || !impl_->prefix_admitted ||
-      state.failure.fault != Fault::none || state.execution != ExecutionState::running ||
+  if (!impl_->prefix_ready() || state.execution != ExecutionState::running ||
       state.returned_frame) {
     return 0;
   }
   return impl_->jit.foreground_prefix(state);
+}
+
+std::uint64_t Core::event_prefix() const {
+  const auto &state = impl_->context.cpu;
+  if (!impl_->prefix_ready() ||
+      (state.execution != ExecutionState::running && state.execution != ExecutionState::waiting)) {
+    return 0;
+  }
+  return impl_->jit.event_prefix(state);
 }
 
 void Core::request_yield() noexcept {

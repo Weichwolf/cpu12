@@ -25,6 +25,7 @@
 #include <bitset>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <span>
@@ -112,6 +113,7 @@ struct Mapping {
   std::bitset<address_bytes> prepared;
   std::shared_ptr<const llvm19::ImageProgram> image;
   std::vector<std::uint64_t> variants;
+  std::vector<InterruptRequest> interrupts;
 
   [[nodiscard]] const void *entry(const Address pc) const noexcept {
     const auto *page = native_regions[pc >> native_page_shift];
@@ -318,6 +320,7 @@ void Jit::install(std::shared_ptr<const llvm19::ImageProgram> image,
   auto mapping = std::make_unique<Mapping>(impl_->current->memory);
   mapping->image = std::move(image);
   mapping->variants.assign(variants.begin(), variants.end());
+  mapping->interrupts.assign(interrupts.begin(), interrupts.end());
   for (const auto id : variants) { mapping->mount(id); }
   constexpr std::array frames{
       InterruptFrame::push, InterruptFrame::waiting, InterruptFrame::returned};
@@ -358,6 +361,29 @@ std::uint64_t Jit::foreground_prefix(const State &state) const {
     return instruction_timing(*instruction).base;
   }
   return mapping.image->foreground_prefix(*source, pc);
+}
+
+std::uint64_t Jit::event_prefix(const State &state) const {
+  if (impl_->pending || !impl_->current->image) { return 0; }
+  const auto &mapping = *impl_->current;
+  const PrefixLookup lookup{
+      .owner = &mapping,
+      .find = [](const void *owner, const Address pc) -> std::optional<std::uint64_t> {
+        const auto &installed = *static_cast<const Mapping *>(owner);
+        const auto source = installed.source(pc);
+        return source ? std::optional{installed.image->foreground_prefix(*source, pc)}
+                      : std::nullopt;
+      }};
+  auto foreground = state.execution == ExecutionState::waiting
+                        ? std::numeric_limits<std::uint64_t>::max()
+                        : foreground_prefix(state);
+  if (state.returned_frame) {
+    const auto *next = mapping.instruction(state.registers.pc);
+    if (next == nullptr) { return 0; }
+    foreground = std::min(foreground, std::uint64_t{instruction_timing(*next).base});
+  }
+  return std::min(foreground,
+                  interrupt_entry_prefix(state, mapping.memory, lookup, mapping.interrupts));
 }
 
 void Jit::cancel_transition() noexcept {

@@ -227,6 +227,9 @@ public:
   // State/code/binding changes invalidate it; zero is uncertified, UINT64_MAX is unbounded.
   // Executes no guest or bus I/O.
   [[nodiscard]] std::uint64_t foreground_prefix() const;
+  // Stopped-owner no-owner-access prefix including declared IRQ paths and return reuse.
+  // Uses current masks/bindings; conditional permission must stop at its first real input.
+  [[nodiscard]] std::uint64_t event_prefix() const;
   // Clears a latched fault. Pending code transfers require installation or reset.
   void set_registers(Registers registers);
   // An installed image requires a matching install after every explicit remap.

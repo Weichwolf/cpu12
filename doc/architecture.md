@@ -87,6 +87,14 @@ an unbounded pure cycle is not an incoming-IRQ horizon. Relevant state, code or
 binding changes invalidate the result. Admission changes no guest state or time.
 Admit WAI through its sleep boundary only when the full nine-byte stack frame
 belongs to private writable storage; tracked writes initialize their knownness.
+Expose `Core::event_prefix()` for conditional admission across a pending RTI poll
+or WAI: bound both foreground and every declared eligible IRQ path, including
+nested entries and mounted domains. Retain return-frame eligibility until the
+consumer has established the incoming ordering. End permission on the first real
+input; a future input does not become an IRQ at the earlier query time. Reuse
+installed validation and prepared metadata without decoding, hashing or executing.
+End a returned-frame prefix by the first following instruction's earliest boundary,
+where closing reuse can change later IRQ stack accesses.
 
 Build natural connected CFG/SSA regions, functions and loops, independent of
 quotas and catalogue entry density. Preserve all declared starts without turning

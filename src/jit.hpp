@@ -26,6 +26,7 @@ public:
   [[nodiscard]] bool requires_image() const noexcept;
   [[nodiscard]] bool transition_pending() const noexcept;
   [[nodiscard]] std::uint64_t foreground_prefix(const State &state) const;
+  [[nodiscard]] std::uint64_t event_prefix(const State &state) const;
   void cancel_transition() noexcept;
   [[nodiscard]] Fault validate_instruction(Address pc, std::span<const Byte> bytes) const;
   [[nodiscard]] PreparationReport prepare(std::span<const Address> established_entries);

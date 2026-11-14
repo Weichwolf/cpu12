@@ -103,9 +103,11 @@ struct Fixture {
 struct Probe {
   Core *core = nullptr;
   std::uint64_t cycles = infinite;
+  std::uint64_t prefix = infinite;
   Address address = 0;
 
   bool observe(const Address at) noexcept {
+    prefix = core->event_prefix();
     cycles = core->progress().estimated_cycles;
     address = at;
     return false;
@@ -164,14 +166,16 @@ void direct_entries() {
       const auto predicted = fixture.prefix(before);
       const std::uint64_t expected =
           (frame == Frame::push ? 9U : 6U) + (kind == InterruptKind::maskable ? 2U : 10U);
+      const auto public_prefix = frame == Frame::returned ? 1 : expected;
       require(
-          predicted == expected && core.state() == before && fixture.stack == stack &&
-              core.progress().estimated_cycles == cycles,
+          predicted == expected && core.event_prefix() == public_prefix && core.state() == before &&
+              fixture.stack == stack && core.progress().estimated_cycles == cycles &&
+              probe.cycles == infinite,
           "IRQ analysis neither executes nor changes frame/state/time and includes handler work");
       const auto event = core.interrupt(fixture.requests[kind == InterruptKind::maskable ? 0 : 1]);
       const auto result = core.run(16);
       require(event.accepted && event.fault == Fault::none && result.fault == Fault::memory_write &&
-                  probe.address == output && probe.cycles - cycles == expected,
+                  probe.address == output && probe.cycles - cycles == expected && probe.prefix == 0,
               "Real prepared push/WAI/RTI IRQ paths match the independent earliest-callback costs");
     }
   }
@@ -188,7 +192,8 @@ void tracked_frame() {
   seed(core, Frame::push, mask_x);
   core.install(fixture.image, variant);
   const auto known = fixture.stack_known;
-  require(fixture.prefix(core.state()) == 11 && fixture.stack_known == known,
+  require(fixture.prefix(core.state()) == 11 && core.event_prefix() == 11 &&
+              fixture.stack_known == known,
           "Unknown old stack values do not turn directly granted frame stores into host calls");
   require(core.interrupt(fixture.requests[0]).accepted && probe.cycles == infinite,
           "Actual prepared frame stores update tracked RAM without consulting the owner");
@@ -199,6 +204,32 @@ void tracked_frame() {
   require(core.run(16).fault == Fault::memory_write && probe.address == output &&
               probe.cycles == 11,
           "The first real owner call follows the complete tracked frame and two original NOPs");
+}
+
+void return_revocation() {
+  Fixture fixture;
+  Probe probe;
+  auto io = probe.io();
+  Core core(fixture.memory(), &io);
+  probe.core = &core;
+  seed(core, Frame::returned, mask_x);
+  fixture.regions.back().writable = false;
+  fixture.prepare();
+  core.set_memory(fixture.memory());
+  require(core.event_prefix() == 0, "A remap revokes the previous event admission");
+  core.install(fixture.image, variant);
+  const auto before = core.state();
+  const auto cycles = core.progress();
+  const auto stack = fixture.stack;
+  require(core.event_prefix() == 1 && core.state() == before && core.progress() == cycles &&
+              fixture.stack == stack && probe.cycles == infinite,
+          "A returned frame cannot certify later ordinary IRQ entry beyond its closing boundary");
+  core.close_return_window();
+  require(core.event_prefix() == 0 && core.progress() == cycles,
+          "Closing reuse exposes the real immediate stack callback without advancing time");
+  require(core.interrupt(fixture.requests[0]).fault == Fault::memory_write &&
+              probe.cycles == cycles.estimated_cycles,
+          "The native non-reused IRQ independently reaches that stack owner immediately");
 }
 
 void nested_stack_fault() {
@@ -215,7 +246,7 @@ void nested_stack_fault() {
     core.install(fixture.image, variant);
     const auto before = core.progress().estimated_cycles;
     const std::uint64_t expected = frame == Frame::push ? 9 : 6;
-    require(fixture.prefix(core.state()) == expected,
+    require(fixture.prefix(core.state()) == expected && core.event_prefix() == expected,
             "A nested XIRQ may hit the stack owner before the original handler's first output");
     require(core.interrupt(fixture.requests[0]).accepted,
             "The first actual IRQ has a complete directly granted frame");
@@ -244,7 +275,7 @@ void vector_contracts() {
     probe.core = &core;
     seed(core, Frame::push, mask_x);
     core.install(fixture.image, variant);
-    require(fixture.prefix(core.state()) == 0,
+    require(fixture.prefix(core.state()) == 0 && core.event_prefix() == 0,
             "Unknown or split vector grants do not manufacture a direct word transaction");
     const auto event = core.interrupt(fixture.requests[0]);
     require(event.fault == Fault::memory_read && probe.address == vector && probe.cycles == 0,
@@ -292,6 +323,7 @@ void masks_and_deferral() {
 int main() try {
   direct_entries();
   tracked_frame();
+  return_revocation();
   nested_stack_fault();
   vector_contracts();
   masks_and_deferral();
