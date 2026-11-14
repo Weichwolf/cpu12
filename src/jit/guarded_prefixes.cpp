@@ -71,8 +71,21 @@ unsigned index_value(const Registers &registers, const IndexBase base) {
   }
 }
 
+unsigned local_classes(const LocalAccess::Role role) {
+  constexpr unsigned read = 3;
+  constexpr unsigned write = 12;
+  constexpr unsigned read_write = 63;
+  switch (role) {
+    case LocalAccess::Role::read: return read;
+    case LocalAccess::Role::write: return write;
+    case LocalAccess::Role::read_write: return read_write;
+    default: throw std::invalid_argument("Invalid CPU12 isolated access role");
+  }
+}
+
 std::vector<std::size_t> components(const std::span<const BlockInstruction> instructions,
-                                    const std::map<Address, std::uint64_t> &prefixes) {
+                                    const std::map<Address, std::uint64_t> &prefixes,
+                                    const std::span<const PrefixAccess> policies) {
   std::map<Address, std::size_t> indices;
   std::vector<std::size_t> parents;
   parents.reserve(instructions.size());
@@ -88,7 +101,9 @@ std::vector<std::size_t> components(const std::span<const BlockInstruction> inst
     return index;
   };
   for (std::size_t index = 0; index < instructions.size(); ++index) {
-    if (prefixes.at(instructions[index].pc) == 0) { continue; }
+    if (prefixes.at(instructions[index].pc) == 0 || policies[index] == PrefixAccess::terminal) {
+      continue;
+    }
     const auto flow = successors(instructions[index]);
     for (const auto pc : std::span(flow.direct).first(flow.count)) {
       const auto next = indices.find(pc);
@@ -105,7 +120,7 @@ std::vector<std::size_t> components(const std::span<const BlockInstruction> inst
 
 GuardedPrefixes::GuardedPrefixes(const std::span<const BlockInstruction> instructions,
                                  const Memory &memory,
-                                 const std::span<const LocalRead> local) {
+                                 const std::span<const LocalAccess> local) {
   bind_local(local);
   for (const auto &region : memory.regions()) {
     if (std::ranges::any_of(memory.regions(), [&](const auto &other) {
@@ -136,14 +151,16 @@ void GuardedPrefixes::bind_memory(const Memory &memory) {
   }
 }
 
-void GuardedPrefixes::bind_local(const std::span<const LocalRead> local) {
+void GuardedPrefixes::bind_local(const std::span<const LocalAccess> local) {
   for (const auto region : local) {
     if (region.size == 0 || region.size > address_bytes - region.first) {
-      throw std::invalid_argument("Invalid CPU12 isolated read extent");
+      throw std::invalid_argument("Invalid CPU12 isolated access extent");
     }
-    for (unsigned access = 0; access < 2; ++access) {
-      const unsigned width = access + 1;
-      if (region.size < width) { continue; }
+    const auto classes = local_classes(region.role);
+    if (region.role != LocalAccess::Role::read) { store_policy_ = PrefixAccess::terminal; }
+    for (unsigned access = 0; access < ranges_.size(); ++access) {
+      const unsigned width = (access & 1U) + 1;
+      if ((classes & (1U << access)) == 0 || region.size < width) { continue; }
       const bool wrapping = region.first == 0 && region.size == address_bytes;
       ranges_[access].push_back(
           {.first = region.first,
@@ -188,18 +205,19 @@ void GuardedPrefixes::prepare(const std::span<const BlockInstruction> instructio
     if (!preserves_indices(operation.instruction)) {
       policies[index] = PrefixAccess::boundary;
     } else if (const auto candidate = guard(operation)) {
-      policies[index] = PrefixAccess::guarded;
+      policies[index] = candidate->access >= 2 ? store_policy_ : PrefixAccess::guarded;
       guards[index] = candidate;
     }
   }
   const auto prefixes = foreground_prefixes(instructions, memory, policies);
-  bind(instructions, prefixes, guards);
+  bind(instructions, prefixes, guards, policies);
 }
 
 void GuardedPrefixes::bind(const std::span<const BlockInstruction> instructions,
                            const std::map<Address, std::uint64_t> &prefixes,
-                           const std::span<const std::optional<Guard>> guards) {
-  const auto roots = components(instructions, prefixes);
+                           const std::span<const std::optional<Guard>> guards,
+                           const std::span<const PrefixAccess> policies) {
+  const auto roots = components(instructions, prefixes, policies);
   std::map<std::size_t, std::vector<Guard>> groups;
   for (std::size_t index = 0; index < instructions.size(); ++index) {
     const auto &guard = guards[index];

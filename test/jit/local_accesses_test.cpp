@@ -4,6 +4,7 @@
 #include "isa.hpp"
 
 #include <array>
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <exception>
@@ -28,6 +29,7 @@ void require(const bool passed, const char *message) {
 struct Bus {
   Core *core = nullptr;
   unsigned reads = 0, writes = 0, masked = 0;
+  WordWrite last_write;
   bool stopped = true;
 
   void inspect() noexcept {
@@ -36,7 +38,7 @@ struct Bus {
               core->channel_prefix() == 0;
     bool refused = false;
     try {
-      core->isolate_reads({});
+      core->isolate_accesses({});
     } catch (const std::logic_error &) { refused = true; }
     stopped = stopped && refused;
   }
@@ -54,8 +56,17 @@ struct Bus {
     return true;
   }
 
-  static bool write(void *owner, [[maybe_unused]] ByteWrite access) noexcept {
-    ++static_cast<Bus *>(owner)->writes;
+  static bool write(void *owner, const ByteWrite access) noexcept {
+    auto &bus = *static_cast<Bus *>(owner);
+    ++bus.writes;
+    bus.last_write = {.address = access.address, .value = access.value};
+    return true;
+  }
+
+  static bool write_word(void *owner, const WordWrite access) noexcept {
+    auto &bus = *static_cast<Bus *>(owner);
+    ++bus.writes;
+    bus.last_write = access;
     return true;
   }
 
@@ -69,6 +80,7 @@ struct Bus {
             .read = read,
             .write = write,
             .read_word = read_word,
+            .write_word = write_word,
             .read_masked = read_masked};
   }
 };
@@ -104,8 +116,8 @@ struct Fixture {
   }
 
   void isolate() {
-    const std::array reads{LocalRead{.first = local_first, .size = local_bytes}};
-    core.isolate_reads(reads);
+    const std::array reads{LocalAccess{.first = local_first, .size = local_bytes}};
+    core.isolate_accesses(reads);
   }
 };
 
@@ -154,15 +166,19 @@ void lifetime() {
               fixture.core.progress().estimated_cycles == iterations * period,
           "One bound local-read description admits thousands of real stateful callbacks");
   for (const auto invalid :
-       {LocalRead{.first = local_first, .size = 0}, LocalRead{.first = 1, .size = address_bytes}}) {
+       {LocalAccess{.first = local_first, .size = 0},
+        LocalAccess{.first = 1, .size = address_bytes},
+        LocalAccess{.first = local_first,
+                    .size = 1,
+                    .role = std::bit_cast<LocalAccess::Role>(std::numeric_limits<Byte>::max())}}) {
     bool refused = false;
     try {
-      fixture.core.isolate_reads(std::array{invalid});
+      fixture.core.isolate_accesses(std::array{invalid});
     } catch (const std::invalid_argument &) { refused = true; }
     require(refused && fixture.core.channel_prefix() == infinite,
             "Invalid read extents fail without replacing the installed isolation proof");
   }
-  fixture.core.isolate_reads({});
+  fixture.core.isolate_accesses({});
   require(fixture.core.channel_prefix() == 0, "Explicit empty isolation revokes its proof");
   fixture.isolate();
   fixture.core.install(fixture.image, variant);
@@ -191,6 +207,70 @@ void masked() {
               fixture.bus.masked == 1 && fixture.bus.reads == 1 && fixture.bus.stopped,
           "Isolated bit tests retain their actual masked-read callback and both CFG paths");
 }
+
+void stores(const bool word_store) {
+  const auto operation =
+      word_store ? isa::program(isa::opcode<isa::Opcode::std_indexed>(), std::array<Byte, 1>{0})
+                 : isa::program(isa::opcode<isa::Opcode::staa_indexed>(), std::array<Byte, 1>{0});
+  Fixture fixture(operation);
+  fixture.core.isolate_accesses(std::array{
+      LocalAccess{.first = local_first, .size = local_bytes, .role = LocalAccess::Role::write}});
+  const unsigned width = word_store ? 2U : 1U;
+  for (unsigned at = 0; at < address_bytes; ++at) {
+    fixture.core.set_registers({.pc = entry, .d = word, .x = static_cast<Address>(at)});
+    const auto before = fixture.core.state();
+    const auto time = fixture.core.progress();
+    const auto calls = fixture.bus.writes;
+    const bool local = at >= local_first && at + width <= local_first + local_bytes;
+    require(fixture.core.channel_prefix() == (local ? 2U : 0U) &&
+                fixture.core.foreground_prefix() == 0 && fixture.core.event_prefix() == 0 &&
+                fixture.core.state() == before && fixture.core.progress() == time &&
+                fixture.bus.writes == calls && fixture.bus.reads == 0,
+            "Isolated write admission ends at the first complete byte/word instruction");
+    const auto result = fixture.core.run(1);
+    require(result.fault == Fault::none && result.retired == 1 &&
+                fixture.core.progress().estimated_cycles == time.estimated_cycles + 2 &&
+                fixture.bus.writes == calls + 1 && fixture.bus.last_write.address == at &&
+                fixture.bus.last_write.value == (word_store ? word : high),
+            "Every write footprint preserves the actual callback, value and nominal time");
+  }
+  constexpr unsigned byte_values = 256;
+  for (unsigned value = 0; value < byte_values; ++value) {
+    const auto data = static_cast<Address>((value << 8U) | (byte_values - 1 - value));
+    fixture.core.set_registers({.pc = entry, .d = data, .x = local_first});
+    const auto now = fixture.core.progress().estimated_cycles;
+    require(fixture.core.channel_prefix() == 2 && fixture.core.run_until(now + 2).retired == 1 &&
+                fixture.core.registers().pc == entry + operation.size() &&
+                fixture.bus.last_write.value == (word_store ? data : value),
+            "All byte values and paired word patterns stop before the next branch");
+    require(fixture.core.channel_prefix() == 5 && fixture.core.run_until(now + 5).retired == 1 &&
+                fixture.core.registers().pc == entry && fixture.core.channel_prefix() == 2,
+            "The finite local-write boundary propagates through an actual native loop");
+  }
+}
+
+void read_write() {
+  const auto operation =
+      isa::program(isa::opcode<isa::Opcode::inc_indexed>(), std::array<Byte, 1>{0});
+  Fixture fixture(operation);
+  for (const auto role : {LocalAccess::Role::read, LocalAccess::Role::write}) {
+    fixture.core.isolate_accesses(
+        std::array{LocalAccess{.first = local_first, .size = local_bytes, .role = role}});
+    require(fixture.core.channel_prefix() == 0,
+            "A read-modify-write needs a complete isolated contract for both effects");
+  }
+  fixture.core.isolate_accesses(std::array{LocalAccess{
+      .first = local_first, .size = local_bytes, .role = LocalAccess::Role::read_write}});
+  const auto before = fixture.core.state();
+  require(fixture.core.channel_prefix() == 3 && fixture.core.state() == before &&
+              fixture.bus.reads == 0 && fixture.bus.writes == 0,
+          "A complete isolated read-modify-write proof invokes neither callback");
+  const auto result = fixture.core.run_until(3);
+  require(result.retired == 1 && result.fault == Fault::none && fixture.bus.reads == 1 &&
+              fixture.bus.writes == 1 && fixture.bus.last_write.value == high + 1U &&
+              fixture.core.registers().pc == entry + operation.size(),
+          "The native read and write both occur once before their real instruction boundary");
+}
 }
 
 int main() try {
@@ -199,6 +279,9 @@ int main() try {
   lifetime();
   writes();
   masked();
+  stores(false);
+  stores(true);
+  read_write();
 } catch (const std::exception &error) {
 
   std::cerr << error.what() << '\n';

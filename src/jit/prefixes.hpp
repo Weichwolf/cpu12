@@ -21,7 +21,7 @@ struct PrefixLookup {
   std::optional<std::uint64_t> (*find)(const void *, Address);
 };
 
-enum class PrefixAccess : std::uint8_t { ordinary, guarded, boundary };
+enum class PrefixAccess : std::uint8_t { ordinary, guarded, boundary, terminal };
 
 [[nodiscard]] std::map<Address, std::uint64_t>
 foreground_prefixes(std::span<const BlockInstruction> instructions,
@@ -33,7 +33,7 @@ public:
   GuardedPrefixes() = default;
   GuardedPrefixes(std::span<const BlockInstruction> instructions,
                   const Memory &memory,
-                  std::span<const LocalRead> local = {});
+                  std::span<const LocalAccess> local = {});
   [[nodiscard]] std::uint64_t prefix(Address pc, const Registers &registers) const;
 
 private:
@@ -57,13 +57,15 @@ private:
   std::array<std::vector<Range>, 6> ranges_;
   std::vector<std::vector<Guard>> groups_;
   std::map<Address, Entry> entries_;
+  PrefixAccess store_policy_ = PrefixAccess::guarded;
   [[nodiscard]] std::optional<Guard> guard(const BlockInstruction &operation) const;
   void bind_memory(const Memory &memory);
-  void bind_local(std::span<const LocalRead> local);
+  void bind_local(std::span<const LocalAccess> local);
   void prepare(std::span<const BlockInstruction> instructions, const Memory &memory);
   void bind(std::span<const BlockInstruction> instructions,
             const std::map<Address, std::uint64_t> &prefixes,
-            std::span<const std::optional<Guard>> guards);
+            std::span<const std::optional<Guard>> guards,
+            std::span<const PrefixAccess> policies);
 };
 
 [[nodiscard]] std::uint64_t interrupt_entry_prefix(const State &state,

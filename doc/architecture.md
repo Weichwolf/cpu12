@@ -102,11 +102,14 @@ disjoint at binding; native initialization writes then preserve known reads.
 End at pointer/context changes, indirect flow, possible validation faults or
 unproved accesses. Derive admission and native guards from the same semantics.
 Keep owner-free event admission distinct from channel admission. Bind explicit
-isolated read extents only when the consumer proves total reads without peer-data
+isolated access extents only when the consumer proves total accesses without peer-data
 effects or dependence on undelivered inputs, architectural/binding/knowledge
 changes or clock-rate changes. Allow progress/yield coordination and bound local
 input deadlines. Revoke these effects on installation/remap; retain actual native
 callbacks and faults. Queries never execute callbacks to predict their result.
+Bind read/write roles explicitly. End an isolated write at its actual instruction
+completion and reconsider local deadlines before continuing. Keep independent
+read-only proofs so local-write contracts do not shorten ordinary RAM loops.
 
 Build natural connected CFG/SSA regions, functions and loops, independent of
 quotas and catalogue entry density. Preserve all declared starts without turning

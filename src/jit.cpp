@@ -114,7 +114,7 @@ struct Mapping {
   std::shared_ptr<const llvm19::ImageProgram> image;
   std::vector<std::uint64_t> variants;
   std::vector<InterruptRequest> interrupts;
-  GuardedPrefixes guarded, local;
+  GuardedPrefixes guarded, local_reads, local_effects;
 
   [[nodiscard]] const void *entry(const Address pc) const noexcept {
     const auto *page = native_regions[pc >> native_page_shift];
@@ -353,14 +353,30 @@ void Jit::install(std::shared_ptr<const llvm19::ImageProgram> image,
   impl_->pending.reset();
 }
 
-void Jit::isolate_reads(const std::span<const LocalRead> reads) {
+void Jit::isolate_accesses(const std::span<const LocalAccess> accesses) {
   auto &mapping = *impl_->current;
   if (!mapping.image || impl_->pending) {
-    throw std::logic_error(
-        "CPU12 read isolation requires installed code without a pending transfer");
+    throw std::logic_error("CPU12 isolation requires installed code without a pending transfer");
   }
-  mapping.local = reads.empty() ? GuardedPrefixes{}
-                                : GuardedPrefixes(mapping.instructions(), mapping.memory, reads);
+  const auto instructions = mapping.instructions();
+  auto effects = accesses.empty() ? GuardedPrefixes{}
+                                  : GuardedPrefixes(instructions, mapping.memory, accesses);
+  if (std::ranges::all_of(
+          accesses, [](const auto access) { return access.role == LocalAccess::Role::read; })) {
+    mapping.local_reads = std::move(effects);
+    mapping.local_effects = {};
+    return;
+  }
+  std::vector<LocalAccess> reads;
+  for (auto access : accesses) {
+    if (access.role == LocalAccess::Role::write) { continue; }
+    access.role = LocalAccess::Role::read;
+    reads.push_back(access);
+  }
+  auto reader =
+      reads.empty() ? GuardedPrefixes{} : GuardedPrefixes(instructions, mapping.memory, reads);
+  mapping.local_reads = std::move(reader);
+  mapping.local_effects = std::move(effects);
 }
 
 bool Jit::requires_image() const noexcept {
@@ -384,7 +400,8 @@ std::uint64_t Jit::foreground_prefix(const State &state, const bool local) const
   }
   return std::max({mapping.image->foreground_prefix(*source, pc),
                    mapping.guarded.prefix(pc, state.registers),
-                   local ? mapping.local.prefix(pc, state.registers) : 0});
+                   local ? mapping.local_reads.prefix(pc, state.registers) : 0,
+                   local ? mapping.local_effects.prefix(pc, state.registers) : 0});
 }
 
 std::uint64_t Jit::event_prefix(const State &state, const bool local) const {

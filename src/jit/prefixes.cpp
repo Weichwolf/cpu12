@@ -65,7 +65,7 @@ bool owner_boundary(const Instruction &instruction,
                     const Memory &memory,
                     const PrefixAccess access) {
   return context_boundary(instruction) || access == PrefixAccess::boundary ||
-         (access != PrefixAccess::guarded && may_access_owner(instruction, memory));
+         (access == PrefixAccess::ordinary && may_access_owner(instruction, memory));
 }
 
 using Entry = std::pair<std::uint64_t, Address>;
@@ -116,7 +116,14 @@ foreground_prefixes(const std::span<const BlockInstruction> instructions,
     const auto flow = successors(operation);
     const auto targets = std::span(flow.direct).first(flow.count);
     const auto policy = access.empty() ? PrefixAccess::ordinary : access[index];
-    if (owner_boundary(operation.instruction, memory, policy) || flow.indirect || targets.empty() ||
+    const bool owner = owner_boundary(operation.instruction, memory, policy);
+    if (policy == PrefixAccess::terminal && !owner && !flow.indirect) {
+      const auto cycles = instruction_timing(operation.instruction).base;
+      distances.at(operation.pc) = cycles;
+      pending.emplace(cycles, operation.pc);
+      continue;
+    }
+    if (owner || flow.indirect || targets.empty() ||
         std::ranges::any_of(targets,
                             [&](const auto target) { return !distances.contains(target); })) {
       distances.at(operation.pc) = 0;

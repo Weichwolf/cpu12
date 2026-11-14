@@ -277,9 +277,9 @@ void Core::install(const NativeImage &image, const std::span<const std::uint64_t
   impl_->context.memory_grants = impl_->jit.memory().regions();
 }
 
-void Core::isolate_reads(const std::span<const LocalRead> reads) {
-  if (impl_->active) { throw std::logic_error("Cannot isolate active CPU12 reads"); }
-  impl_->jit.isolate_reads(reads);
+void Core::isolate_accesses(const std::span<const LocalAccess> accesses) {
+  if (impl_->active) { throw std::logic_error("Cannot isolate active CPU12 accesses"); }
+  impl_->jit.isolate_accesses(accesses);
 }
 
 Registers Core::registers() const noexcept {

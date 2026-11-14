@@ -23,7 +23,7 @@ public:
   void install(std::shared_ptr<const llvm19::ImageProgram> image,
                std::span<const std::uint64_t> variants,
                std::span<const InterruptRequest> interrupts);
-  void isolate_reads(std::span<const LocalRead> reads);
+  void isolate_accesses(std::span<const LocalAccess> accesses);
   [[nodiscard]] bool requires_image() const noexcept;
   [[nodiscard]] bool transition_pending() const noexcept;
   [[nodiscard]] std::uint64_t foreground_prefix(const State &state, bool local = false) const;
