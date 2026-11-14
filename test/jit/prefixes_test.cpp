@@ -19,6 +19,7 @@
 #include <span>
 #include <stdexcept>
 #include <type_traits>
+#include <vector>
 
 namespace {
 using namespace cpu12;
@@ -162,6 +163,88 @@ void state_alias() {
   core.install(image, variant);
   require(core.foreground_prefix() == 0 && core.state() == before && core.progress() == progress,
           "RAM that aliases hidden CPU state cannot certify a context-free prefix");
+}
+
+void waiting_prefix() {
+  constexpr Address stack = 0x5000;
+  constexpr Registers seed{.pc = entry, .d = 0x1234, .x = 0x5678, .y = 0x9abc, .ccr = 0x20};
+  constexpr std::array<Byte, 9> frame{0x20, 0x34, 0x12, 0x56, 0x78, 0x9a, 0xbc, 0x40, 1};
+  constexpr auto program =
+      isa::program(isa::wai, isa::opcode<isa::Opcode::bra_relative>(), std::array<Byte, 1>{0xfe});
+  enum class Layout : std::uint8_t { ordinary, tracked, readonly, split };
+  for (const auto layout : {Layout::ordinary, Layout::tracked, Layout::readonly, Layout::split}) {
+    auto bytes = program;
+    std::array<Byte, 12> data{};
+    std::array<Byte, 12> known{};
+    const auto initial = data;
+    std::vector<Ram> regions{{.first = entry, .bytes = bytes, .writable = false},
+                             {.first = stack,
+                              .bytes = data,
+                              .known = layout == Layout::tracked ? known : std::span<Byte>{},
+                              .writable = layout != Layout::readonly}};
+    if (layout == Layout::split) {
+      regions.back().bytes = std::span(data).first(data.size() / 2);
+      regions.push_back(
+          {.first = stack + (data.size() / 2), .bytes = std::span(data).last(data.size() / 2)});
+    }
+    std::vector<RegionLayout> grants;
+    grants.reserve(regions.size());
+    for (const auto &region : regions) {
+      grants.push_back({.first = region.first,
+                        .size = region.bytes.size(),
+                        .writable = region.writable,
+                        .tracked = !region.known.empty()});
+    }
+    const std::array code{CodeSpan{.address = entry, .words = bytes}};
+    const std::array entries{entry};
+    const std::array variants{CodeVariant{.id = variant, .code = code, .entries = entries}};
+    const std::array layouts{VariantLayout{.id = variant, .memory = grants}};
+    const auto image = Core::compile(
+        {.variants = variants},
+        {.memory = layouts, .interrupts = {}, .transitions = {}, .callbacks = {}, .bindings = {}});
+    Probe probe;
+    Io io{.owner = &probe, .write = Probe::write};
+    Core core(Memory::mapped(regions), &io);
+    probe.core = &core;
+    core.install(image, variant);
+    for (const Address sp : {Address{4},
+                             stack,
+                             Address{stack + 8},
+                             Address{stack + 9},
+                             Address{stack + data.size()},
+                             Address{stack + data.size() + 1}}) {
+      auto registers = seed;
+      registers.sp = sp;
+      core.set_registers(registers);
+      const auto state = core.state();
+      const auto progress = core.progress();
+      const bool admitted = (layout == Layout::ordinary || layout == Layout::tracked) &&
+                            sp >= stack + frame.size() && sp <= stack + data.size();
+      require(core.foreground_prefix() == (admitted ? 7U : 0U) && core.state() == state &&
+                  core.progress() == progress && data == initial && known == initial &&
+                  bytes == program && probe.prefix == infinite,
+              "WAI admission requires its entire private writable frame without any execution");
+    }
+    if (layout == Layout::readonly || layout == Layout::split) { continue; }
+    auto registers = seed;
+    registers.sp = stack + data.size();
+    core.set_registers(registers);
+    const auto result = core.run_until(7);
+    registers.pc += isa::wai.size();
+    registers.sp -= frame.size();
+    auto expected = initial;
+    auto expected_known = initial;
+    std::ranges::copy(frame, expected.end() - frame.size());
+    if (layout == Layout::tracked) {
+      std::fill(expected_known.end() - frame.size(), expected_known.end(), Byte{1});
+    }
+    require(result.fault == Fault::none && result.retired == 1 &&
+                core.state().execution == ExecutionState::waiting &&
+                core.registers() == registers && core.progress().estimated_cycles == 7 &&
+                core.foreground_prefix() == 0 && probe.prefix == infinite && data == expected &&
+                known == expected_known,
+            "Native WAI reaches exactly its certified sleep boundary and writes the real frame");
+  }
 }
 
 void layouts_and_boundaries() {
@@ -391,6 +474,7 @@ int main() try {
   control_flow();
   native_prefixes();
   state_alias();
+  waiting_prefix();
   layouts_and_boundaries();
   stack_counter();
   transfer_prefixes();

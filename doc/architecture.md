@@ -85,6 +85,8 @@ Expose `Core::foreground_prefix()` as a stopped-owner guarantee in nominal
 cycles before a possible owner access or context boundary. Zero certifies nothing;
 an unbounded pure cycle is not an incoming-IRQ horizon. Relevant state, code or
 binding changes invalidate the result. Admission changes no guest state or time.
+Admit WAI through its sleep boundary only when the full nine-byte stack frame
+belongs to private writable storage; tracked writes initialize their knownness.
 
 Build natural connected CFG/SSA regions, functions and loops, independent of
 quotas and catalogue entry density. Preserve all declared starts without turning

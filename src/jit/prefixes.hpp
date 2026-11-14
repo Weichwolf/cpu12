@@ -9,6 +9,8 @@
 #include <span>
 
 namespace cpu12::detail {
+[[nodiscard]] bool private_frame(const Memory &memory, Address stack);
+
 [[nodiscard]] std::map<Address, std::uint64_t>
 foreground_prefixes(std::span<const BlockInstruction> instructions, const Memory &memory);
 

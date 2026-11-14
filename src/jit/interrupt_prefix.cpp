@@ -16,17 +16,17 @@ constexpr auto infinite = std::numeric_limits<std::uint64_t>::max();
 constexpr unsigned frame_bytes = 9, byte_bits = 8;
 constexpr unsigned mask_i = 0x10, mask_x = 0x40;
 
+std::uint64_t plus(const unsigned entry, const std::uint64_t continuation) {
+  return continuation > infinite - entry ? infinite : continuation + entry;
+}
+}
+
 bool private_frame(const Memory &memory, const Address stack) {
   if (stack < frame_bytes) { return false; }
   return std::ranges::any_of(memory.regions(), [&](const auto &region) {
     return region.writable && stack >= region.first + frame_bytes &&
            static_cast<unsigned>(stack - region.first) <= region.bytes.size();
   });
-}
-
-std::uint64_t plus(const unsigned entry, const std::uint64_t continuation) {
-  return continuation > infinite - entry ? infinite : continuation + entry;
-}
 }
 
 std::uint64_t interrupt_entry_prefix(const State &state,

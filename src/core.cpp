@@ -292,7 +292,7 @@ std::uint64_t Core::foreground_prefix() const {
       state.returned_frame) {
     return 0;
   }
-  return impl_->jit.foreground_prefix(state.registers.pc);
+  return impl_->jit.foreground_prefix(state);
 }
 
 void Core::request_yield() noexcept {

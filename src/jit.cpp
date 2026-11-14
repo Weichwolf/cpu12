@@ -16,6 +16,7 @@
 #include "jit/llvm/lift.hpp"
 #include "jit/llvm/program.hpp"
 #include "jit/llvm/regions.hpp"
+#include "jit/prefixes.hpp"
 #include "jit/preparation.hpp"
 #include "runtime.hpp"
 
@@ -345,11 +346,18 @@ bool Jit::transition_pending() const noexcept {
   return impl_->pending.has_value();
 }
 
-std::uint64_t Jit::foreground_prefix(const Address pc) const {
+std::uint64_t Jit::foreground_prefix(const State &state) const {
   if (impl_->pending) { return 0; }
   const auto &mapping = *impl_->current;
+  const auto pc = state.registers.pc;
   const auto source = mapping.source(pc);
-  return source ? mapping.image->foreground_prefix(*source, pc) : 0;
+  if (!source) { return 0; }
+  const auto *instruction = mapping.image->program(*source).instruction(pc);
+  if (instruction != nullptr && instruction->kind == Kind::wait &&
+      private_frame(mapping.memory, state.registers.sp)) {
+    return instruction_timing(*instruction).base;
+  }
+  return mapping.image->foreground_prefix(*source, pc);
 }
 
 void Jit::cancel_transition() noexcept {
