@@ -540,6 +540,138 @@ void local_stack_sequence() {
   }
 }
 
+template <Byte Selector> Registers loop_counter(Registers state, const unsigned value) {
+  constexpr unsigned low = 0xff;
+  constexpr unsigned high = 0xff00;
+  if constexpr (Selector == 0) {
+    state.d = static_cast<Address>((state.d & low) | (value << byte_bits));
+  } else if constexpr (Selector == 1) {
+    state.d = static_cast<Address>((state.d & high) | value);
+  } else if constexpr (Selector == 4) {
+    state.d = static_cast<Address>(value);
+  } else if constexpr (Selector == 5) {
+    state.x = static_cast<Address>(value);
+  } else {
+    static_assert(Selector == 6);
+    state.y = static_cast<Address>(value);
+  }
+  return state;
+}
+
+template <Byte Selector> void counted_self_loop() {
+  constexpr Byte decrement_nonzero_back = 0x30;
+  constexpr Byte backwards = 0xfd;
+  constexpr Byte self_branch = 0xfe;
+  constexpr unsigned word_count = 65536;
+  constexpr unsigned sample_count = 200;
+  constexpr unsigned high_bit = 32768;
+  constexpr Byte flags = 0xa5;
+  auto bytes = isa::program(
+      isa::opcode<isa::Opcode::dbne_relative>(),
+      std::array<Byte, 2>{decrement_nonzero_back | Selector, backwards},
+      isa::opcode<isa::Opcode::ldaa_extended>(),
+      std::array<Byte, 2>{static_cast<Byte>(output >> byte_bits), static_cast<Byte>(output)},
+      isa::opcode<isa::Opcode::bra_relative>(),
+      std::array<Byte, 1>{self_branch});
+  const std::array code{CodeSpan{.address = entry, .words = bytes}};
+  constexpr std::array entries{entry};
+  const std::array versions{CodeVariant{.id = variant, .code = code, .entries = entries}};
+  const std::array region{RegionLayout{.first = entry, .size = bytes.size(), .writable = false}};
+  const std::array layouts{VariantLayout{.id = variant, .memory = region}};
+  const auto image = Core::compile(
+      {.variants = versions},
+      {.memory = layouts, .interrupts = {}, .transitions = {}, .callbacks = {}, .bindings = {}});
+  Core core(Memory::window({.first = entry, .bytes = bytes, .writable = false}));
+  core.install(image, variant);
+  const auto values = [] {
+    if constexpr (Selector < 2) {
+      std::array<unsigned, byte_values> result{};
+      for (unsigned value = 0; value < byte_values; ++value) { result[value] = value; }
+      return result;
+    } else {
+      return std::array<unsigned, 6>{0, 1, 2, sample_count, high_bit, word_count - 1};
+    }
+  }();
+  for (const auto value : values) {
+    constexpr Address retained = 0x5aa5;
+    const Registers seed{.pc = entry, .d = retained, .x = retained, .y = retained, .ccr = flags};
+    core.set_registers(loop_counter<Selector>(seed, value));
+    const auto state = core.state();
+    const auto before = core.progress();
+    constexpr auto width = Selector < 2 ? byte_values : word_count;
+    const auto turns = value != 0 ? value : width;
+    const auto duration = std::uint64_t{turns} * 3;
+    require(core.channel_prefix(PrefixScope::foreground) == duration && core.state() == state &&
+                core.progress() == before,
+            "Known native DBNE count certifies the complete private loop without retiring it");
+    const auto first = core.run_until(before.estimated_cycles + 3);
+    const auto remaining = turns > 1 ? std::uint64_t{turns - 1} * 3 : 0;
+    require(first.retired == 1 && first.fault == Fault::none &&
+                core.channel_prefix(PrefixScope::foreground) == remaining,
+            "A partial native grant retains the exact counter and recomputes remaining lookahead");
+    const auto rest = core.run_until(before.estimated_cycles + duration);
+    auto expected = loop_counter<Selector>(seed, 0);
+    expected.pc = entry + 3;
+    require(rest.fault == Fault::none && rest.retired == turns - 1 &&
+                core.registers() == expected &&
+                core.progress().estimated_cycles == before.estimated_cycles + duration &&
+                first.retired + rest.retired == turns && core.statistics().compiled_entries == 0,
+            "Every counted native iteration preserves width, alias, flags, timing and exact I/O "
+            "boundary");
+  }
+}
+
+void loop_exit_controls() {
+  enum class Form : Byte { dbeq = 0x11, ibne = 0xb1, tbeq = 0x51, tbne = 0x71, dbne = 0x21 };
+
+  struct Case {
+    Form form;
+    Byte offset, value;
+  };
+
+  constexpr Byte backwards = 0xfd;
+  constexpr Byte count = 200;
+  constexpr Byte self_branch = 0xfe;
+  constexpr std::array cases{
+      Case{.form = Form::dbeq, .offset = backwards, .value = 2},
+      Case{.form = Form::ibne, .offset = backwards, .value = byte_values - 1},
+      Case{.form = Form::tbeq, .offset = backwards, .value = 1},
+      Case{.form = Form::tbne, .offset = backwards, .value = 0},
+      Case{.form = Form::dbne, .offset = 0, .value = count}};
+  for (const auto point : cases) {
+    auto bytes = isa::program(
+        isa::opcode<isa::Opcode::dbne_relative>(),
+        std::array<Byte, 2>{0, 0},
+        isa::opcode<isa::Opcode::ldaa_extended>(),
+        std::array<Byte, 2>{static_cast<Byte>(output >> byte_bits), static_cast<Byte>(output)},
+        isa::opcode<isa::Opcode::bra_relative>(),
+        std::array<Byte, 1>{self_branch});
+    bytes[1] = static_cast<Byte>(point.form);
+    bytes[2] = point.offset;
+    const std::array code{CodeSpan{.address = entry, .words = bytes}};
+    constexpr std::array entries{entry};
+    const std::array versions{CodeVariant{.id = variant, .code = code, .entries = entries}};
+    const std::array region{RegionLayout{.first = entry, .size = bytes.size(), .writable = false}};
+    const std::array layouts{VariantLayout{.id = variant, .memory = region}};
+    const auto image = Core::compile(
+        {.variants = versions},
+        {.memory = layouts, .interrupts = {}, .transitions = {}, .callbacks = {}, .bindings = {}});
+    Core core(Memory::window({.first = entry, .bytes = bytes, .writable = false}));
+    core.set_registers({.pc = entry, .d = point.value});
+    core.install(image, variant);
+    const auto before = core.state();
+    require(core.channel_prefix(PrefixScope::foreground) == 3 && core.state() == before,
+            "Other loop forms and non-self targets cannot borrow a DBNE countdown bound");
+    const auto first = core.run_until(3);
+    const auto failure = core.step();
+    require(
+        first.retired == 1 && first.fault == Fault::none && failure.retired == 0 &&
+            failure.fault == Fault::memory_read && failure.address == output &&
+            failure.pc == entry + 3 && core.progress().estimated_cycles == 3,
+        "The actual next owner read independently establishes the three-cycle control boundary");
+  }
+}
+
 void stack_counter() {
   constexpr Byte counter = 0x27;
   constexpr Byte self_branch = 0xfe;
@@ -563,6 +695,8 @@ void stack_counter() {
   Core core(memory);
   core.set_registers({.pc = entry, .sp = initial_stack});
   core.install(image, variant);
+  require(core.channel_prefix(PrefixScope::foreground) == 3,
+          "A stack counter retains its single native context boundary");
   const auto result = core.run(1);
   require(result.retired == 1 && result.fault == Fault::none &&
               core.registers().sp == initial_stack - 1 && core.registers().pc == entry + 3 &&
@@ -727,6 +861,12 @@ int main() try {
   return_prefix();
   local_stack_sequence();
   stack_counter();
+  counted_self_loop<0>();
+  counted_self_loop<1>();
+  counted_self_loop<4>();
+  counted_self_loop<5>();
+  counted_self_loop<6>();
+  loop_exit_controls();
   transfer_prefixes();
   asynchronous_entry();
 } catch (const std::exception &error) {

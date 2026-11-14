@@ -108,6 +108,8 @@ Keep owner-free event admission distinct from channel admission. Prove
 single-operation channel bounds for pure context changes and private
 JSR/BSR, push/pull and RTS accesses. End at their real native completion; the
 successor requires a new proof. Keep owner-free queries and native accesses unchanged.
+Use actual-width register counts to bound private DBNE self-loops, including zero
+wrap. Retain every native iteration, cycle, flag and asynchronous IRQ boundary.
 Bind isolated access extents only when the consumer proves total accesses without peer-data
 effects or dependence on undelivered inputs, architectural/binding/knowledge
 changes or clock-rate changes. Allow progress/yield coordination and bound local

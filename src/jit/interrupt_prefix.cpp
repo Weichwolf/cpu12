@@ -24,6 +24,33 @@ std::uint64_t plus(const unsigned entry, const std::uint64_t continuation) {
   return continuation > infinite - entry ? infinite : continuation + entry;
 }
 
+std::uint64_t counted_loop(const Instruction &instruction, const Registers &registers) {
+  if (instruction.kind != Kind::loop || instruction.operation != RegisterOp::decrement ||
+      instruction.condition == 0 ||
+      static_cast<Address>(instruction.operand + instruction.length) != 0 ||
+      (instruction.word && instruction.target == WordTarget::sp)) {
+    return 0;
+  }
+  constexpr unsigned byte_mask = 0xff;
+  constexpr unsigned byte_count = byte_mask + 1;
+  std::uint64_t value = registers.d;
+  if (!instruction.word) {
+    value = instruction.accumulator_b ? value & byte_mask : value >> byte_bits;
+  } else {
+    switch (instruction.target) {
+      case WordTarget::d: break;
+      case WordTarget::x: value = registers.x; break;
+      case WordTarget::y: value = registers.y; break;
+      case WordTarget::sp:
+      default: return 0;
+    }
+  }
+  const auto width = instruction.word ? address_bytes : byte_count;
+  const auto turns = value != 0 ? value : width;
+  const auto timing = instruction_timing(instruction);
+  return (turns * timing.base) + ((turns - 1) * timing.taken_extra);
+}
+
 struct StorageAccess {
   Address first;
   unsigned width;
@@ -56,10 +83,13 @@ bool private_return_frame(const Memory &memory, const Address stack) {
 
 std::uint64_t private_operation_prefix(const Instruction &instruction,
                                        const Memory &memory,
-                                       const Address stack) {
+                                       const Registers &registers) {
+  const auto stack = registers.sp;
   if (instruction.indexed.indirect) { return 0; }
   const auto cycles = instruction_timing(instruction).base;
-  if (!may_access_owner(instruction, memory)) { return cycles; }
+  if (!may_access_owner(instruction, memory)) {
+    return std::max(std::uint64_t{cycles}, counted_loop(instruction, registers));
+  }
   bool write = false;
   unsigned width = instruction.word ? 2 : 1;
   if (instruction.kind == Kind::call) {

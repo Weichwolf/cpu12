@@ -406,7 +406,7 @@ Jit::foreground_prefix(const State &state, const bool local, const ChannelAccess
                    local ? mapping.local_reads.prefix(pc, state.registers) : 0,
                    local ? mapping.local_effects.prefix(pc, state.registers) : 0,
                    local && instruction != nullptr
-                       ? private_operation_prefix(*instruction, mapping.memory, state.registers.sp)
+                       ? private_operation_prefix(*instruction, mapping.memory, state.registers)
                        : 0,
                    local && instruction != nullptr
                        ? isolated_operation_prefix(*instruction, state.registers, access)

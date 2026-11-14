@@ -16,8 +16,9 @@
 namespace cpu12::detail {
 [[nodiscard]] bool private_frame(const Memory &memory, Address stack);
 [[nodiscard]] bool private_return_frame(const Memory &memory, Address stack);
-[[nodiscard]] std::uint64_t
-private_operation_prefix(const Instruction &instruction, const Memory &memory, Address stack);
+[[nodiscard]] std::uint64_t private_operation_prefix(const Instruction &instruction,
+                                                     const Memory &memory,
+                                                     const Registers &registers);
 
 [[nodiscard]] std::uint64_t isolated_operation_prefix(const Instruction &instruction,
                                                       const Registers &registers,
