@@ -181,6 +181,37 @@ void direct_entries() {
   }
 }
 
+void channel_requests() {
+  Fixture fixture;
+  fixture.prepare();
+  for (const auto frame : {Frame::push, Frame::waiting, Frame::returned}) {
+    Core core(fixture.memory());
+    seed(core, frame, 0);
+    core.install(fixture.image, variant);
+    const auto state = core.state();
+    const auto progress = core.progress();
+    const auto stack = fixture.stack;
+    const auto requests = std::span(fixture.requests);
+    const bool returned = frame == Frame::returned;
+    const std::uint64_t entry_cycles = frame == Frame::push ? 9 : 6;
+    require(core.channel_prefix(requests) == (returned ? 1 : entry_cycles + 2) &&
+                core.channel_prefix(requests.first(1)) == (returned ? 1 : entry_cycles + 2) &&
+                core.channel_prefix(requests.last(1)) == (returned ? 1 : entry_cycles + 10) &&
+                core.channel_prefix(requests.first(0)) == (returned ? 1 : infinite),
+            "Explicit incoming requests bound only installed possible IRQs, including nesting");
+    const std::array undeclared{InterruptRequest{.vector = vector + 4},
+                                InterruptRequest{.vector = vector, .kind = InterruptKind::xirq}};
+    for (const auto request : undeclared) {
+      const std::array input{request};
+      require(core.channel_prefix(input) == 0,
+              "A channel query cannot invent a vector/kind absent from its installed image");
+    }
+    require(core.event_prefix() == (returned ? 1 : entry_cycles + 2) && core.state() == state &&
+                core.progress() == progress && fixture.stack == stack,
+            "Filtering changes neither ordinary event guarantees nor any native state");
+  }
+}
+
 void tracked_frame() {
   Fixture fixture;
   fixture.regions.back().known = fixture.stack_known;
@@ -322,6 +353,7 @@ void masks_and_deferral() {
 
 int main() try {
   direct_entries();
+  channel_requests();
   tracked_frame();
   return_revocation();
   nested_stack_fault();

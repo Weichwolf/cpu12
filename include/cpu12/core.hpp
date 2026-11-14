@@ -245,6 +245,8 @@ public:
   [[nodiscard]] std::uint64_t event_prefix() const;
   // Event admission allowing the bound isolated accesses; native accesses remain unchanged.
   [[nodiscard]] std::uint64_t channel_prefix(PrefixScope scope = PrefixScope::events) const;
+  // The owner bounds excluded IRQs by local deadlines; requests must be installed.
+  [[nodiscard]] std::uint64_t channel_prefix(std::span<const InterruptRequest> incoming) const;
   // Clears a latched fault. Pending code transfers require installation or reset.
   void set_registers(Registers registers);
   // An installed image requires a matching install after every explicit remap.

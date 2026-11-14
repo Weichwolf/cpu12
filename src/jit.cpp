@@ -406,9 +406,20 @@ std::uint64_t Jit::foreground_prefix(const State &state, const bool local) const
                    local ? mapping.local_effects.prefix(pc, state.registers) : 0});
 }
 
-std::uint64_t Jit::event_prefix(const State &state, const bool local) const {
+std::uint64_t
+Jit::event_prefix(const State &state,
+                  const bool local,
+                  const std::optional<std::span<const InterruptRequest>> incoming) const {
   if (impl_->pending || !impl_->current->image) { return 0; }
   const auto &mapping = *impl_->current;
+  const auto requests = incoming.value_or(mapping.interrupts);
+  if (std::ranges::any_of(requests, [&](const auto request) {
+        return !std::ranges::any_of(mapping.interrupts, [&](const auto installed) {
+          return request.vector == installed.vector && request.kind == installed.kind;
+        });
+      })) {
+    return 0;
+  }
   const PrefixLookup lookup{
       .owner = &mapping,
       .find = [](const void *owner, const Address pc) -> std::optional<std::uint64_t> {
@@ -425,8 +436,7 @@ std::uint64_t Jit::event_prefix(const State &state, const bool local) const {
     if (next == nullptr) { return 0; }
     foreground = std::min(foreground, std::uint64_t{instruction_timing(*next).base});
   }
-  return std::min(foreground,
-                  interrupt_entry_prefix(state, mapping.memory, lookup, mapping.interrupts));
+  return std::min(foreground, interrupt_entry_prefix(state, mapping.memory, lookup, requests));
 }
 
 void Jit::cancel_transition() noexcept {

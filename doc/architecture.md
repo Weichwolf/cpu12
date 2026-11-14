@@ -110,6 +110,9 @@ effects or dependence on undelivered inputs, architectural/binding/knowledge
 changes or clock-rate changes. Allow progress/yield coordination and bound local
 input deadlines. Revoke these effects on installation/remap; retain actual native
 callbacks and faults. Queries never execute callbacks to predict their result.
+Allow the owner to supply the currently possible installed IRQ requests to
+channel admission. Bound excluded local sources by actual deadlines; retain
+mask/deferral, nested-entry and return-window rules. Refuse undeclared requests.
 Bind read/write roles explicitly. End an isolated write at its actual instruction
 completion and reconsider local deadlines before continuing. Keep independent
 read-only proofs so local-write contracts do not shorten ordinary RAM loops.
