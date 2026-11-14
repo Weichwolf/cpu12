@@ -114,7 +114,7 @@ struct Mapping {
   std::shared_ptr<const llvm19::ImageProgram> image;
   std::vector<std::uint64_t> variants;
   std::vector<InterruptRequest> interrupts;
-  GuardedPrefixes guarded;
+  GuardedPrefixes guarded, local;
 
   [[nodiscard]] const void *entry(const Address pc) const noexcept {
     const auto *page = native_regions[pc >> native_page_shift];
@@ -133,6 +133,16 @@ struct Mapping {
   [[nodiscard]] const Instruction *instruction(const Address pc) const {
     const auto id = source(pc);
     return id ? image->program(*id).instruction(pc) : nullptr;
+  }
+
+  [[nodiscard]] std::vector<BlockInstruction> instructions() const {
+    std::vector<BlockInstruction> result;
+    result.reserve(native_entries);
+    for (const auto id : variants) {
+      const auto code = image->instructions(id);
+      result.insert(result.end(), code.begin(), code.end());
+    }
+    return result;
   }
 
   void mount(const std::uint64_t id) {
@@ -337,16 +347,20 @@ void Jit::install(std::shared_ptr<const llvm19::ImageProgram> image,
     throw std::invalid_argument("CPU12 image has no prepared STOP-wake entry");
   }
   mapping->blocks.emplace(stop_event_key, Entry{.code = wake});
-  std::vector<BlockInstruction> instructions;
-  instructions.reserve(mapping->native_entries);
-  for (const auto id : variants) {
-    const auto code = mapping->image->instructions(id);
-    instructions.insert(instructions.end(), code.begin(), code.end());
-  }
-  mapping->guarded = GuardedPrefixes(instructions, mapping->memory);
+  mapping->guarded = GuardedPrefixes(mapping->instructions(), mapping->memory);
   impl_->image_binding = std::move(mapping);
   impl_->current = impl_->image_binding.get();
   impl_->pending.reset();
+}
+
+void Jit::isolate_reads(const std::span<const LocalRead> reads) {
+  auto &mapping = *impl_->current;
+  if (!mapping.image || impl_->pending) {
+    throw std::logic_error(
+        "CPU12 read isolation requires installed code without a pending transfer");
+  }
+  mapping.local = reads.empty() ? GuardedPrefixes{}
+                                : GuardedPrefixes(mapping.instructions(), mapping.memory, reads);
 }
 
 bool Jit::requires_image() const noexcept {
@@ -357,7 +371,7 @@ bool Jit::transition_pending() const noexcept {
   return impl_->pending.has_value();
 }
 
-std::uint64_t Jit::foreground_prefix(const State &state) const {
+std::uint64_t Jit::foreground_prefix(const State &state, const bool local) const {
   if (impl_->pending) { return 0; }
   const auto &mapping = *impl_->current;
   const auto pc = state.registers.pc;
@@ -368,11 +382,12 @@ std::uint64_t Jit::foreground_prefix(const State &state) const {
       private_frame(mapping.memory, state.registers.sp)) {
     return instruction_timing(*instruction).base;
   }
-  return std::max(mapping.image->foreground_prefix(*source, pc),
-                  mapping.guarded.prefix(pc, state.registers));
+  return std::max({mapping.image->foreground_prefix(*source, pc),
+                   mapping.guarded.prefix(pc, state.registers),
+                   local ? mapping.local.prefix(pc, state.registers) : 0});
 }
 
-std::uint64_t Jit::event_prefix(const State &state) const {
+std::uint64_t Jit::event_prefix(const State &state, const bool local) const {
   if (impl_->pending || !impl_->current->image) { return 0; }
   const auto &mapping = *impl_->current;
   const PrefixLookup lookup{
@@ -385,7 +400,7 @@ std::uint64_t Jit::event_prefix(const State &state) const {
       }};
   auto foreground = state.execution == ExecutionState::waiting
                         ? std::numeric_limits<std::uint64_t>::max()
-                        : foreground_prefix(state);
+                        : foreground_prefix(state, local);
   if (state.returned_frame) {
     const auto *next = mapping.instruction(state.registers.pc);
     if (next == nullptr) { return 0; }

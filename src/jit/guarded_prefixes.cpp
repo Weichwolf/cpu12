@@ -14,6 +14,7 @@
 #include <map>
 #include <optional>
 #include <span>
+#include <stdexcept>
 #include <utility>
 #include <vector>
 
@@ -103,7 +104,9 @@ std::vector<std::size_t> components(const std::span<const BlockInstruction> inst
 }
 
 GuardedPrefixes::GuardedPrefixes(const std::span<const BlockInstruction> instructions,
-                                 const Memory &memory) {
+                                 const Memory &memory,
+                                 const std::span<const LocalRead> local) {
+  bind_local(local);
   for (const auto &region : memory.regions()) {
     if (std::ranges::any_of(memory.regions(), [&](const auto &other) {
           return overlaps(region.bytes, other.known);
@@ -111,6 +114,11 @@ GuardedPrefixes::GuardedPrefixes(const std::span<const BlockInstruction> instruc
       return;
     }
   }
+  bind_memory(memory);
+  prepare(instructions, memory);
+}
+
+void GuardedPrefixes::bind_memory(const Memory &memory) {
   for (unsigned access = 0; access < ranges_.size(); ++access) {
     const bool word = (access & 1U) != 0;
     const bool write = access >= 2;
@@ -126,7 +134,23 @@ GuardedPrefixes::GuardedPrefixes(const std::span<const BlockInstruction> instruc
            .known = read && !region.known.empty() ? region.known.data() : nullptr});
     }
   }
-  prepare(instructions, memory);
+}
+
+void GuardedPrefixes::bind_local(const std::span<const LocalRead> local) {
+  for (const auto region : local) {
+    if (region.size == 0 || region.size > address_bytes - region.first) {
+      throw std::invalid_argument("Invalid CPU12 isolated read extent");
+    }
+    for (unsigned access = 0; access < 2; ++access) {
+      const unsigned width = access + 1;
+      if (region.size < width) { continue; }
+      const bool wrapping = region.first == 0 && region.size == address_bytes;
+      ranges_[access].push_back(
+          {.first = region.first,
+           .last = static_cast<unsigned>(region.first + region.size - (wrapping ? 1U : width)),
+           .known = nullptr});
+    }
+  }
 }
 
 std::optional<GuardedPrefixes::Guard>

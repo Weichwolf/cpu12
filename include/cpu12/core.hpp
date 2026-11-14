@@ -57,6 +57,7 @@ enum class Fault : std::uint8_t {
 };
 
 enum class ExecutionState : std::uint8_t { running, waiting, stopped };
+enum class PrefixScope : std::uint8_t { foreground, events };
 
 struct RunResult {
   std::uint32_t retired = 0;
@@ -136,6 +137,11 @@ struct RegionLayout {
 struct VariantLayout {
   std::uint64_t id;
   std::span<const RegionLayout> memory;
+};
+
+struct LocalRead {
+  Address first;
+  std::size_t size;
 };
 
 struct CodeTransition {
@@ -219,6 +225,10 @@ public:
   // Cold owner boundary: validate code/layout and bind RAM/events before publishing.
   void install(const NativeImage &image, std::uint64_t variant);
   void install(const NativeImage &image, std::span<const std::uint64_t> variants);
+  // Certify all read forms as total and isolated from the chosen peer-data channel.
+  // Preserve architectural state, bound memory/knownness and clock rate; bound local inputs.
+  // Progress/yield coordination is allowed. Install/remap revokes this description.
+  void isolate_reads(std::span<const LocalRead> reads);
   [[nodiscard]] Registers registers() const noexcept;
   // A live read-only view, valid for this Core lifetime; inspect on the execution owner.
   [[nodiscard]] const State &state() const noexcept;
@@ -230,6 +240,8 @@ public:
   // Stopped-owner no-owner-access prefix including declared IRQ paths and return reuse.
   // Uses current masks/bindings; conditional permission must stop at its first real input.
   [[nodiscard]] std::uint64_t event_prefix() const;
+  // Event admission allowing the bound isolated reads; native accesses remain unchanged.
+  [[nodiscard]] std::uint64_t channel_prefix(PrefixScope scope = PrefixScope::events) const;
   // Clears a latched fault. Pending code transfers require installation or reset.
   void set_registers(Registers registers);
   // An installed image requires a matching install after every explicit remap.

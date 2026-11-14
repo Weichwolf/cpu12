@@ -277,6 +277,11 @@ void Core::install(const NativeImage &image, const std::span<const std::uint64_t
   impl_->context.memory_grants = impl_->jit.memory().regions();
 }
 
+void Core::isolate_reads(const std::span<const LocalRead> reads) {
+  if (impl_->active) { throw std::logic_error("Cannot isolate active CPU12 reads"); }
+  impl_->jit.isolate_reads(reads);
+}
+
 Registers Core::registers() const noexcept {
   return impl_->context.cpu.registers;
 }
@@ -305,6 +310,20 @@ std::uint64_t Core::event_prefix() const {
     return 0;
   }
   return impl_->jit.event_prefix(state);
+}
+
+std::uint64_t Core::channel_prefix(const PrefixScope scope) const {
+  const auto &state = impl_->context.cpu;
+  if (!impl_->prefix_ready() ||
+      (state.execution != ExecutionState::running && state.execution != ExecutionState::waiting)) {
+    return 0;
+  }
+  if (scope == PrefixScope::events) { return impl_->jit.event_prefix(state, true); }
+  if (scope != PrefixScope::foreground || state.execution != ExecutionState::running ||
+      state.returned_frame) {
+    return 0;
+  }
+  return impl_->jit.foreground_prefix(state, true);
 }
 
 void Core::request_yield() noexcept {

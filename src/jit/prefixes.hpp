@@ -31,7 +31,9 @@ foreground_prefixes(std::span<const BlockInstruction> instructions,
 class GuardedPrefixes {
 public:
   GuardedPrefixes() = default;
-  GuardedPrefixes(std::span<const BlockInstruction> instructions, const Memory &memory);
+  GuardedPrefixes(std::span<const BlockInstruction> instructions,
+                  const Memory &memory,
+                  std::span<const LocalRead> local = {});
   [[nodiscard]] std::uint64_t prefix(Address pc, const Registers &registers) const;
 
 private:
@@ -56,6 +58,8 @@ private:
   std::vector<std::vector<Guard>> groups_;
   std::map<Address, Entry> entries_;
   [[nodiscard]] std::optional<Guard> guard(const BlockInstruction &operation) const;
+  void bind_memory(const Memory &memory);
+  void bind_local(std::span<const LocalRead> local);
   void prepare(std::span<const BlockInstruction> instructions, const Memory &memory);
   void bind(std::span<const BlockInstruction> instructions,
             const std::map<Address, std::uint64_t> &prefixes,

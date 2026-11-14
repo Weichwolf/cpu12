@@ -23,10 +23,11 @@ public:
   void install(std::shared_ptr<const llvm19::ImageProgram> image,
                std::span<const std::uint64_t> variants,
                std::span<const InterruptRequest> interrupts);
+  void isolate_reads(std::span<const LocalRead> reads);
   [[nodiscard]] bool requires_image() const noexcept;
   [[nodiscard]] bool transition_pending() const noexcept;
-  [[nodiscard]] std::uint64_t foreground_prefix(const State &state) const;
-  [[nodiscard]] std::uint64_t event_prefix(const State &state) const;
+  [[nodiscard]] std::uint64_t foreground_prefix(const State &state, bool local = false) const;
+  [[nodiscard]] std::uint64_t event_prefix(const State &state, bool local = false) const;
   void cancel_transition() noexcept;
   [[nodiscard]] Fault validate_instruction(Address pc, std::span<const Byte> bytes) const;
   [[nodiscard]] PreparationReport prepare(std::span<const Address> established_entries);
