@@ -19,14 +19,16 @@ namespace cpu12::detail {
 [[nodiscard]] std::uint64_t
 private_operation_prefix(const Instruction &instruction, const Memory &memory, Address stack);
 
-[[nodiscard]] std::uint64_t isolated_store_prefix(const Instruction &instruction,
-                                                  const Registers &registers,
-                                                  std::span<const ByteWrite> isolated);
+[[nodiscard]] std::uint64_t isolated_operation_prefix(const Instruction &instruction,
+                                                      const Registers &registers,
+                                                      ChannelAccess access);
 
 struct PrefixLookup {
   const void *owner;
   std::optional<std::uint64_t> (*find)(const void *, Address);
 };
+
+[[nodiscard]] unsigned operand_access_class(const Instruction &instruction);
 
 enum class PrefixAccess : std::uint8_t { ordinary, guarded, boundary, terminal };
 

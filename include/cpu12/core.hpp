@@ -146,6 +146,11 @@ struct LocalAccess {
   Role role = Role::read;
 };
 
+struct ChannelAccess {
+  std::span<const LocalAccess> ranges;
+  std::span<const ByteWrite> writes;
+};
+
 struct CodeTransition {
   std::uint64_t from, to;
   Address entry;
@@ -244,13 +249,13 @@ public:
   // Uses current masks/bindings; conditional permission must stop at its first real input.
   [[nodiscard]] std::uint64_t event_prefix() const;
   // Event admission allowing the bound isolated accesses; native accesses remain unchanged.
-  // Exact byte writes are owner-certified total/isolated for this stopped query only.
-  // A matching direct store ends the prefix at its real instruction completion.
+  // Query-local ranges and exact writes are owner-certified total/isolated now.
+  // A matching direct operand ends the prefix at its real instruction completion.
   [[nodiscard]] std::uint64_t channel_prefix(PrefixScope scope = PrefixScope::events,
-                                             std::span<const ByteWrite> isolated = {}) const;
+                                             ChannelAccess access = {}) const;
   // The owner bounds excluded IRQs by local deadlines; requests must be installed.
   [[nodiscard]] std::uint64_t channel_prefix(std::span<const InterruptRequest> incoming,
-                                             std::span<const ByteWrite> isolated = {}) const;
+                                             ChannelAccess access = {}) const;
   // Clears a latched fault. Pending code transfers require installation or reset.
   void set_registers(Registers registers);
   // An installed image requires a matching install after every explicit remap.

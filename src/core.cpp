@@ -312,29 +312,28 @@ std::uint64_t Core::event_prefix() const {
   return impl_->jit.event_prefix(state);
 }
 
-std::uint64_t Core::channel_prefix(const PrefixScope scope,
-                                   const std::span<const ByteWrite> isolated) const {
+std::uint64_t Core::channel_prefix(const PrefixScope scope, const ChannelAccess access) const {
   const auto &state = impl_->context.cpu;
   if (!impl_->prefix_ready() ||
       (state.execution != ExecutionState::running && state.execution != ExecutionState::waiting)) {
     return 0;
   }
-  if (scope == PrefixScope::events) { return impl_->jit.event_prefix(state, true, {}, isolated); }
+  if (scope == PrefixScope::events) { return impl_->jit.event_prefix(state, true, {}, access); }
   if (scope != PrefixScope::foreground || state.execution != ExecutionState::running ||
       state.returned_frame) {
     return 0;
   }
-  return impl_->jit.foreground_prefix(state, true, isolated);
+  return impl_->jit.foreground_prefix(state, true, access);
 }
 
 std::uint64_t Core::channel_prefix(const std::span<const InterruptRequest> incoming,
-                                   const std::span<const ByteWrite> isolated) const {
+                                   const ChannelAccess access) const {
   const auto &state = impl_->context.cpu;
   if (!impl_->prefix_ready() ||
       (state.execution != ExecutionState::running && state.execution != ExecutionState::waiting)) {
     return 0;
   }
-  return impl_->jit.event_prefix(state, true, incoming, isolated);
+  return impl_->jit.event_prefix(state, true, incoming, access);
 }
 
 void Core::request_yield() noexcept {

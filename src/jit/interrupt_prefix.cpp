@@ -76,19 +76,42 @@ std::uint64_t private_operation_prefix(const Instruction &instruction,
   return private_storage(memory, {.first = address, .width = width, .write = write}) ? cycles : 0;
 }
 
-std::uint64_t isolated_store_prefix(const Instruction &instruction,
-                                    const Registers &registers,
-                                    const std::span<const ByteWrite> isolated) {
-  if (instruction.kind != Kind::store || instruction.word ||
-      (instruction.addressing != Addressing::direct &&
-       instruction.addressing != Addressing::extended)) {
+std::uint64_t isolated_operation_prefix(const Instruction &instruction,
+                                        const Registers &registers,
+                                        const ChannelAccess access) {
+  if (instruction.addressing != Addressing::direct &&
+      instruction.addressing != Addressing::extended) {
     return 0;
   }
+  const auto kind = instruction.kind;
+  const bool operand = kind == Kind::load || kind == Kind::add || kind == Kind::add_carry ||
+                       kind == Kind::subtract || kind == Kind::subtract_carry ||
+                       kind == Kind::compare || kind == Kind::bit_and || kind == Kind::bit_or ||
+                       kind == Kind::bit_xor || kind == Kind::bit_test || kind == Kind::store ||
+                       kind == Kind::memory_unary || kind == Kind::memory_bits ||
+                       kind == Kind::bit_branch;
+  if (!operand) { return 0; }
+  const auto mode = operand_access_class(instruction);
+  const unsigned width = instruction.word ? 2U : 1U;
+  const bool read = mode < 2 || mode >= 4;
+  const bool write = mode >= 2;
+  const bool range = std::ranges::any_of(access.ranges, [&](const auto &region) {
+    const bool permitted = region.role == LocalAccess::Role::read_write ||
+                           (region.role == LocalAccess::Role::read && !write) ||
+                           (region.role == LocalAccess::Role::write && !read);
+    const auto offset = unsigned{instruction.address} - region.first;
+    return permitted && region.size != 0 && region.size <= address_bytes - region.first &&
+           instruction.address >= region.first && offset <= region.size &&
+           width <= region.size - offset;
+  });
+  if (range) { return instruction_timing(instruction).base; }
+  if (kind != Kind::store || instruction.word) { return 0; }
   const auto value =
       static_cast<Byte>(instruction.accumulator_b ? registers.d : registers.d >> byte_bits);
-  return std::ranges::any_of(isolated,
-                             [&](const auto write) {
-                               return write.address == instruction.address && write.value == value;
+  return std::ranges::any_of(access.writes,
+                             [&](const auto write_value) {
+                               return write_value.address == instruction.address &&
+                                      write_value.value == value;
                              })
              ? instruction_timing(instruction).base
              : 0;

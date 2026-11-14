@@ -19,6 +19,18 @@
 #include <vector>
 
 namespace cpu12::detail {
+unsigned operand_access_class(const Instruction &instruction) {
+  const bool unary = instruction.kind == Kind::memory_unary;
+  unsigned mode = 0;
+  if (instruction.kind == Kind::store || (unary && instruction.operation == RegisterOp::clear)) {
+    mode = 2;
+  } else if (instruction.kind == Kind::memory_bits ||
+             (unary && instruction.operation != RegisterOp::test)) {
+    mode = 4;
+  }
+  return mode + (instruction.word ? 1U : 0U);
+}
+
 namespace {
 bool preserves_indices(const Instruction &instruction) {
   const auto kind = instruction.kind;
@@ -40,18 +52,6 @@ bool preserves_indices(const Instruction &instruction) {
                       kind == Kind::subtract || kind == Kind::subtract_carry ||
                       kind == Kind::bit_and || kind == Kind::bit_or || kind == Kind::bit_xor;
   return !writes || !instruction.word || instruction.target == WordTarget::d;
-}
-
-unsigned access_class(const Instruction &instruction) {
-  const bool unary = instruction.kind == Kind::memory_unary;
-  unsigned mode = 0;
-  if (instruction.kind == Kind::store || (unary && instruction.operation == RegisterOp::clear)) {
-    mode = 2;
-  } else if (instruction.kind == Kind::memory_bits ||
-             (unary && instruction.operation != RegisterOp::test)) {
-    mode = 4;
-  }
-  return mode + (instruction.word ? 1U : 0U);
 }
 
 bool overlaps(const std::span<const Byte> left, const std::span<const Byte> right) {
@@ -176,7 +176,7 @@ GuardedPrefixes::guard(const BlockInstruction &operation) const {
   if (!llvm19::memory_operand(instruction) || instruction.addressing == Addressing::immediate) {
     return {};
   }
-  const auto access = access_class(instruction);
+  const auto access = operand_access_class(instruction);
   if (ranges_[access].empty()) { return {}; }
   Guard result{.base = IndexBase::pc, .offset = instruction.address, .access = access};
   if (instruction.addressing == Addressing::indexed) {

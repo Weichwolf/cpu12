@@ -155,11 +155,12 @@ ISA/fault/device semantics. Verify source/IR/bindings during preparation; inspec
 optimized code to qualify the execution path. Instrument our host/generated code,
 not packaged foreign libraries. Sanitizer checks execute at runtime after insertion.
 
-Stopped channel queries may receive exact byte-write contracts from the owner.
-Match the current direct/extended A/B store's actual address and register value;
-end at its native completion. Contracts expire with the query and certify no
-word, indexed, read-modify-write or IRQ-handler effect. Preserve native accesses,
-faults, masks, return windows and installed incoming-source validation.
+Stopped channel queries may receive owner-certified ranges and exact byte writes.
+Match the current direct/extended operand's complete width and read/write role;
+exact writes additionally match its actual A/B value. End at native completion.
+Contracts expire with the query and certify no indexed or IRQ-handler effect.
+Preserve native accesses, faults, masks, return windows and installed incoming-source
+validation; read-only byte ranges cannot authorize a spanning word or read-modify-write.
 
 ## Artifacts and ownership
 

@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <exception>
+#include <format>
 #include <iostream>
 #include <limits>
 #include <span>
@@ -31,7 +32,7 @@ struct Bus {
   unsigned reads = 0, writes = 0, masked = 0;
   WordWrite last_write;
   bool stopped = true;
-  bool accept_writes = true;
+  bool accept_writes = true, accept_reads = true;
 
   void inspect() noexcept {
     ++reads;
@@ -48,13 +49,13 @@ struct Bus {
     auto &bus = *static_cast<Bus *>(owner);
     bus.inspect();
     value = (address & 1U) == 0 ? high : low;
-    return true;
+    return bus.accept_reads;
   }
 
   static bool read_word(void *owner, [[maybe_unused]] Address address, Address &value) noexcept {
     static_cast<Bus *>(owner)->inspect();
     value = word;
-    return true;
+    return static_cast<Bus *>(owner)->accept_reads;
   }
 
   static bool write(void *owner, const ByteWrite access) noexcept {
@@ -68,7 +69,7 @@ struct Bus {
     auto &bus = *static_cast<Bus *>(owner);
     ++bus.writes;
     bus.last_write = access;
-    return true;
+    return bus.accept_writes;
   }
 
   static bool read_masked(void *owner, const MaskedByteRead access, Byte &value) noexcept {
@@ -277,12 +278,17 @@ void exact_writes(const isa::Opcode opcode) {
     const std::array wrong_address{
         ByteWrite{.address = static_cast<Address>(address + 1), .value = static_cast<Byte>(value)}};
     const std::array undeclared{InterruptRequest{.vector = 0xfff4, .kind = InterruptKind::xirq}};
-    require(fixture.core.channel_prefix(PrefixScope::foreground, exact) == cycles &&
-                fixture.core.channel_prefix(PrefixScope::events, exact) == cycles &&
-                fixture.core.channel_prefix(std::span<const InterruptRequest>{}, exact) == cycles &&
-                fixture.core.channel_prefix(undeclared, exact) == 0 &&
-                fixture.core.channel_prefix(PrefixScope::events, wrong_value) == 0 &&
-                fixture.core.channel_prefix(PrefixScope::events, wrong_address) == 0 &&
+    require(fixture.core.channel_prefix(PrefixScope::foreground, {.ranges = {}, .writes = exact}) ==
+                    cycles &&
+                fixture.core.channel_prefix(PrefixScope::events, {.ranges = {}, .writes = exact}) ==
+                    cycles &&
+                fixture.core.channel_prefix(std::span<const InterruptRequest>{},
+                                            {.ranges = {}, .writes = exact}) == cycles &&
+                fixture.core.channel_prefix(undeclared, {.ranges = {}, .writes = exact}) == 0 &&
+                fixture.core.channel_prefix(PrefixScope::events,
+                                            {.ranges = {}, .writes = wrong_value}) == 0 &&
+                fixture.core.channel_prefix(PrefixScope::events,
+                                            {.ranges = {}, .writes = wrong_address}) == 0 &&
                 fixture.core.channel_prefix() == 0 && fixture.core.foreground_prefix() == 0 &&
                 fixture.core.event_prefix() == 0 && fixture.core.state() == before &&
                 fixture.core.progress() == time && fixture.bus.writes == calls &&
@@ -318,8 +324,135 @@ void nonexact_writes() {
                                std::span<const Byte>(read_modify_write)}) {
     const Fixture fixture(operation);
     const std::array exact{ByteWrite{.address = local_first, .value = 0}};
-    require(fixture.core.channel_prefix(PrefixScope::events, exact) == 0,
+    require(fixture.core.channel_prefix(PrefixScope::events, {.ranges = {}, .writes = exact}) == 0,
             "An exact byte write does not certify indexed, word or read-modify-write effects");
+  }
+}
+
+struct AccessCase {
+  std::span<const Byte> code;
+  unsigned width, cycles;
+  bool read, write;
+  Address stored;
+};
+
+void transient_range_queries(Fixture &fixture, const AccessCase test) {
+  for (const auto role :
+       {LocalAccess::Role::read, LocalAccess::Role::write, LocalAccess::Role::read_write}) {
+    for (const unsigned extent : {0U, 1U, 2U}) {
+      fixture.core.set_registers({.pc = entry, .d = word, .x = word});
+      const auto before = fixture.core.state();
+      const auto time = fixture.core.progress();
+      const std::array range{LocalAccess{.first = local_first, .size = extent, .role = role}};
+      const bool permitted =
+          extent >= test.width && (role == LocalAccess::Role::read_write ||
+                                   (role == LocalAccess::Role::read && !test.write) ||
+                                   (role == LocalAccess::Role::write && !test.read));
+      require(
+          fixture.core.channel_prefix(PrefixScope::foreground, {.ranges = range, .writes = {}}) ==
+                  (permitted ? test.cycles : 0) &&
+              fixture.core.channel_prefix(PrefixScope::events, {.ranges = range, .writes = {}}) ==
+                  (permitted ? test.cycles : 0) &&
+              fixture.core.channel_prefix() == 0 && fixture.core.foreground_prefix() == 0 &&
+              fixture.core.event_prefix() == 0 && fixture.core.state() == before &&
+              fixture.core.progress() == time && fixture.bus.reads == 0 && fixture.bus.writes == 0,
+          "Query-local range admission requires the complete read/write footprint without effects");
+    }
+  }
+  for (const auto invalid : {LocalAccess{.first = local_first, .size = address_bytes},
+                             LocalAccess{.first = local_first + 1, .size = 2},
+                             LocalAccess{.first = local_first,
+                                         .size = 2,
+                                         .role = std::bit_cast<LocalAccess::Role>(Byte{0xff})}}) {
+    const std::array ranges{invalid};
+    require(
+        fixture.core.channel_prefix(PrefixScope::events, {.ranges = ranges, .writes = {}}) == 0,
+        "Invalid, displaced and out-of-address-space transient ranges cannot certify an access");
+  }
+}
+
+void transient_range_execution(Fixture &fixture, const AccessCase test) {
+  for (const auto fault : {Fault::none, Fault::memory_read, Fault::memory_write}) {
+    const bool read_failed = fault == Fault::memory_read;
+    const bool write_failed = fault == Fault::memory_write;
+    if ((read_failed && !test.read) || (write_failed && !test.write)) { continue; }
+    fixture.core.set_registers({.pc = entry, .d = word, .x = word});
+    fixture.bus.accept_reads = !read_failed;
+    fixture.bus.accept_writes = !write_failed;
+    const auto before = fixture.core.state();
+    const auto time = fixture.core.progress();
+    const auto reads = fixture.bus.reads;
+    const auto writes = fixture.bus.writes;
+    const std::array range{LocalAccess{
+        .first = local_first, .size = test.width, .role = LocalAccess::Role::read_write}};
+    require(fixture.core.channel_prefix(PrefixScope::foreground, {.ranges = range, .writes = {}}) ==
+                test.cycles,
+            "A stopped complete range ends at this exact native operation");
+    const auto result = fixture.core.run_until(time.estimated_cycles + test.cycles);
+    require(result.fault == fault && result.retired == unsigned{fault == Fault::none} &&
+                fixture.core.progress().estimated_cycles ==
+                    time.estimated_cycles + (fault == Fault::none ? test.cycles : 0) &&
+                fixture.bus.reads == reads + unsigned{test.read} &&
+                fixture.bus.writes == writes + unsigned{test.write && !read_failed} &&
+                (!test.write || read_failed || fixture.bus.last_write.value == test.stored) &&
+                (fault == Fault::none || (fixture.core.registers() == before.registers &&
+                                          result.pc == entry && result.address == local_first)),
+            std::format("Transient opcode=${:02x} expected-fault={} fault={} retired={} "
+                        "cycles={}/{} reads={}/{} writes={}/{} value={}/{} pc=${:04x} "
+                        "address=${:04x} regs={} width={}",
+                        test.code.front(),
+                        static_cast<unsigned>(fault),
+                        static_cast<unsigned>(result.fault),
+                        result.retired,
+                        fixture.core.progress().estimated_cycles,
+                        time.estimated_cycles,
+                        fixture.bus.reads,
+                        reads,
+                        fixture.bus.writes,
+                        writes,
+                        fixture.bus.last_write.value,
+                        test.stored,
+                        result.pc,
+                        result.address,
+                        fixture.core.registers() == before.registers,
+                        test.width)
+                .c_str());
+  }
+}
+
+void range_operations() {
+  constexpr auto load =
+      isa::program(isa::opcode<isa::Opcode::ldaa_extended>(), std::array<Byte, 2>{0x20, 0});
+  constexpr auto load_word =
+      isa::program(isa::opcode<isa::Opcode::ldd_extended>(), std::array<Byte, 2>{0x20, 0});
+  constexpr auto store =
+      isa::program(isa::opcode<isa::Opcode::staa_extended>(), std::array<Byte, 2>{0x20, 0});
+  constexpr auto store_word =
+      isa::program(isa::opcode<isa::Opcode::std_extended>(), std::array<Byte, 2>{0x20, 0});
+  constexpr auto increment =
+      isa::program(isa::opcode<isa::Opcode::inc_extended>(), std::array<Byte, 2>{0x20, 0});
+  for (const auto test :
+       {AccessCase{
+            .code = load, .width = 1, .cycles = 3, .read = true, .write = false, .stored = 0},
+        AccessCase{
+            .code = load_word, .width = 2, .cycles = 3, .read = true, .write = false, .stored = 0},
+        AccessCase{
+            .code = store, .width = 1, .cycles = 3, .read = false, .write = true, .stored = high},
+        AccessCase{.code = store_word,
+                   .width = 2,
+                   .cycles = 3,
+                   .read = false,
+                   .write = true,
+                   .stored = word},
+        AccessCase{.code = increment,
+                   .width = 1,
+                   .cycles = 4,
+                   .read = true,
+                   .write = true,
+                   .stored = high + 1}}) {
+    Fixture fixture(test.code);
+    transient_range_queries(fixture, test);
+    transient_range_execution(fixture, test);
   }
 }
 
@@ -363,6 +496,7 @@ int main() try {
     exact_writes(opcode);
   }
   nonexact_writes();
+  range_operations();
 } catch (const std::exception &error) {
 
   std::cerr << error.what() << '\n';

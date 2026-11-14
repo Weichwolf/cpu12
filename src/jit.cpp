@@ -387,9 +387,8 @@ bool Jit::transition_pending() const noexcept {
   return impl_->pending.has_value();
 }
 
-std::uint64_t Jit::foreground_prefix(const State &state,
-                                     const bool local,
-                                     const std::span<const ByteWrite> isolated) const {
+std::uint64_t
+Jit::foreground_prefix(const State &state, const bool local, const ChannelAccess access) const {
   if (impl_->pending) { return 0; }
   const auto &mapping = *impl_->current;
   const auto pc = state.registers.pc;
@@ -410,14 +409,14 @@ std::uint64_t Jit::foreground_prefix(const State &state,
                        ? private_operation_prefix(*instruction, mapping.memory, state.registers.sp)
                        : 0,
                    local && instruction != nullptr
-                       ? isolated_store_prefix(*instruction, state.registers, isolated)
+                       ? isolated_operation_prefix(*instruction, state.registers, access)
                        : 0});
 }
 
 std::uint64_t Jit::event_prefix(const State &state,
                                 const bool local,
                                 const std::optional<std::span<const InterruptRequest>> incoming,
-                                const std::span<const ByteWrite> isolated) const {
+                                const ChannelAccess access) const {
   if (impl_->pending || !impl_->current->image) { return 0; }
   const auto &mapping = *impl_->current;
   const auto requests = incoming.value_or(mapping.interrupts);
@@ -438,7 +437,7 @@ std::uint64_t Jit::event_prefix(const State &state,
       }};
   auto foreground = state.execution == ExecutionState::waiting
                         ? std::numeric_limits<std::uint64_t>::max()
-                        : foreground_prefix(state, local, isolated);
+                        : foreground_prefix(state, local, access);
   if (state.returned_frame) {
     const auto *next = mapping.instruction(state.registers.pc);
     if (next == nullptr) { return 0; }
