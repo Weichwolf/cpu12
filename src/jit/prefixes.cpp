@@ -8,6 +8,7 @@
 #include "jit/preparation.hpp"
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <limits>
@@ -34,7 +35,6 @@ bool transfer_context(const Instruction &instruction) {
 }
 
 bool context_boundary(const Instruction &instruction) {
-  // New stack or mask state invalidates an interrupt-entry guarantee.
   return instruction.indexed.indirect ||
          (instruction.indexed.base == IndexBase::sp && instruction.indexed.update != 0) ||
          (instruction.kind == Kind::transfer && transfer_context(instruction)) ||
@@ -43,7 +43,8 @@ bool context_boundary(const Instruction &instruction) {
           instruction.target == WordTarget::sp) ||
          (instruction.kind == Kind::register_operation &&
           (instruction.operation == RegisterOp::ccr_and ||
-           instruction.operation == RegisterOp::ccr_or));
+           instruction.operation == RegisterOp::ccr_or ||
+           instruction.operation == RegisterOp::decimal_adjust));
 }
 
 unsigned edge_cycles(const Instruction &instruction, const unsigned edge) {
@@ -60,37 +61,20 @@ struct Edge {
   unsigned cycles;
 };
 
-using Entry = std::pair<std::uint64_t, Address>;
-using Queue = std::priority_queue<Entry, std::vector<Entry>, std::greater<>>;
+bool owner_boundary(const Instruction &instruction,
+                    const Memory &memory,
+                    const PrefixAccess access) {
+  return context_boundary(instruction) || access == PrefixAccess::boundary ||
+         (access != PrefixAccess::guarded && may_access_owner(instruction, memory));
 }
 
-std::map<Address, std::uint64_t>
-foreground_prefixes(const std::span<const BlockInstruction> instructions, const Memory &memory) {
+using Entry = std::pair<std::uint64_t, Address>;
+using Queue = std::priority_queue<Entry, std::vector<Entry>, std::greater<>>;
+
+void relax(std::map<Address, std::uint64_t> &distances,
+           const std::map<Address, std::vector<Edge>> &incoming,
+           Queue &pending) {
   constexpr auto infinite = std::numeric_limits<std::uint64_t>::max();
-  std::map<Address, std::uint64_t> distances;
-  std::map<Address, std::vector<Edge>> incoming;
-  for (const auto &operation : instructions) {
-    if (!distances.emplace(operation.pc, infinite).second) {
-      throw std::invalid_argument("Duplicate CPU12 foreground prefix instruction");
-    }
-  }
-  Queue pending;
-  for (const auto &operation : instructions) {
-    const auto flow = successors(operation);
-    const auto targets = std::span(flow.direct).first(flow.count);
-    if (context_boundary(operation.instruction) ||
-        may_access_owner(operation.instruction, memory) || flow.indirect || targets.empty() ||
-        std::ranges::any_of(targets,
-                            [&](const auto target) { return !distances.contains(target); })) {
-      distances.at(operation.pc) = 0;
-      pending.emplace(0, operation.pc);
-      continue;
-    }
-    for (unsigned edge = 0; edge < flow.count; ++edge) {
-      incoming[flow.direct[edge]].push_back(
-          {.from = operation.pc, .cycles = edge_cycles(operation.instruction, edge)});
-    }
-  }
   while (!pending.empty()) {
     const auto [cycles, pc] = pending.top();
     pending.pop();
@@ -107,6 +91,44 @@ foreground_prefixes(const std::span<const BlockInstruction> instructions, const 
       }
     }
   }
+}
+
+}
+
+std::map<Address, std::uint64_t>
+foreground_prefixes(const std::span<const BlockInstruction> instructions,
+                    const Memory &memory,
+                    const std::span<const PrefixAccess> access) {
+  if (!access.empty() && access.size() != instructions.size()) {
+    throw std::invalid_argument("CPU12 prefix access plan must cover every instruction");
+  }
+  constexpr auto infinite = std::numeric_limits<std::uint64_t>::max();
+  std::map<Address, std::uint64_t> distances;
+  std::map<Address, std::vector<Edge>> incoming;
+  for (const auto &operation : instructions) {
+    if (!distances.emplace(operation.pc, infinite).second) {
+      throw std::invalid_argument("Duplicate CPU12 foreground prefix instruction");
+    }
+  }
+  Queue pending;
+  for (std::size_t index = 0; index < instructions.size(); ++index) {
+    const auto &operation = instructions[index];
+    const auto flow = successors(operation);
+    const auto targets = std::span(flow.direct).first(flow.count);
+    const auto policy = access.empty() ? PrefixAccess::ordinary : access[index];
+    if (owner_boundary(operation.instruction, memory, policy) || flow.indirect || targets.empty() ||
+        std::ranges::any_of(targets,
+                            [&](const auto target) { return !distances.contains(target); })) {
+      distances.at(operation.pc) = 0;
+      pending.emplace(0, operation.pc);
+      continue;
+    }
+    for (unsigned edge = 0; edge < flow.count; ++edge) {
+      incoming[flow.direct[edge]].push_back(
+          {.from = operation.pc, .cycles = edge_cycles(operation.instruction, edge)});
+    }
+  }
+  relax(distances, incoming, pending);
   return distances;
 }
 }

@@ -95,6 +95,12 @@ input; a future input does not become an IRQ at the earlier query time. Reuse
 installed validation and prepared metadata without decoding, hashing or executing.
 End a returned-frame prefix by the first following instruction's earliest boundary,
 where closing reuse can change later IRQ stack accesses.
+Bind shared address and initialization predicates for connected CFG groups whose
+index registers remain invariant. One predicate admits the complete stable loop,
+including conditional paths and mounted domains. Prove byte/knowledge planes
+disjoint at binding; native initialization writes then preserve known reads.
+End at pointer/context changes, indirect flow, possible validation faults or
+unproved accesses. Derive admission and native guards from the same semantics.
 
 Build natural connected CFG/SSA regions, functions and loops, independent of
 quotas and catalogue entry density. Preserve all declared starts without turning

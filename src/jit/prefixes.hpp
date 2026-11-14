@@ -4,10 +4,14 @@
 #include "cpu12/memory.hpp"
 #include "jit/block.hpp"
 
+#include <array>
+#include <compare>
+#include <cstddef>
 #include <cstdint>
 #include <map>
 #include <optional>
 #include <span>
+#include <vector>
 
 namespace cpu12::detail {
 [[nodiscard]] bool private_frame(const Memory &memory, Address stack);
@@ -17,8 +21,46 @@ struct PrefixLookup {
   std::optional<std::uint64_t> (*find)(const void *, Address);
 };
 
+enum class PrefixAccess : std::uint8_t { ordinary, guarded, boundary };
+
 [[nodiscard]] std::map<Address, std::uint64_t>
-foreground_prefixes(std::span<const BlockInstruction> instructions, const Memory &memory);
+foreground_prefixes(std::span<const BlockInstruction> instructions,
+                    const Memory &memory,
+                    std::span<const PrefixAccess> access = {});
+
+class GuardedPrefixes {
+public:
+  GuardedPrefixes() = default;
+  GuardedPrefixes(std::span<const BlockInstruction> instructions, const Memory &memory);
+  [[nodiscard]] std::uint64_t prefix(Address pc, const Registers &registers) const;
+
+private:
+  struct Range {
+    unsigned first, last;
+    const Byte *known;
+  };
+
+  struct Guard {
+    IndexBase base;
+    Address offset;
+    unsigned access;
+    auto operator<=>(const Guard &) const = default;
+  };
+
+  struct Entry {
+    std::uint64_t cycles;
+    std::size_t group;
+  };
+
+  std::array<std::vector<Range>, 6> ranges_;
+  std::vector<std::vector<Guard>> groups_;
+  std::map<Address, Entry> entries_;
+  [[nodiscard]] std::optional<Guard> guard(const BlockInstruction &operation) const;
+  void prepare(std::span<const BlockInstruction> instructions, const Memory &memory);
+  void bind(std::span<const BlockInstruction> instructions,
+            const std::map<Address, std::uint64_t> &prefixes,
+            std::span<const std::optional<Guard>> guards);
+};
 
 [[nodiscard]] std::uint64_t interrupt_entry_prefix(const State &state,
                                                    const Memory &memory,

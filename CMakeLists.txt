@@ -90,7 +90,7 @@ add_library(cpu12_core STATIC
   src/jit/llvm/artifact.cpp
   src/jit/llvm/abi.cpp src/jit/llvm/module.cpp src/jit/llvm/optimize.cpp
   src/jit/llvm/callbacks.cpp src/jit/llvm/runtime_bitcode.cpp
-  src/jit/block_parse.cpp src/jit/preparation.cpp src/jit/prefixes.cpp src/jit/interrupt_prefix.cpp
+  src/jit/block_parse.cpp src/jit/preparation.cpp src/jit/prefixes.cpp src/jit/guarded_prefixes.cpp src/jit/interrupt_prefix.cpp
   src/jit/block_plan.cpp
   src/jit/arena.cpp
   src/jit/a64/code.cpp
@@ -169,6 +169,12 @@ if(BUILD_TESTING AND CPU12_BUILD_TESTING)
   target_link_libraries(cpu12-prefixes-test PRIVATE cpu12::core)
   add_test(NAME prepared-foreground-prefixes COMMAND cpu12-prefixes-test)
   set_tests_properties(prepared-foreground-prefixes PROPERTIES TIMEOUT 30)
+
+  add_executable(cpu12-guarded-prefixes-test test/jit/guarded_prefixes_test.cpp)
+  target_include_directories(cpu12-guarded-prefixes-test PRIVATE test/support)
+  target_link_libraries(cpu12-guarded-prefixes-test PRIVATE cpu12::core)
+  add_test(NAME prepared-index-guards COMMAND cpu12-guarded-prefixes-test)
+  set_tests_properties(prepared-index-guards PROPERTIES TIMEOUT 60)
   add_executable(cpu12-progress-test test/core/progress_test.cpp)
   target_link_libraries(cpu12-progress-test PRIVATE cpu12::core)
   add_test(NAME native-device-horizons COMMAND cpu12-progress-test)

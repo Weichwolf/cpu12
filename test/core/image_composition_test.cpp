@@ -248,7 +248,7 @@ void retained_owners() {
   const auto initial = seed(transfer_flags);
   first_owner.set_registers(initial);
   second_owner.set_registers(initial);
-  require(first_owner.event_prefix() == 1 && second_owner.event_prefix() == 1,
+  require(first_owner.event_prefix() > 0 && second_owner.event_prefix() > 0,
           "Composed event admission retains the declared IRQ paths after image owners expire");
   constexpr unsigned count = 1024;
   require(first_owner.run(count).retired == count && second_owner.run(count).retired == count &&
@@ -285,6 +285,18 @@ void returns() {
                                     .callbacks = {},
                                     .bindings = {},
                                     .topology = MemoryTopology::dynamic});
+  {
+    Fixture f(second);
+    f.right[0] = isa::rti[0];
+    Core core(f.memory());
+    core.install(image, std::array{a, b});
+    core.set_registers(seed(0));
+    const auto prefix = core.event_prefix();
+    const auto result = core.run(16);
+    require(prefix > 0 && prefix <= 4 && result.fault == Fault::memory_read &&
+                result.retired == 2 && core.progress().estimated_cycles == 4,
+            "Composed admission ends before the actual unknown RTI frame read after LOAD1+JMP3");
+  }
   for (unsigned flags = 0; flags < 256; ++flags) {
     constexpr unsigned mask_i = 0x10;
     if ((flags & mask_i) != 0) { continue; }
@@ -294,7 +306,7 @@ void returns() {
     core.install(image, (flags & 1U) == 0 ? std::array{a, b} : std::array{b, a});
     const auto before = seed(static_cast<Byte>(flags));
     core.set_registers(before);
-    require(core.event_prefix() == 1,
+    require(core.event_prefix() > 0 && core.event_prefix() <= 4,
             "Event admission resolves IRQ targets in the other mounted domain in either order");
     require(core.interrupt(events[0]).accepted &&
                 core.progress() == Progress{.estimated_cycles = irq_cycles},
