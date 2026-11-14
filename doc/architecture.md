@@ -87,6 +87,9 @@ an unbounded pure cycle is not an incoming-IRQ horizon. Relevant state, code or
 binding changes invalidate the result. Admission changes no guest state or time.
 Admit WAI through its sleep boundary only when the full nine-byte stack frame
 belongs to private writable storage; tracked writes initialize their knownness.
+Admit RTI only through its eight-cycle completion when all nine saved bytes have
+one direct initialized grant. Retain the restored registers and return window;
+unknown, split or incomplete frames certify nothing. The successor needs its own proof.
 Expose `Core::event_prefix()` for conditional admission across a pending RTI poll
 or WAI: bound both foreground and every declared eligible IRQ path, including
 nested entries and mounted domains. Retain return-frame eligibility until the

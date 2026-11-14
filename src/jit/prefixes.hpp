@@ -15,6 +15,7 @@
 
 namespace cpu12::detail {
 [[nodiscard]] bool private_frame(const Memory &memory, Address stack);
+[[nodiscard]] bool private_return_frame(const Memory &memory, Address stack);
 
 struct PrefixLookup {
   const void *owner;

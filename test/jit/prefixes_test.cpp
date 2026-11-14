@@ -294,6 +294,120 @@ void layouts_and_boundaries() {
           "An indirect pointer read is not assumed to be a pure address calculation");
 }
 
+struct ReturnProbe {
+  unsigned reads = 0;
+  Address address = 0;
+
+  static bool read(void *owner, const Address address, [[maybe_unused]] Byte &value) noexcept {
+    auto &probe = *static_cast<ReturnProbe *>(owner);
+    ++probe.reads;
+    probe.address = address;
+    return false;
+  }
+
+  static bool word(void *owner, const Address address, [[maybe_unused]] Address &value) noexcept {
+    auto &probe = *static_cast<ReturnProbe *>(owner);
+    ++probe.reads;
+    probe.address = address;
+    return false;
+  }
+};
+
+void return_failure(Core &core, ReturnProbe &probe, const Address stack, const unsigned offset) {
+  probe.reads = 0;
+  core.set_registers({.pc = entry, .sp = stack});
+  const auto progress = core.progress();
+  require(core.foreground_prefix() == 0 && core.event_prefix() == 0 && core.channel_prefix() == 0 &&
+              probe.reads == 0 && core.progress() == progress,
+          "An unproved saved frame refuses RTI admission without consulting the owner");
+  const auto result = core.run_until(progress.estimated_cycles + 8);
+  require(result.fault == Fault::memory_read && result.retired == 0 && probe.reads == 1 &&
+              probe.address == stack + offset && core.progress() == progress,
+          "Every refused frame retains its real native byte/word access failure");
+}
+
+void return_prefix() {
+  constexpr Address stack = 0x7000;
+  constexpr std::size_t frame_bytes = 9;
+  constexpr Byte self_branch = 0xfe;
+  auto bytes = isa::program(isa::rti,
+                            isa::nop,
+                            isa::opcode<isa::Opcode::bra_relative>(),
+                            std::array<Byte, 1>{self_branch});
+  constexpr std::array<Byte, frame_bytes> frame{0, 0x34, 0x12, 0x56, 0x78, 0x9a, 0xbc, 0x40, 1};
+  const std::array code{CodeSpan{.address = entry, .words = bytes}};
+  constexpr std::array roots{entry, Address{entry + 1}};
+  const std::array versions{CodeVariant{.id = variant, .code = code, .entries = roots}};
+  const auto image = Core::compile({.variants = versions},
+                                   {.memory = {},
+                                    .interrupts = {},
+                                    .transitions = {},
+                                    .callbacks = {},
+                                    .bindings = {},
+                                    .topology = MemoryTopology::dynamic});
+  std::array<Byte, 2 * frame_bytes> data{};
+  std::array<Byte, 2 * frame_bytes> known{};
+  std::array memory{Ram{.first = entry, .bytes = bytes, .writable = false},
+                    Ram{.first = stack, .bytes = data}};
+  ReturnProbe probe;
+  Io io{.owner = &probe, .read = ReturnProbe::read, .read_word = ReturnProbe::word};
+  Core core(Memory::mapped(memory), &io);
+  for (unsigned layout = 0; layout < 3; ++layout) {
+    known.fill(1);
+    memory.back().known = layout == 1 ? std::span(known) : std::span<Byte>{};
+    memory.back().writable = layout != 2;
+    core.set_memory(Memory::mapped(memory));
+    core.install(image, variant);
+    for (unsigned offset = 0; offset <= frame_bytes; ++offset) {
+      std::ranges::copy(frame, data.begin() + offset);
+      const auto sp = static_cast<Address>(stack + offset);
+      core.set_registers({.pc = entry, .sp = sp});
+      const auto before = core.state();
+      const auto progress = core.progress();
+      const auto saved = data;
+      require(core.foreground_prefix() == 8 && core.event_prefix() == 8 &&
+                  core.channel_prefix() == 8 && core.state() == before &&
+                  core.progress() == progress && data == saved && probe.reads == 0,
+              "A complete known direct RTI frame certifies only its native completion");
+      const auto result = core.run_until(progress.estimated_cycles + 8);
+      const Registers expected{.pc = entry + 1,
+                               .d = 0x1234,
+                               .x = 0x5678,
+                               .y = 0x9abc,
+                               .sp = static_cast<Address>(sp + frame_bytes)};
+      require(result.fault == Fault::none && result.retired == 1 &&
+                  core.progress().estimated_cycles == progress.estimated_cycles + 8 &&
+                  core.registers() == expected && core.state().returned_frame &&
+                  core.foreground_prefix() == 0 && core.event_prefix() == 1 && data == saved &&
+                  probe.reads == 0,
+              "Native RTI restores every register at eight cycles and retains the return window");
+    }
+  }
+  memory.back().known = known;
+  core.set_memory(Memory::mapped(memory));
+  core.install(image, variant);
+  std::ranges::copy(frame, data.begin());
+  for (unsigned index = 0; index < frame_bytes; ++index) {
+    known.fill(1);
+    known[index] = 0;
+    const auto word = index == 0 ? 0 : 1 + (((index - 1) / 2) * 2);
+    return_failure(core, probe, stack, word);
+  }
+  for (unsigned layout = 0; layout < 3; ++layout) {
+    std::vector<Ram> regions{memory.front()};
+    if (layout == 1) {
+      regions.push_back({.first = stack, .bytes = std::span(data).first(frame_bytes - 1)});
+    } else if (layout == 2) {
+      regions.push_back({.first = stack, .bytes = std::span(data).first(4)});
+      regions.push_back({.first = stack + 4, .bytes = std::span(data).subspan(4)});
+    }
+    core.set_memory(Memory::mapped(regions));
+    core.install(image, variant);
+    constexpr std::array<unsigned, 3> fault_offsets{0, 7, 3};
+    return_failure(core, probe, stack, fault_offsets[layout]);
+  }
+}
+
 void stack_counter() {
   constexpr Byte counter = 0x27;
   constexpr Byte self_branch = 0xfe;
@@ -478,6 +592,7 @@ int main() try {
   state_alias();
   waiting_prefix();
   layouts_and_boundaries();
+  return_prefix();
   stack_counter();
   transfer_prefixes();
   asynchronous_entry();

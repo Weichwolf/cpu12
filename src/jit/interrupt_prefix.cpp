@@ -5,6 +5,7 @@
 #include "jit/prefixes.hpp"
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <limits>
 #include <map>
@@ -27,6 +28,16 @@ bool private_frame(const Memory &memory, const Address stack) {
   return std::ranges::any_of(memory.regions(), [&](const auto &region) {
     return region.writable && stack >= region.first + frame_bytes &&
            static_cast<unsigned>(stack - region.first) <= region.bytes.size();
+  });
+}
+
+bool private_return_frame(const Memory &memory, const Address stack) {
+  return std::ranges::any_of(memory.regions(), [&](const auto &region) {
+    if (stack < region.first) { return false; }
+    const auto offset = static_cast<std::size_t>(stack - region.first);
+    return offset <= region.bytes.size() && frame_bytes <= region.bytes.size() - offset &&
+           (region.known.empty() || std::ranges::all_of(region.known.subspan(offset, frame_bytes),
+                                                        [](const auto byte) { return byte != 0; }));
   });
 }
 

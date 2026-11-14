@@ -394,8 +394,10 @@ std::uint64_t Jit::foreground_prefix(const State &state, const bool local) const
   const auto source = mapping.source(pc);
   if (!source) { return 0; }
   const auto *instruction = mapping.image->program(*source).instruction(pc);
-  if (instruction != nullptr && instruction->kind == Kind::wait &&
-      private_frame(mapping.memory, state.registers.sp)) {
+  if (instruction != nullptr &&
+      ((instruction->kind == Kind::wait && private_frame(mapping.memory, state.registers.sp)) ||
+       (instruction->kind == Kind::return_interrupt &&
+        private_return_frame(mapping.memory, state.registers.sp)))) {
     return instruction_timing(*instruction).base;
   }
   return std::max({mapping.image->foreground_prefix(*source, pc),
