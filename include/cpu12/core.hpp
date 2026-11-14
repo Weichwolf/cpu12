@@ -223,6 +223,10 @@ public:
   // A live read-only view, valid for this Core lifetime; inspect on the execution owner.
   [[nodiscard]] const State &state() const noexcept;
   [[nodiscard]] Progress progress() const noexcept;
+  // Stopped-owner foreground guarantee in nominal cycles, excluding asynchronous IRQs.
+  // State/code/binding changes invalidate it; zero is uncertified, UINT64_MAX is unbounded.
+  // Executes no guest or bus I/O.
+  [[nodiscard]] std::uint64_t foreground_prefix() const;
   // Clears a latched fault. Pending code transfers require installation or reset.
   void set_registers(Registers registers);
   // An installed image requires a matching install after every explicit remap.

@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <exception>
@@ -80,13 +81,14 @@ void control_flow() {
 
 struct Probe {
   Core *core = nullptr;
-  std::uint64_t cycles = 0;
+  std::uint64_t cycles = 0, prefix = infinite;
   Address address = 0;
   Byte value = 0;
 
   static bool write(void *owner, const ByteWrite access) noexcept {
     auto &self = *static_cast<Probe *>(owner);
     self.cycles = self.core->progress().estimated_cycles;
+    self.prefix = self.core->foreground_prefix();
     self.address = access.address;
     self.value = access.value;
     return false;
@@ -106,18 +108,60 @@ void native_prefixes() {
   Core core(input.memory(), &io);
   probe.core = &core;
   core.set_registers({.pc = entry});
+  require(core.foreground_prefix() == 0,
+          "An uninstalled owner has no native event-prefix guarantee");
   core.install(image, variant);
+  constexpr std::array<Address, 8> pcs{0, 1, 3, 4, 5, 6, 9, 10};
+  constexpr std::array<std::uint64_t, 8> expected_prefixes{4, 3, 3, 2, 1, 0, infinite, 0};
+  for (std::size_t index = 0; index < pcs.size(); ++index) {
+    core.set_registers({.pc = static_cast<Address>(entry + pcs[index])});
+    const auto state = core.state();
+    const auto progress = core.progress();
+    require(core.foreground_prefix() == expected_prefixes[index] && core.state() == state &&
+                core.progress() == progress && probe.cycles == 0,
+            "Public native prefixes preserve state and refuse undeclared instruction boundaries");
+  }
   for (unsigned value = 0; value < byte_values; ++value) {
     core.set_registers({.pc = entry, .d = static_cast<Address>(value << byte_bits)});
     const auto before = core.progress().estimated_cycles;
+    require(core.foreground_prefix() == 4 && core.progress().estimated_cycles == before,
+            "A native prefix is conservative across both data-dependent branch outcomes");
     const auto result = core.run(16);
     const auto incremented = static_cast<Byte>((value + 1) % byte_values);
     const std::uint64_t expected = incremented == 0 ? 5 : 4;
     require(result.fault == Fault::memory_write && result.pc == entry + 6 &&
                 probe.address == output && probe.value == incremented &&
-                probe.cycles - before == expected,
+                probe.cycles - before == expected && probe.prefix == 0,
             "Actual native callback prefixes independently match both branch timing paths");
+    require(core.foreground_prefix() == 0 && core.state().failure.fault == Fault::memory_write,
+            "A faulted owner cannot certify execution or clear its failure");
   }
+}
+
+void state_alias() {
+  Input input;
+  constexpr auto ccr = offsetof(State, registers) + offsetof(Registers, ccr);
+  constexpr auto store = isa::program(isa::opcode<isa::Opcode::staa_extended>(),
+                                      std::array<Byte, 2>{0, static_cast<Byte>(ccr)});
+  std::ranges::copy(store, input.bytes.begin());
+  const std::array layout{
+      RegionLayout{.first = 0, .size = sizeof(State), .writable = true},
+      RegionLayout{.first = entry, .size = instructions.size(), .writable = false}};
+  const std::array layouts{VariantLayout{.id = variant, .memory = layout}};
+  const auto image = Core::compile(
+      {.variants = input.variants},
+      {.memory = layouts, .interrupts = {}, .transitions = {}, .callbacks = {}, .bindings = {}});
+  Core core(input.memory());
+  core.set_registers({.pc = entry});
+  auto *state_bytes = std::bit_cast<Byte *>(const_cast<State *>(&core.state()));
+  const std::array memory{Ram{.first = 0, .bytes = {state_bytes, sizeof(State)}},
+                          Ram{.first = entry, .bytes = input.bytes, .writable = false}};
+  const auto before = core.state();
+  const auto progress = core.progress();
+  core.set_memory(Memory::mapped(memory));
+  core.install(image, variant);
+  require(core.foreground_prefix() == 0 && core.state() == before && core.progress() == progress,
+          "RAM that aliases hidden CPU state cannot certify a context-free prefix");
 }
 
 void layouts_and_boundaries() {
@@ -346,6 +390,7 @@ void asynchronous_entry() {
 int main() try {
   control_flow();
   native_prefixes();
+  state_alias();
   layouts_and_boundaries();
   stack_counter();
   transfer_prefixes();

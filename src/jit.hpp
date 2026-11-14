@@ -25,6 +25,7 @@ public:
                std::span<const InterruptRequest> interrupts);
   [[nodiscard]] bool requires_image() const noexcept;
   [[nodiscard]] bool transition_pending() const noexcept;
+  [[nodiscard]] std::uint64_t foreground_prefix(Address pc) const;
   void cancel_transition() noexcept;
   [[nodiscard]] Fault validate_instruction(Address pc, std::span<const Byte> bytes) const;
   [[nodiscard]] PreparationReport prepare(std::span<const Address> established_entries);

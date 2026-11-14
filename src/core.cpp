@@ -12,7 +12,9 @@
 #include "runtime.hpp"
 #include "semantic.hpp"
 
+#include <algorithm>
 #include <array>
+#include <bit>
 #include <cstdint>
 #include <limits>
 #include <map>
@@ -22,9 +24,6 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
-#if defined(__x86_64__) || defined(__aarch64__)
-#include <bit>
-#endif
 #if defined(__x86_64__) && defined(__linux__)
 #include <cpuid.h>
 #endif
@@ -91,6 +90,19 @@ public:
   detail::Jit jit;
   bool active = false;
   bool deadline_active = false;
+  bool prefix_admitted = false;
+
+  void admit_prefix_memory() noexcept {
+    const auto owner = std::bit_cast<std::uintptr_t>(this);
+    const auto outside = [&](const std::span<const Byte> bytes) {
+      if (bytes.empty()) { return true; }
+      const auto first = std::bit_cast<std::uintptr_t>(bytes.data());
+      return first <= owner ? owner - first >= bytes.size() : first - owner >= sizeof(*this);
+    };
+    prefix_admitted = std::ranges::all_of(jit.memory().regions(), [&](const Ram &region) {
+      return outside(region.bytes) && outside(region.known);
+    });
+  }
 
   void observe_interrupt_boundary(const Byte previous_masks, const Byte previous_delay) noexcept {
     constexpr unsigned masks = 0x50;
@@ -256,6 +268,7 @@ void Core::install(const NativeImage &image, const std::span<const std::uint64_t
   if (impl_->active) { throw std::logic_error("Cannot install an active CPU12 image"); }
   if (!image.impl_) { throw std::invalid_argument("Cannot install an empty CPU12 image"); }
   impl_->jit.install(image.impl_->program, variants, image.impl_->interrupts);
+  impl_->admit_prefix_memory();
   impl_->context.memory_bindings = impl_->jit.bindings();
   impl_->context.memory_grants = impl_->jit.memory().regions();
 }
@@ -270,6 +283,16 @@ const State &Core::state() const noexcept {
 
 Progress Core::progress() const noexcept {
   return impl_->context.progress;
+}
+
+std::uint64_t Core::foreground_prefix() const {
+  const auto &state = impl_->context.cpu;
+  if (impl_->active || !impl_->supported || !impl_->prefix_admitted ||
+      state.failure.fault != Fault::none || state.execution != ExecutionState::running ||
+      state.returned_frame) {
+    return 0;
+  }
+  return impl_->jit.foreground_prefix(state.registers.pc);
 }
 
 void Core::request_yield() noexcept {
@@ -292,6 +315,7 @@ void Core::set_registers(const Registers registers) {
 void Core::set_memory(const Memory memory) {
   if (impl_->active) { throw std::logic_error("Cannot remap active CPU12 memory"); }
   impl_->jit.set_memory(memory);
+  impl_->prefix_admitted = false;
   impl_->context.memory_bindings = impl_->jit.bindings();
   impl_->context.memory_grants = impl_->jit.memory().regions();
 }

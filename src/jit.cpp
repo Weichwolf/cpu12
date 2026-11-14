@@ -345,6 +345,13 @@ bool Jit::transition_pending() const noexcept {
   return impl_->pending.has_value();
 }
 
+std::uint64_t Jit::foreground_prefix(const Address pc) const {
+  if (impl_->pending) { return 0; }
+  const auto &mapping = *impl_->current;
+  const auto source = mapping.source(pc);
+  return source ? mapping.image->foreground_prefix(*source, pc) : 0;
+}
+
 void Jit::cancel_transition() noexcept {
   impl_->pending.reset();
 }
