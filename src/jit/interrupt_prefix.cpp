@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
+#include "cycles.hpp"
 #include "immutable.hpp"
+#include "instruction.hpp"
 #include "jit/prefixes.hpp"
 
 #include <algorithm>
@@ -21,24 +23,57 @@ constexpr unsigned mask_i = 0x10, mask_x = 0x40;
 std::uint64_t plus(const unsigned entry, const std::uint64_t continuation) {
   return continuation > infinite - entry ? infinite : continuation + entry;
 }
+
+struct StorageAccess {
+  Address first;
+  unsigned width;
+  bool write;
+};
+
+bool private_storage(const Memory &memory, const StorageAccess access) {
+  return std::ranges::any_of(memory.regions(), [&](const auto &region) {
+    if (access.first < region.first || (access.write && !region.writable)) { return false; }
+    const auto offset = static_cast<std::size_t>(access.first - region.first);
+    return offset <= region.bytes.size() && access.width <= region.bytes.size() - offset &&
+           (access.write || region.known.empty() ||
+            std::ranges::all_of(region.known.subspan(offset, access.width),
+                                [](const auto byte) { return byte != 0; }));
+  });
+}
 }
 
 bool private_frame(const Memory &memory, const Address stack) {
-  if (stack < frame_bytes) { return false; }
-  return std::ranges::any_of(memory.regions(), [&](const auto &region) {
-    return region.writable && stack >= region.first + frame_bytes &&
-           static_cast<unsigned>(stack - region.first) <= region.bytes.size();
-  });
+  return stack >= frame_bytes &&
+         private_storage(memory,
+                         {.first = static_cast<Address>(stack - frame_bytes),
+                          .width = frame_bytes,
+                          .write = true});
 }
 
 bool private_return_frame(const Memory &memory, const Address stack) {
-  return std::ranges::any_of(memory.regions(), [&](const auto &region) {
-    if (stack < region.first) { return false; }
-    const auto offset = static_cast<std::size_t>(stack - region.first);
-    return offset <= region.bytes.size() && frame_bytes <= region.bytes.size() - offset &&
-           (region.known.empty() || std::ranges::all_of(region.known.subspan(offset, frame_bytes),
-                                                        [](const auto byte) { return byte != 0; }));
-  });
+  return private_storage(memory, {.first = stack, .width = frame_bytes, .write = false});
+}
+
+std::uint64_t private_operation_prefix(const Instruction &instruction,
+                                       const Memory &memory,
+                                       const Address stack) {
+  if (instruction.indexed.indirect) { return 0; }
+  const auto cycles = instruction_timing(instruction).base;
+  if (!may_access_owner(instruction, memory)) { return cycles; }
+  bool write = false;
+  unsigned width = instruction.word ? 2 : 1;
+  if (instruction.kind == Kind::call) {
+    if (instruction.indexed.base == IndexBase::sp && instruction.indexed.update != 0) { return 0; }
+    write = true;
+    width = 2;
+  } else if (instruction.kind == Kind::push) {
+    write = true;
+  } else if (instruction.kind != Kind::pull && instruction.kind != Kind::return_subroutine) {
+    return 0;
+  }
+  if (write && stack < width) { return 0; }
+  const auto address = static_cast<Address>(write ? stack - width : stack);
+  return private_storage(memory, {.first = address, .width = width, .write = write}) ? cycles : 0;
 }
 
 std::uint64_t interrupt_entry_prefix(const State &state,

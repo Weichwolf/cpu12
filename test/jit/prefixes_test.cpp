@@ -313,16 +313,19 @@ struct ReturnProbe {
   }
 };
 
-void return_failure(Core &core, ReturnProbe &probe, const Address stack, const unsigned offset) {
+void return_failure(Core &core,
+                    ReturnProbe &probe,
+                    const Registers registers,
+                    const unsigned offset) {
   probe.reads = 0;
-  core.set_registers({.pc = entry, .sp = stack});
+  core.set_registers(registers);
   const auto progress = core.progress();
   require(core.foreground_prefix() == 0 && core.event_prefix() == 0 && core.channel_prefix() == 0 &&
               probe.reads == 0 && core.progress() == progress,
           "An unproved saved frame refuses RTI admission without consulting the owner");
   const auto result = core.run_until(progress.estimated_cycles + 8);
   require(result.fault == Fault::memory_read && result.retired == 0 && probe.reads == 1 &&
-              probe.address == stack + offset && core.progress() == progress,
+              probe.address == registers.sp + offset && core.progress() == progress,
           "Every refused frame retains its real native byte/word access failure");
 }
 
@@ -391,7 +394,7 @@ void return_prefix() {
     known.fill(1);
     known[index] = 0;
     const auto word = index == 0 ? 0 : 1 + (((index - 1) / 2) * 2);
-    return_failure(core, probe, stack, word);
+    return_failure(core, probe, {.pc = entry, .sp = stack}, word);
   }
   for (unsigned layout = 0; layout < 3; ++layout) {
     std::vector<Ram> regions{memory.front()};
@@ -404,7 +407,136 @@ void return_prefix() {
     core.set_memory(Memory::mapped(regions));
     core.install(image, variant);
     constexpr std::array<unsigned, 3> fault_offsets{0, 7, 3};
-    return_failure(core, probe, stack, fault_offsets[layout]);
+    return_failure(core, probe, {.pc = entry, .sp = stack}, fault_offsets[layout]);
+  }
+}
+
+void call_failure(Core &core, const Address stack) {
+  core.set_registers({.pc = entry, .sp = stack});
+  const auto progress = core.progress();
+  require(core.channel_prefix(PrefixScope::foreground) == 0 && core.progress() == progress,
+          "A call requires its complete private writable word before admission");
+  const auto result = core.run_until(progress.estimated_cycles + 4);
+  require(result.fault == Fault::memory_write && result.retired == 0 &&
+              result.address == static_cast<Address>(stack - 2) && core.progress() == progress,
+          "A refused call preserves its actual native frame write failure");
+}
+
+void local_stack_sequence() {
+  constexpr Address callee = 0x4100;
+  constexpr Address stack = 0x7000;
+  constexpr unsigned stack_bytes = 32;
+  constexpr std::uint64_t total_cycles = 43;
+  constexpr Byte self_branch = 0xfe;
+  constexpr auto main_code = isa::program(isa::opcode<isa::Opcode::jsr_extended>(),
+                                          std::array<Byte, 2>{0x41, 0},
+                                          isa::nop,
+                                          isa::opcode<isa::Opcode::bra_relative>(),
+                                          std::array<Byte, 1>{self_branch});
+  constexpr auto body_code = isa::program(isa::opcode<isa::Opcode::leas_indexed>(),
+                                          std::array<Byte, 1>{0x9e},
+                                          isa::pshd,
+                                          isa::pshx,
+                                          isa::pshy,
+                                          isa::psha,
+                                          isa::pshb,
+                                          isa::pshc,
+                                          isa::pulc,
+                                          isa::pulb,
+                                          isa::pula,
+                                          isa::puly,
+                                          isa::pulx,
+                                          isa::puld,
+                                          isa::opcode<isa::Opcode::leas_indexed>(),
+                                          std::array<Byte, 1>{0x82},
+                                          isa::rts);
+  auto main = main_code;
+  auto body = body_code;
+  const std::array code{CodeSpan{.address = entry, .words = main},
+                        CodeSpan{.address = callee, .words = body}};
+  constexpr std::array roots{entry, Address{entry + 3}, callee};
+  const std::array versions{CodeVariant{.id = variant, .code = code, .entries = roots}};
+  const auto image = Core::compile({.variants = versions},
+                                   {.memory = {},
+                                    .interrupts = {},
+                                    .transitions = {},
+                                    .callbacks = {},
+                                    .bindings = {},
+                                    .topology = MemoryTopology::dynamic});
+  std::array<Byte, stack_bytes> data{};
+  std::array<Byte, stack_bytes> known{};
+  std::array memory{Ram{.first = entry, .bytes = main, .writable = false},
+                    Ram{.first = callee, .bytes = body, .writable = false},
+                    Ram{.first = stack, .bytes = data}};
+  constexpr std::array<unsigned, 16> costs{4, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 2, 5};
+  constexpr std::array<unsigned, 16> offsets{0, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 16, 0};
+  constexpr std::array<unsigned, 16> depth{2, 4, 6, 8, 10, 11, 12, 13, 12, 11, 10, 8, 6, 4, 2, 0};
+  constexpr Registers seed{
+      .pc = entry, .d = 0x1234, .x = 0x5678, .y = 0x9abc, .sp = stack + stack_bytes};
+  ReturnProbe probe;
+  Io io{.owner = &probe, .read = ReturnProbe::read, .read_word = ReturnProbe::word};
+  Core core(Memory::mapped(memory), &io);
+  for (const bool tracked : {false, true}) {
+    data.fill(0);
+    known.fill(0);
+    memory.back().known = tracked ? std::span(known) : std::span<Byte>{};
+    core.set_memory(Memory::mapped(memory));
+    core.install(image, variant);
+    core.set_registers(seed);
+    const auto origin = core.progress().estimated_cycles;
+    std::uint64_t elapsed = 0;
+    for (std::size_t index = 0; index < costs.size(); ++index) {
+      const auto state = core.state();
+      const auto progress = core.progress();
+      const auto saved = data;
+      const auto initialized = known;
+      require(core.foreground_prefix() == 0 &&
+                  core.channel_prefix(PrefixScope::foreground) == costs[index] &&
+                  core.state() == state && core.progress() == progress && data == saved &&
+                  known == initialized && probe.reads == 0,
+              "A private call/context/stack operation certifies exactly its native completion");
+      elapsed += costs[index];
+      const auto result = core.run_until(origin + elapsed);
+      auto expected = seed;
+      expected.pc =
+          index + 1 == costs.size() ? entry + 3 : static_cast<Address>(callee + offsets[index]);
+      expected.sp = static_cast<Address>(seed.sp - depth[index]);
+      require(result.retired == 1 && result.fault == Fault::none && core.registers() == expected &&
+                  core.progress().estimated_cycles == origin + elapsed && probe.reads == 0,
+              "Real JSR, LEAS, every push/pull width and RTS retain exact registers and cycles");
+    }
+    constexpr std::array<Byte, 13> frame{
+        0, 0x34, 0x12, 0x9a, 0xbc, 0x56, 0x78, 0x12, 0x34, 0, 0, 0x40, 3};
+    require(std::ranges::equal(std::span(data).last(frame.size()), frame) &&
+                elapsed == total_cycles,
+            "Native stack traffic preserves big-endian words, reserved locals and the return PC");
+    for (std::size_t index = 0; index < known.size(); ++index) {
+      const bool written = index >= stack_bytes - frame.size() && index != stack_bytes - 4 &&
+                           index != stack_bytes - 3;
+      require(known[index] == unsigned{tracked && written},
+              "Only real native stack stores initialize their exact tracked bytes");
+    }
+  }
+  for (unsigned index = 0; index < 2; ++index) {
+    known.fill(1);
+    known[stack_bytes - 2 + index] = 0;
+    return_failure(
+        core, probe, {.pc = static_cast<Address>(callee + body.size() - 1), .sp = seed.sp - 2}, 0);
+  }
+  for (unsigned layout = 0; layout < 3; ++layout) {
+    std::vector<Ram> regions(memory.begin(), memory.end() - 1);
+    regions.push_back(
+        {.first = stack,
+         .bytes = layout == 0 ? std::span(data) : std::span(data).first(stack_bytes - 1),
+         .writable = layout != 0});
+    if (layout == 2) {
+      regions.push_back({.first = stack + stack_bytes - 1, .bytes = std::span(data).last(1)});
+    }
+    core.set_memory(Memory::mapped(regions));
+    core.install(image, variant);
+    const auto saved = data;
+    call_failure(core, seed.sp);
+    require(data == saved, "A refused native call cannot partially publish its saved PC");
   }
 }
 
@@ -593,6 +725,7 @@ int main() try {
   waiting_prefix();
   layouts_and_boundaries();
   return_prefix();
+  local_stack_sequence();
   stack_counter();
   transfer_prefixes();
   asynchronous_entry();

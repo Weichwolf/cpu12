@@ -104,8 +104,11 @@ including conditional paths and mounted domains. Prove byte/knowledge planes
 disjoint at binding; native initialization writes then preserve known reads.
 End at pointer/context changes, indirect flow, possible validation faults or
 unproved accesses. Derive admission and native guards from the same semantics.
-Keep owner-free event admission distinct from channel admission. Bind explicit
-isolated access extents only when the consumer proves total accesses without peer-data
+Keep owner-free event admission distinct from channel admission. Prove
+single-operation channel bounds for pure context changes and private
+JSR/BSR, push/pull and RTS accesses. End at their real native completion; the
+successor requires a new proof. Keep owner-free queries and native accesses unchanged.
+Bind isolated access extents only when the consumer proves total accesses without peer-data
 effects or dependence on undelivered inputs, architectural/binding/knowledge
 changes or clock-rate changes. Allow progress/yield coordination and bound local
 input deadlines. Revoke these effects on installation/remap; retain actual native

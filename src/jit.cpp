@@ -403,7 +403,10 @@ std::uint64_t Jit::foreground_prefix(const State &state, const bool local) const
   return std::max({mapping.image->foreground_prefix(*source, pc),
                    mapping.guarded.prefix(pc, state.registers),
                    local ? mapping.local_reads.prefix(pc, state.registers) : 0,
-                   local ? mapping.local_effects.prefix(pc, state.registers) : 0});
+                   local ? mapping.local_effects.prefix(pc, state.registers) : 0,
+                   local && instruction != nullptr
+                       ? private_operation_prefix(*instruction, mapping.memory, state.registers.sp)
+                       : 0});
 }
 
 std::uint64_t
