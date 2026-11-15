@@ -6,8 +6,10 @@
 #include "interrupt_model.hpp"
 #include "isa.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
+#include <span>
 
 namespace cpu12::test::image {
 
@@ -24,15 +26,42 @@ void put_vector(Fixture &fixture, const Address target) {
   fixture.bytes[vector + 1] = static_cast<Byte>(target);
 }
 
+RunResult enter(Core &core, Fixture &fixture, const std::span<const Byte> instruction) {
+  const auto pc = core.registers().pc;
+  std::array<Byte, 4> code{};
+  std::ranges::copy(instruction, code.begin());
+  code[instruction.size()] = bra;
+  code[instruction.size() + 1] = backedge;
+  const auto program = std::span(code).first(instruction.size() + 2);
+  auto bytes = std::span(fixture.bytes).subspan(pc, program.size());
+  std::array<Byte, 4> original{};
+  std::ranges::copy(bytes, original.begin());
+  std::ranges::copy(program, bytes.begin());
+  const std::array spans{CodeSpan{.address = pc, .words = program}};
+  const std::array entries{pc};
+  const std::array variants{CodeVariant{.id = first_id, .code = spans, .entries = entries}};
+  const std::array layouts{VariantLayout{.id = first_id, .memory = layout}};
+  core.install(Core::compile({.variants = variants},
+                             {.memory = layouts,
+                              .interrupts = {},
+                              .transitions = {},
+                              .callbacks = {},
+                              .bindings = {}}),
+               first_id);
+  const auto result = core.run_instruction(instruction);
+  std::ranges::copy(std::span(original).first(bytes.size()), bytes.begin());
+  return result;
+}
+
 void seed_frame(Core &core, Fixture &fixture, const Frame frame) {
   core.set_registers(seed);
   if (frame == Frame::waiting) {
-    require(core.run_instruction(isa::wai).retired == 1 &&
+    require(enter(core, fixture, isa::wai).retired == 1 &&
                 core.state().execution == ExecutionState::waiting,
             "The cold handover fixture enters a genuine native WAI state");
   } else if (frame == Frame::returned) {
     frames::put(fixture.bytes, seed.sp, frames::encode(seed));
-    require(core.run_instruction(isa::rti).retired == 1 && core.state().returned_frame,
+    require(enter(core, fixture, isa::rti).retired == 1 && core.state().returned_frame,
             "The cold handover fixture opens a genuine native RTI return window");
   }
 }
@@ -98,7 +127,7 @@ void wake(const NativeImage &image, const bool remap) {
   auto before = seed;
   before.ccr |= 0x40;
   core.set_registers(before);
-  require(core.run_instruction(isa::stop).state == ExecutionState::stopped,
+  require(enter(core, fixture, isa::stop).state == ExecutionState::stopped,
           "The wake fixture enters the actual architectural STOP state");
   core.install(image, first_id);
   if (remap) { core.set_memory(fixture.memory()); }
@@ -130,7 +159,7 @@ void returned_instruction(const NativeImage &image) {
   before.pc = handler;
   frames::put(fixture.bytes, before.sp, frames::encode(before));
   core.set_registers(before);
-  require(core.run_instruction(isa::rti).retired == 1 && core.state().returned_frame,
+  require(enter(core, fixture, isa::rti).retired == 1 && core.state().returned_frame,
           "The return-window fixture must expose the actual pending-source poll boundary");
   core.install(image, first_id);
   const auto compiled = core.statistics().compiled_entries;

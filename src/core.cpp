@@ -3,7 +3,6 @@
 
 #include "cpu12/memory.hpp"
 #include "cycles.hpp"
-#include "fetch.hpp"
 #include "image.hpp"
 #include "jit.hpp"
 #include "jit/block.hpp"
@@ -139,19 +138,6 @@ public:
     return result;
   }
 
-  RunResult execute(const std::span<const std::uint8_t> bytes) {
-    RunResult result{.pc = context.cpu.registers.pc, .opcode = bytes[0]};
-    if (!jit.execute(bytes, context.cpu.registers, context)) {
-      result.fault = Fault::unsupported_instruction;
-    } else if (context.fault != Fault::none) {
-      return failed(result);
-    } else {
-      result.retired = 1;
-      result.state = context.cpu.execution;
-    }
-    return result;
-  }
-
   RunResult block_result(const detail::NativeResult native) {
     RunResult result{.retired = native.retired,
                      .state = context.cpu.execution,
@@ -165,43 +151,18 @@ public:
     return result;
   }
 
-  RunResult step() {
-    if (jit.requires_image()) {
-      return block_result(jit.run_prepared(1, context.cpu.registers, context));
-    }
-    RunResult result{.state = context.cpu.execution, .pc = context.cpu.registers.pc};
-    const auto capture = detail::fetch(jit.memory(), context, result.pc);
-    if (capture.size != 0) { result.opcode = capture.bytes[0]; }
-    if (context.fault != Fault::none) {
-      result = failed(result);
-    } else if (!capture.supported) {
-      result.fault = Fault::unsupported_instruction;
-    } else {
-      result = execute(std::span(capture.bytes).first(capture.size));
-    }
-    if (result.fault != Fault::none) { context.cpu.failure = result; }
-    return result;
-  }
-
-  [[gnu::always_inline]] RunResult segment(const std::uint32_t budget, bool &suffix) {
-    const auto block =
-        suffix ? std::nullopt : jit.run_block(budget, context.cpu.registers, context);
-    if (block && block->retired == 0 && context.fault == Fault::none && !jit.requires_image()) {
-      suffix = true;
-    }
-    return block && !suffix ? block_result(*block) : step();
-  }
+  RunResult step() { return block_result(jit.run_prepared(1, context.cpu.registers, context)); }
 
   template <bool Timed>
   [[gnu::always_inline]] RunResult run_native(const std::uint32_t instruction_budget) {
     RunResult result;
-    bool suffix = false;
     for (std::uint32_t retired = 0; retired < instruction_budget;) {
       constexpr unsigned interrupt_masks = 0x50;
       const auto masks =
           Timed ? static_cast<Byte>(context.cpu.registers.ccr & interrupt_masks) : Byte{};
       const auto delay = Timed ? context.cpu.irq_delay : Byte{};
-      result = segment(instruction_budget - retired, suffix);
+      result = block_result(
+          jit.run_prepared(instruction_budget - retired, context.cpu.registers, context));
       const auto count = result.retired;
       if constexpr (Timed) { observe_interrupt_boundary(masks, delay); }
       retired += result.retired;
@@ -429,23 +390,12 @@ RunResult Core::run_instruction(const std::span<const std::uint8_t> bytes) {
     result.fault = Fault::invalid_input;
     return result;
   }
-  if (impl_->jit.requires_image()) {
-    const auto pc = impl_->context.cpu.registers.pc;
-    if (impl_->jit.validate_instruction(pc, bytes) == Fault::invalid_input) {
-      result.fault = Fault::invalid_input;
-      return result;
-    }
-    return step();
+  const auto pc = impl_->context.cpu.registers.pc;
+  if (impl_->jit.validate_instruction(pc, bytes) == Fault::invalid_input) {
+    result.fault = Fault::invalid_input;
+    return result;
   }
-  impl_->active = true;
-  try {
-    result = impl_->execute(bytes);
-  } catch (...) {
-    impl_->active = false;
-    throw;
-  }
-  impl_->active = false;
-  return result;
+  return step();
 }
 
 RunResult Core::step() {

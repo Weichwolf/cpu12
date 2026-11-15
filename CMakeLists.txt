@@ -30,42 +30,10 @@ endforeach()
 option(CPU12_BUILD_TESTING "Build CPU12 library tests" ${PROJECT_IS_TOP_LEVEL})
 set(CMAKE_CXX_CLANG_TIDY "${CPU12_CLANG_TIDY};--warnings-as-errors=*")
 set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE ON)
-set(cpu12_host_sources
-  src/jit/block_emit.cpp
-  src/jit/clock.cpp
-  src/jit/run.cpp
-  src/jit/resident_plan.cpp
-  src/jit/resident_emit.cpp
-  src/jit/emitter.cpp
-  src/jit/indexed.cpp
-  src/jit/stack.cpp
-  src/jit/registers.cpp
-  src/jit/transfer.cpp
-  src/jit/memory_modify.cpp
-  src/jit/loop.cpp
-  src/jit/move.cpp
-  src/jit/math.cpp
-  src/jit/accumulator.cpp
-  src/jit/interrupt.cpp
-  src/jit/wait.cpp)
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(arm64|aarch64)$")
-  set(cpu12_host_sources
-    src/jit/a64/emitter.cpp
-    src/jit/a64/block.cpp
-    src/jit/a64/resident.cpp
-    src/jit/a64/liveness.cpp
-    src/jit/a64/region.cpp
-    src/jit/a64/grant.cpp
-    src/jit/resident_plan.cpp
-    src/jit/a64/memory.cpp
-    src/jit/a64/arithmetic.cpp
-    src/jit/a64/unary.cpp
-    src/jit/a64/control.cpp
-    src/jit/a64/move.cpp
-    src/jit/a64/stack.cpp
-    src/jit/a64/interrupt.cpp
-    src/jit/a64/math.cpp
-    src/jit/a64/run.cpp)
+  set(cpu12_host_sources src/jit/a64/run.cpp)
+else()
+  set(cpu12_host_sources src/jit/run.cpp)
 endif()
 add_library(cpu12_core STATIC
   src/core.cpp src/cycles.cpp src/image.cpp src/semantic.cpp
@@ -90,10 +58,7 @@ add_library(cpu12_core STATIC
   src/jit/llvm/artifact.cpp
   src/jit/llvm/abi.cpp src/jit/llvm/module.cpp src/jit/llvm/optimize.cpp
   src/jit/llvm/callbacks.cpp src/jit/llvm/runtime_bitcode.cpp
-  src/jit/block_parse.cpp src/jit/preparation.cpp src/jit/prefixes.cpp src/jit/guarded_prefixes.cpp src/jit/interrupt_prefix.cpp
-  src/jit/block_plan.cpp
-  src/jit/arena.cpp
-  src/jit/a64/code.cpp
+  src/jit/preparation.cpp src/jit/prefixes.cpp src/jit/guarded_prefixes.cpp src/jit/interrupt_prefix.cpp
   src/runtime.cpp
   ${cpu12_host_sources})
 add_library(cpu12::core ALIAS cpu12_core)
