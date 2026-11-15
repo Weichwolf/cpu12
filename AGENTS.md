@@ -6,6 +6,8 @@ the complete original Blofeld instrument in blofeld-emu at >=10x offline
 
 ## Fixed limits
 
+- Follow doc/core-contract.md, the contract shared by all cores. It wins over
+  this file and doc/architecture.md; change it only together with the other cores.
 - Preserve CPU12/HC12 semantics exactly: A/B/D overlaps, big-endian transfers, flags, stack, reset, IRQ/WAI/STOP/RTI and nominal cycles.
 - Unsupported or unprepared input fails explicitly with identity, address and
   reason. Never change a correct test to hide a defect.
