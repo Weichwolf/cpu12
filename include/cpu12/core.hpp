@@ -98,9 +98,15 @@ struct State {
 
 struct Progress {
   // Completed nominal internal-bus cycles, including accepted reset/IRQ entries.
-  // Monotonic for the Core lifetime; external waits belong to the owner.
+  // External waits belong to the owner; restore reinstates the saved cycle count.
   std::uint64_t estimated_cycles = 0;
   bool operator==(const Progress &) const = default;
+};
+
+struct Snapshot {
+  State state;
+  Progress progress;
+  bool operator==(const Snapshot &) const = default;
 };
 
 struct Statistics {
@@ -241,6 +247,8 @@ public:
   // A live read-only view, valid for this Core lifetime; inspect on the execution owner.
   [[nodiscard]] const State &state() const noexcept;
   [[nodiscard]] Progress progress() const noexcept;
+  [[nodiscard]] Snapshot save() const;
+  void restore(const Snapshot &snapshot);
   // Stopped-owner foreground guarantee in nominal cycles, excluding asynchronous IRQs.
   // State/code/binding changes invalidate it; zero is uncertified, UINT64_MAX is unbounded.
   // Executes no guest or bus I/O.

@@ -340,6 +340,29 @@ void Core::request_yield() noexcept {
   if (impl_->active) { impl_->context.yield_requested = true; }
 }
 
+Snapshot Core::save() const {
+  if (impl_->active) { throw std::logic_error("Cannot save active CPU12 execution"); }
+  return {.state = impl_->context.cpu, .progress = impl_->context.progress};
+}
+
+void Core::restore(const Snapshot &snapshot) {
+  if (impl_->active) { throw std::logic_error("Cannot restore active CPU12 execution"); }
+  if (snapshot.state.execution > ExecutionState::stopped ||
+      snapshot.state.failure.state > ExecutionState::stopped ||
+      snapshot.state.failure.fault > Fault::unprepared_execution) {
+    throw std::invalid_argument("Invalid CPU12 snapshot state");
+  }
+  auto &context = impl_->context;
+  context.cpu = snapshot.state;
+  context.progress = snapshot.progress;
+  context.fault = snapshot.state.failure.fault;
+  context.address = snapshot.state.failure.address;
+  context.value = snapshot.state.failure.value;
+  context.access_size = snapshot.state.failure.access_size;
+  context.read_mask = snapshot.state.failure.read_mask;
+  context.yield_requested = false;
+}
+
 void Core::set_registers(const Registers registers) {
   if (impl_->active) { throw std::logic_error("Cannot replace registers during CPU12 execution"); }
   if (impl_->jit.transition_pending()) {
