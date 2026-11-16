@@ -14,7 +14,6 @@ macOS uses brew install llvm@19 llvm ninja ccache. No foreign source builds.
 cmake --preset release
 cmake --build --preset release
 ctest --preset release
-cmake --build --preset release --target bench
 ```
 
 Release selects optimized code without sanitizers. strict selects Debug with
@@ -109,16 +108,10 @@ arithmetic inline and removes proved checks; Debug adds diagnostic instrumentati
 Both retain exact dynamic memory/device/fault behavior. Detailed preparation,
 binding and invalidation contracts belong in the target architecture.
 
-## Benchmarks and references
+## Verification and references
 
-Use independently authored fixtures and equivalent Clang19 O3 C++ references
-under the same CPU/features and exact numeric/state contract. Report preparation,
-coverage, cold/warm time, code size and API costs separately; verify complete
-results and prevent dead-code elimination. checksum/FFT host references and
-ASM/SIMD ratios are separate comparisons. JIT/host percent is
-100 * host_time / jit_time. Select cases with `CPU12_BENCH_FILTER`; fixtures live
-in test/bench/. Model clock ratios are not measured hardware speed, and isolated
-core results do not qualify whole-instrument throughput.
+CTest runs the installed-image suite, including state, memory/I/O, event and
+execution-boundary checks. It executes the prepared LLVM path.
 
 Primary references are indexed from [doc/architecture.md](doc/architecture.md).
 [License](LICENSE) · [Dependency notices](THIRD_PARTY.txt)
