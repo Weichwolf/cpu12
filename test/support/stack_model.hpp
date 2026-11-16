@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #pragma once
 #include "cpu12/core.hpp"
-#include "observed_core.hpp"
+#include "isa.hpp"
 
 #include <array>
 #include <cstddef>
@@ -33,20 +33,58 @@ struct StackOp {
   bool push;
 };
 
-constexpr std::array<StackOp, 13> operations{
-    {{.opcode = 0x30, .target = Target::x, .width = 2, .push = false},
-     {.opcode = 0x31, .target = Target::y, .width = 2, .push = false},
-     {.opcode = 0x32, .target = Target::a, .width = 1, .push = false},
-     {.opcode = 0x33, .target = Target::b, .width = 1, .push = false},
-     {.opcode = 0x34, .target = Target::x, .width = 2, .push = true},
-     {.opcode = 0x35, .target = Target::y, .width = 2, .push = true},
-     {.opcode = 0x36, .target = Target::a, .width = 1, .push = true},
-     {.opcode = 0x37, .target = Target::b, .width = 1, .push = true},
-     {.opcode = 0x38, .target = Target::ccr, .width = 1, .push = false},
-     {.opcode = 0x39, .target = Target::ccr, .width = 1, .push = true},
-     {.opcode = 0x3a, .target = Target::d, .width = 2, .push = false},
-     {.opcode = 0x3b, .target = Target::d, .width = 2, .push = true},
-     {.opcode = 0x3d, .target = Target::pc, .width = 2, .push = false}}};
+constexpr std::array<StackOp, 13> operations{{{.opcode = static_cast<Byte>(isa::Opcode::pulx),
+                                               .target = Target::x,
+                                               .width = 2,
+                                               .push = false},
+                                              {.opcode = static_cast<Byte>(isa::Opcode::puly),
+                                               .target = Target::y,
+                                               .width = 2,
+                                               .push = false},
+                                              {.opcode = static_cast<Byte>(isa::Opcode::pula),
+                                               .target = Target::a,
+                                               .width = 1,
+                                               .push = false},
+                                              {.opcode = static_cast<Byte>(isa::Opcode::pulb),
+                                               .target = Target::b,
+                                               .width = 1,
+                                               .push = false},
+                                              {.opcode = static_cast<Byte>(isa::Opcode::pshx),
+                                               .target = Target::x,
+                                               .width = 2,
+                                               .push = true},
+                                              {.opcode = static_cast<Byte>(isa::Opcode::pshy),
+                                               .target = Target::y,
+                                               .width = 2,
+                                               .push = true},
+                                              {.opcode = static_cast<Byte>(isa::Opcode::psha),
+                                               .target = Target::a,
+                                               .width = 1,
+                                               .push = true},
+                                              {.opcode = static_cast<Byte>(isa::Opcode::pshb),
+                                               .target = Target::b,
+                                               .width = 1,
+                                               .push = true},
+                                              {.opcode = static_cast<Byte>(isa::Opcode::pulc),
+                                               .target = Target::ccr,
+                                               .width = 1,
+                                               .push = false},
+                                              {.opcode = static_cast<Byte>(isa::Opcode::pshc),
+                                               .target = Target::ccr,
+                                               .width = 1,
+                                               .push = true},
+                                              {.opcode = static_cast<Byte>(isa::Opcode::puld),
+                                               .target = Target::d,
+                                               .width = 2,
+                                               .push = false},
+                                              {.opcode = static_cast<Byte>(isa::Opcode::pshd),
+                                               .target = Target::d,
+                                               .width = 2,
+                                               .push = true},
+                                              {.opcode = static_cast<Byte>(isa::Opcode::rts),
+                                               .target = Target::pc,
+                                               .width = 2,
+                                               .push = false}}};
 
 inline void require(const bool condition, const std::string_view message) {
   if (!condition) { throw std::runtime_error(std::string(message)); }
@@ -109,19 +147,31 @@ inline Registers expected(const StackOp operation, Registers before, const std::
   return before;
 }
 
-inline void retired(ObservedCore &core,
+inline void retired(Core &core,
                     const std::span<const Byte> code,
                     const Registers before,
                     const Registers wanted) {
   core.set_registers(before);
-  const auto result = core.run_instruction(code);
-  require(result.retired == 1 && result.fault == Fault::none && result.pc == before.pc &&
-              result.opcode == code[0] && core.registers() == wanted,
-          "Independent stack/call full-register expectation failed");
+  const auto result = core.run(1);
+  if (result.retired != 1 || result.fault != Fault::none || result.pc != before.pc ||
+      result.opcode != code[0] || core.registers() != wanted) {
+    const auto actual = core.registers();
+    throw std::runtime_error(
+        "Stack case=" + std::to_string(checked) + " opcode=" + std::to_string(code[0]) +
+        " beforePC=" + std::to_string(before.pc) + " beforeSP=" + std::to_string(before.sp) +
+        " wantedPC=" + std::to_string(wanted.pc) + " actualPC=" + std::to_string(actual.pc) +
+        " wantedSP=" + std::to_string(wanted.sp) + " actualSP=" + std::to_string(actual.sp) +
+        " wantedD=" + std::to_string(wanted.d) + " actualD=" + std::to_string(actual.d) +
+        " wantedX=" + std::to_string(wanted.x) + " actualX=" + std::to_string(actual.x) +
+        " wantedY=" + std::to_string(wanted.y) + " actualY=" + std::to_string(actual.y) +
+        " wantedCCR=" + std::to_string(wanted.ccr) + " actualCCR=" + std::to_string(actual.ccr) +
+        " retired=" + std::to_string(result.retired) +
+        " fault=" + std::to_string(static_cast<unsigned>(result.fault)));
+  }
   ++checked;
 }
 
-inline void call(ObservedCore &core,
+inline void call(Core &core,
                  const std::span<Byte> ram,
                  const std::span<const Byte> code,
                  const Registers before,

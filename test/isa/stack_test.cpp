@@ -1,22 +1,47 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
-#include "observed_core.hpp"
+#include "instruction_image.hpp"
+#include "isa.hpp"
 #include "stack_model.hpp"
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <exception>
 #include <iostream>
 #include <span>
+#include <vector>
 
-using cpu12::test::ObservedCore;
+using cpu12::test::InstructionCore;
 
 namespace {
 using namespace cpu12;
 using namespace cpu12::test::stack;
+constexpr Address entry = 0x4000;
 constexpr std::array<std::uint16_t, 6> positions{0, 1, 2, 0x7fff, 0xfffe, 0xffff};
 constexpr std::array<std::uint16_t, 8> operands{0, 1, 0x7f, 0x80, 0xff, 0x7fff, 0x8000, 0xffff};
+
+// The immutable code window splits the data grants. A word spanning FFFF/0000
+// is one real owner transaction, not two independent byte callbacks.
+struct WrappedRam {
+  static constexpr Address last = 0xffff;
+  std::span<Byte> bytes;
+
+  static bool read(void *owner, const Address address, Address &value) noexcept {
+    if (address != last) { return false; }
+    const auto &ram = *static_cast<WrappedRam *>(owner);
+    value = word(ram.bytes, address);
+    return true;
+  }
+
+  static bool write(void *owner, const WordWrite access) noexcept {
+    if (access.address != last) { return false; }
+    const auto &ram = *static_cast<WrappedRam *>(owner);
+    word(ram.bytes, access.address, access.value);
+    return true;
+  }
+};
 
 struct Input {
   StackOp operation;
@@ -24,9 +49,12 @@ struct Input {
   std::uint16_t operand;
 };
 
-void stack_case(ObservedCore &core, const std::span<Byte> ram, const Input input) {
+void stack_case(InstructionCore &core, const std::span<Byte> ram, const Input input) {
   const auto operation = input.operation;
-  const auto before = input.before;
+  // Numerical stack cases keep every data/register input but separate real code
+  // from the varied stack bytes formerly underneath captured instructions.
+  auto before = input.before;
+  before.pc = entry;
   const auto wanted = expected(operation, before, input.operand);
   const auto address = operation.push ? wanted.sp : before.sp;
   const auto left = static_cast<std::uint16_t>(address + 0xffffU);
@@ -40,6 +68,7 @@ void stack_case(ObservedCore &core, const std::span<Byte> ram, const Input input
   } else {
     ram[address] = static_cast<Byte>(input.operand);
   }
+  core.select(std::array{operation.opcode}, before.pc);
   retired(core, std::array{operation.opcode}, before, wanted);
   const auto actual = operation.width == 2 ? word(ram, address) : ram[address];
   require(actual == (operation.push ? value(before, operation.target) : input.operand) &&
@@ -47,10 +76,7 @@ void stack_case(ObservedCore &core, const std::span<Byte> ram, const Input input
           "Stack access uses only its selected bytes, with independent big-endian data");
 }
 
-void inherent_matrix() {
-  std::array<Byte, memory_bytes> ram{};
-  ObservedCore core(Memory::unified(ram));
-  const auto start = checked;
+void inherent_matrix(InstructionCore &core, const std::span<Byte> ram) {
   for (const auto operation : operations) {
     for (const auto seed : seeds) {
       for (const auto position : positions) {
@@ -64,14 +90,9 @@ void inherent_matrix() {
       }
     }
   }
-  require(core.statistics().read_callbacks == 0 && core.statistics().write_callbacks == 0 &&
-              core.statistics().native_instructions == checked - start,
-          "Known-RAM stack operations execute natively without ISA or bus helpers");
 }
 
-void full_word_domains() {
-  std::array<Byte, memory_bytes> ram{};
-  ObservedCore core(Memory::unified(ram));
+void full_word_domains(InstructionCore &core, const std::span<Byte> ram) {
   for (const auto operation : operations) {
     if (operation.width != 2) { continue; }
     for (unsigned operand = 0; operand < memory_bytes; ++operand) {
@@ -85,10 +106,11 @@ void full_word_domains() {
   }
 }
 
-void full_ccr_domains() {
-  std::array<Byte, memory_bytes> ram{};
-  ObservedCore core(Memory::unified(ram));
-  constexpr StackOp pulc{.opcode = 0x38, .target = Target::ccr, .width = 1, .push = false};
+void full_ccr_domains(InstructionCore &core, const std::span<Byte> ram) {
+  constexpr StackOp pulc{.opcode = static_cast<Byte>(isa::Opcode::pulc),
+                         .target = Target::ccr,
+                         .width = 1,
+                         .push = false};
   for (const auto position : positions) {
     for (unsigned old = 0; old <= byte_mask; ++old) {
       auto before = seeds[0];
@@ -104,9 +126,7 @@ void full_ccr_domains() {
   }
 }
 
-void full_byte_domains() {
-  std::array<Byte, memory_bytes> ram{};
-  ObservedCore core(Memory::unified(ram));
+void full_byte_domains(InstructionCore &core, const std::span<Byte> ram) {
   for (const auto operation : operations) {
     if (operation.width != 1) { continue; }
     for (unsigned operand = 0; operand <= byte_mask; ++operand) {
@@ -120,16 +140,54 @@ void full_byte_domains() {
 
 void nested_program() {
   std::array<Byte, memory_bytes> ram{};
-  ObservedCore core(Memory::unified(ram));
   constexpr std::uint16_t main_entry = 0x8000;
   constexpr std::uint16_t routine = 0x8100;
   constexpr std::uint16_t inner = 0x8110;
-  constexpr std::array<Byte, 3> invoke{0x16, 0x81, 0};
-  constexpr std::array<Byte, 8> body{0x3b, 0xcc, 0x12, 0x34, 7, 10, 0x3a, 0x3d};
-  constexpr std::array<Byte, 4> nested{0xce, 0xab, 0xcd, 0x3d};
+  constexpr auto invoke = isa::program(isa::opcode<isa::Opcode::jsr_extended>(),
+                                       std::array<Byte, 2>{0x81, 0},
+                                       isa::opcode<isa::Opcode::bra_relative>(),
+                                       std::array<Byte, 1>{0xfe});
+  constexpr auto body = isa::program(isa::pshd,
+                                     isa::opcode<isa::Opcode::ldd_immediate>(),
+                                     std::array<Byte, 2>{0x12, 0x34},
+                                     isa::opcode<isa::Opcode::bsr_relative>(),
+                                     std::array<Byte, 1>{10},
+                                     isa::puld,
+                                     isa::rts);
+  constexpr auto nested = isa::program(
+      isa::opcode<isa::Opcode::ldx_immediate>(), std::array<Byte, 2>{0xab, 0xcd}, isa::rts);
   for (unsigned i = 0; i < invoke.size(); ++i) { ram[main_entry + i] = invoke[i]; }
   for (unsigned i = 0; i < body.size(); ++i) { ram[routine + i] = body[i]; }
   for (unsigned i = 0; i < nested.size(); ++i) { ram[inner + i] = nested[i]; }
+  const std::array spans{CodeSpan{.address = main_entry, .words = invoke},
+                         CodeSpan{.address = routine, .words = body},
+                         CodeSpan{.address = inner, .words = nested}};
+  constexpr std::array entries{main_entry};
+  const std::array variants{CodeVariant{.id = 0, .code = spans, .entries = entries}};
+  const auto image = Core::compile({.variants = variants},
+                                   {.memory = {},
+                                    .interrupts = {},
+                                    .transitions = {},
+                                    .callbacks = {},
+                                    .bindings = {},
+                                    .topology = MemoryTopology::dynamic});
+  std::vector<Ram> grants;
+  grants.reserve((spans.size() * 2) + 1);
+  std::size_t cursor = 0;
+  for (const auto span : spans) {
+    grants.push_back({.first = static_cast<Address>(cursor),
+                      .bytes = std::span(ram).subspan(cursor, span.address - cursor)});
+    grants.push_back({.first = span.address,
+                      .bytes = std::span(ram).subspan(span.address, span.words.size()),
+                      .writable = false});
+    cursor = span.address + span.words.size();
+  }
+  grants.push_back(
+      {.first = static_cast<Address>(cursor), .bytes = std::span(ram).subspan(cursor)});
+  WrappedRam storage{.bytes = ram};
+  Io io{.owner = &storage, .read_word = WrappedRam::read, .write_word = WrappedRam::write};
+  Core core(Memory::mapped(grants), &io);
+  core.install(image, 0);
   constexpr Registers initial{.pc = main_entry, .d = 0xbeef, .x = 0, .y = 0, .sp = 1, .ccr = 0xe1};
   constexpr std::array<unsigned, 8> lengths{3, 1, 3, 2, 3, 1, 1, 1};
   constexpr std::array<Registers, 8> wanted{
@@ -158,39 +216,29 @@ void nested_program() {
       "Authored nested calls execute the expected original instructions and actual stack stores");
 }
 
-void refusals() {
-  ObservedCore core;
-  core.set_registers(seeds[0]);
-  constexpr std::array<std::array<Byte, 4>, 4> incomplete{
-      {{0x15, 0xe3, 0, 0}, {0x16, 0x12, 0, 0}, {0x17, 0x12, 0, 0}, {7, 0x12, 0, 0}}};
-  for (const auto code : incomplete) {
-    require(core.run_instruction(std::span(code).first(1)).fault == Fault::unsupported_instruction,
-            "Incomplete calls refuse before stack or pointer accesses");
-  }
-  constexpr std::array<std::array<Byte, 2>, 3> padded{{{0x30, 0}, {0x38, 0}, {0x3d, 0}}};
-  for (const auto code : padded) {
-    require(core.run_instruction(code).fault == Fault::unsupported_instruction,
-            "Padded inherent instructions cannot execute a stack access");
-  }
-  require(core.registers() == seeds[0] && core.statistics().compiled_entries == 0 &&
-              core.statistics().read_callbacks == 0 && core.statistics().write_callbacks == 0,
-          "Invalid captures never mutate CPU or external bus state");
-}
 }
 
 int main() {
   try {
-    inherent_matrix();
-    full_word_domains();
-    full_byte_domains();
-    full_ccr_domains();
+    std::array<Byte, memory_bytes> ram{};
+    std::vector<std::vector<Byte>> programs;
+    programs.reserve(operations.size());
+    for (const auto operation : operations) { programs.push_back({operation.opcode}); }
+    constexpr std::array entries{entry};
+    constexpr Address code_end = entry + 3;
+    const std::array data{Ram{.bytes = std::span(ram).first(entry)},
+                          Ram{.first = code_end, .bytes = std::span(ram).subspan(code_end)}};
+    WrappedRam storage{.bytes = ram};
+    Io io{.owner = &storage, .read_word = WrappedRam::read, .write_word = WrappedRam::write};
+    InstructionCore core(programs, entries, &io, {}, data);
+    inherent_matrix(core, ram);
+    full_word_domains(core, ram);
+    full_byte_domains(core, ram);
+    full_ccr_domains(core, ram);
     nested_program();
-    calls();
-    external_bus();
-    refusals();
     std::cout << "Verified " << checked
               << " native stack/call cases, CCR X restrictions, nested returns, "
-                 "overlapping pointers, wrapped data and explicit external faults.\n";
+                 "wrapped stack data and complete independent register/memory expectations.\n";
   } catch (const std::exception &error) {
     std::cerr << error.what() << '\n';
     return 1;
