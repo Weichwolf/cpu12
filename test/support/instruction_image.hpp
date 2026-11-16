@@ -13,6 +13,27 @@
 #include <vector>
 
 namespace cpu12::test {
+// One real big-endian word transaction crosses the split FFFF/0000 grants.
+struct WrappedRam {
+  static constexpr Address last = 0xffff;
+  std::span<Byte> bytes;
+
+  static bool read(void *owner, const Address address, Address &value) noexcept {
+    if (address != last) { return false; }
+    const auto &ram = *static_cast<WrappedRam *>(owner);
+    value = static_cast<Address>((static_cast<unsigned>(ram.bytes[address]) << 8) | ram.bytes[0]);
+    return true;
+  }
+
+  static bool write(void *owner, const WordWrite access) noexcept {
+    if (access.address != last) { return false; }
+    const auto &ram = *static_cast<WrappedRam *>(owner);
+    ram.bytes[access.address] = static_cast<Byte>(access.value >> 8);
+    ram.bytes[0] = static_cast<Byte>(access.value);
+    return true;
+  }
+};
+
 // Authored operations end in a real BRA loop, with explicit extra landings/data.
 // Every operation/PC is prepared up front and installed against its actual ROM.
 class InstructionCore : public Core {

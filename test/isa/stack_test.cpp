@@ -14,6 +14,7 @@
 #include <vector>
 
 using cpu12::test::InstructionCore;
+using cpu12::test::WrappedRam;
 
 namespace {
 using namespace cpu12;
@@ -21,27 +22,6 @@ using namespace cpu12::test::stack;
 constexpr Address entry = 0x4000;
 constexpr std::array<std::uint16_t, 6> positions{0, 1, 2, 0x7fff, 0xfffe, 0xffff};
 constexpr std::array<std::uint16_t, 8> operands{0, 1, 0x7f, 0x80, 0xff, 0x7fff, 0x8000, 0xffff};
-
-// The immutable code window splits the data grants. A word spanning FFFF/0000
-// is one real owner transaction, not two independent byte callbacks.
-struct WrappedRam {
-  static constexpr Address last = 0xffff;
-  std::span<Byte> bytes;
-
-  static bool read(void *owner, const Address address, Address &value) noexcept {
-    if (address != last) { return false; }
-    const auto &ram = *static_cast<WrappedRam *>(owner);
-    value = word(ram.bytes, address);
-    return true;
-  }
-
-  static bool write(void *owner, const WordWrite access) noexcept {
-    if (access.address != last) { return false; }
-    const auto &ram = *static_cast<WrappedRam *>(owner);
-    word(ram.bytes, access.address, access.value);
-    return true;
-  }
-};
 
 struct Input {
   StackOp operation;

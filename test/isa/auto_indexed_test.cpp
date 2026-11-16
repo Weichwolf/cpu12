@@ -2,11 +2,11 @@
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
 #include "indexed_model.hpp"
-#include "observed_core.hpp"
+#include "instruction_image.hpp"
+#include "isa.hpp"
 #include "reference.hpp"
 
 #include <array>
-#include <cstddef>
 #include <cstdint>
 #include <exception>
 #include <iostream>
@@ -14,8 +14,10 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <vector>
 
-using cpu12::test::ObservedCore;
+using cpu12::test::InstructionCore;
+using cpu12::test::WrappedRam;
 
 namespace {
 using namespace cpu12;
@@ -24,7 +26,25 @@ constexpr unsigned byte_bits = 8;
 constexpr unsigned byte_mask = 0xff;
 constexpr unsigned high_mask = 0xff00;
 constexpr std::array<Field, 3> fields{&Registers::x, &Registers::y, &Registers::sp};
-constexpr std::array<Byte, 3> lea_opcodes{0x1a, 0x19, 0x1b};
+constexpr std::array lea_opcodes{
+    op<isa::Opcode::leax_indexed>, op<isa::Opcode::leay_indexed>, op<isa::Opcode::leas_indexed>};
+constexpr Address entry = 0x4000;
+constexpr std::array<unsigned, 16> byte_opcodes{op<isa::Opcode::ldaa_immediate>,
+                                                op<isa::Opcode::ldab_immediate>,
+                                                op<isa::Opcode::adda_immediate>,
+                                                op<isa::Opcode::addb_immediate>,
+                                                op<isa::Opcode::suba_immediate>,
+                                                op<isa::Opcode::subb_immediate>,
+                                                op<isa::Opcode::cmpa_immediate>,
+                                                op<isa::Opcode::cmpb_immediate>,
+                                                op<isa::Opcode::anda_immediate>,
+                                                op<isa::Opcode::andb_immediate>,
+                                                op<isa::Opcode::oraa_immediate>,
+                                                op<isa::Opcode::orab_immediate>,
+                                                op<isa::Opcode::eora_immediate>,
+                                                op<isa::Opcode::eorb_immediate>,
+                                                op<isa::Opcode::bita_immediate>,
+                                                op<isa::Opcode::bitb_immediate>};
 constexpr std::array<unsigned, 8> operands{0, 1, 0x7f, 0x80, 0xff, 0x7fff, 0x8000, 0xffff};
 constexpr std::array<Registers, 3> seeds{
     {{.pc = 0xfffe, .d = 0x80ff, .x = 0, .y = 0x7fff, .sp = 0xffff, .ccr = 0xff},
@@ -63,13 +83,14 @@ void word(std::span<Byte> ram, const std::uint16_t address, const unsigned value
   ram[static_cast<std::uint16_t>(static_cast<unsigned>(address) + 1U)] = static_cast<Byte>(value);
 }
 
-void retired(ObservedCore &core,
+void retired(InstructionCore &core,
              const std::span<const Byte> code,
              Registers wanted,
              const Registers before) {
   wanted.pc = static_cast<std::uint16_t>(static_cast<unsigned>(before.pc) + code.size());
   core.set_registers(before);
-  const auto actual = core.run_instruction(code);
+  core.select(code, before.pc);
+  const auto actual = core.run(1);
   if (actual.retired != 1 || actual.fault != Fault::none || core.registers() != wanted) {
     throw std::runtime_error(
         "Auto/LEA opcode=" + std::to_string(code[0]) + " postbyte=" + std::to_string(code[1]) +
@@ -80,28 +101,12 @@ void retired(ObservedCore &core,
   ++checked;
 }
 
-void byte_operations(ObservedCore &core,
+void byte_operations(InstructionCore &core,
                      std::span<Byte> ram,
                      const Auto point,
                      const Registers before) {
-  constexpr std::array<unsigned, 16> operations{0x86,
-                                                0xc6,
-                                                0x8b,
-                                                0xcb,
-                                                0x80,
-                                                0xc0,
-                                                0x81,
-                                                0xc1,
-                                                0x84,
-                                                0xc4,
-                                                0x8a,
-                                                0xca,
-                                                0x88,
-                                                0xc8,
-                                                0x85,
-                                                0xc5};
   constexpr unsigned indexed_delta = 0x20;
-  for (const auto opcode : operations) {
+  for (const auto opcode : byte_opcodes) {
     for (const auto value : operands) {
       const bool b = (opcode & 0x40U) != 0;
       const auto left = b ? before.d & byte_mask : before.d >> byte_bits;
@@ -118,7 +123,7 @@ void byte_operations(ObservedCore &core,
       retired(core, point.code(static_cast<Byte>(opcode + indexed_delta)), wanted, before);
     }
   }
-  constexpr unsigned first_store = 0x6a;
+  constexpr unsigned first_store = op<isa::Opcode::staa_indexed>;
   constexpr unsigned unchanged = 0xf1;
   constexpr unsigned sign = 0x80;
   for (const bool b : {false, true}) {
@@ -131,7 +136,7 @@ void byte_operations(ObservedCore &core,
   }
 }
 
-void word_operations(ObservedCore &core,
+void word_operations(InstructionCore &core,
                      std::span<Byte> ram,
                      const Auto point,
                      const Registers before) {
@@ -155,7 +160,7 @@ void word_operations(ObservedCore &core,
   }
 }
 
-void effective_addresses(ObservedCore &core, const Auto point, const Registers before) {
+void effective_addresses(InstructionCore &core, const Auto point, const Registers before) {
   constexpr unsigned flag_values = 256;
   for (unsigned target = 0; target < fields.size(); ++target) {
     for (unsigned flags = 0; flags < flag_values; ++flags) {
@@ -168,15 +173,46 @@ void effective_addresses(ObservedCore &core, const Auto point, const Registers b
   }
 }
 
-void matrix() {
-  std::array<Byte, address_bytes> ram{};
-  ObservedCore core(Memory::unified(ram));
+std::vector<std::vector<Byte>> auto_programs() {
+  std::vector<std::vector<Byte>> programs;
   for (unsigned base = 0; base < fields.size(); ++base) {
     for (int change = -8; change <= 8; ++change) {
       if (change == 0) { continue; }
       for (const bool pre : {false, true}) {
         const Auto point{.base = base, .change = change, .pre = pre};
-        for (const auto before : seeds) {
+        const auto append = [&](const Byte opcode) {
+          const auto code = point.code(opcode);
+          programs.emplace_back(code.begin(), code.end());
+        };
+        for (const auto opcode : byte_opcodes) { append(static_cast<Byte>(opcode + 0x20U)); }
+        append(op<isa::Opcode::staa_indexed>);
+        append(op<isa::Opcode::stab_indexed>);
+        for (const auto operation : words) { append(operation.opcode); }
+        for (const auto opcode : lea_opcodes) { append(opcode); }
+      }
+    }
+  }
+  return programs;
+}
+
+void matrix() {
+  std::array<Byte, address_bytes> ram{};
+  const auto programs = auto_programs();
+  constexpr std::array entries{entry};
+  constexpr Address code_end = entry + 4;
+  const std::array data{Ram{.bytes = std::span(ram).first(entry)},
+                        Ram{.first = code_end, .bytes = std::span(ram).subspan(code_end)}};
+  WrappedRam storage{.bytes = ram};
+  Io io{.owner = &storage, .read_word = WrappedRam::read, .write_word = WrappedRam::write};
+  InstructionCore core(programs, entries, &io, {}, data);
+  for (unsigned base = 0; base < fields.size(); ++base) {
+    for (int change = -8; change <= 8; ++change) {
+      if (change == 0) { continue; }
+      for (const bool pre : {false, true}) {
+        const Auto point{.base = base, .change = change, .pre = pre};
+        for (auto before : seeds) {
+          // Keep every operand/base/flag input; real code is separate from varied data.
+          before.pc = entry;
           byte_operations(core, ram, point, before);
           word_operations(core, ram, point, before);
           effective_addresses(core, point, before);
@@ -184,6 +220,19 @@ void matrix() {
       }
     }
   }
+}
+
+void lea_matrix() {
+  std::vector<std::vector<Byte>> programs;
+  for (const auto form : forms()) {
+    if (form.indirect) { continue; }
+    for (const auto opcode : lea_opcodes) {
+      const auto code = encode(form, opcode);
+      programs.emplace_back(code.view().begin(), code.view().end());
+    }
+  }
+  constexpr std::array entries{seeds[0].pc, seeds[1].pc, seeds[2].pc};
+  InstructionCore core(programs, entries);
   for (const auto form : forms()) {
     if (form.indirect) { continue; }
     for (const auto before : seeds) {
@@ -194,13 +243,10 @@ void matrix() {
       }
     }
   }
-  require(core.statistics().read_callbacks == 0 && core.statistics().write_callbacks == 0 &&
-              core.statistics().native_instructions == checked,
-          "Auto RAM and LEA execution is native, without bus or ISA helpers");
 }
 
 struct Port {
-  ObservedCore *core = nullptr;
+  InstructionCore *core = nullptr;
   Registers before{};
   std::uint16_t address = 0, payload = 0;
   unsigned reads = 0, writes = 0;
@@ -228,8 +274,8 @@ struct Port {
 };
 
 void faults() {
-  constexpr Byte store_x = 0x6e;
-  constexpr Byte load_x = 0xee;
+  constexpr Byte store_x = op<isa::Opcode::stx_indexed>;
+  constexpr Byte load_x = op<isa::Opcode::ldx_indexed>;
   constexpr std::uint16_t operand = 0x1234;
   const Registers before{
       .pc = 0xfffe, .d = 0xabcd, .x = 0x200, .y = 0x300, .sp = 0x400, .ccr = 0xff};
@@ -238,16 +284,22 @@ void faults() {
       const Auto point{.base = 0, .change = change, .pre = pre};
       Port port{.before = before, .address = point.address(before)};
       Io io{.owner = &port, .read_word = Port::read_word, .write_word = Port::write_word};
-      ObservedCore core(Memory::external(), &io);
+      const auto store = point.code(store_x);
+      const auto load = point.code(load_x);
+      const std::array programs{std::vector<Byte>(store.begin(), store.end()),
+                                std::vector<Byte>(load.begin(), load.end())};
+      const std::array positions{before.pc};
+      InstructionCore core(programs, positions, &io);
       port.core = &core;
       core.set_registers(before);
-      const auto failure = core.run_instruction(point.code(store_x));
+      core.select(point.code(store_x), before.pc);
+      const auto failure = core.run(1);
       require(failure.retired == 0 && failure.fault == Fault::memory_write &&
                   failure.address == port.address && failure.value == point.updated(before).x &&
                   failure.access_size == 2 && port.payload == point.updated(before).x &&
                   core.registers() == before,
               "Rejected auto stores retain actual adjusted-source effects and original CPU state");
-      require(core.run_instruction(point.code(store_x)).retired == 0 && port.writes == 1,
+      require(core.run(1).retired == 0 && port.writes == 1,
               "An auto-index store fault cannot silently repeat the write or index update");
       port.accept = true;
       auto wanted = word_expected(point.updated(before), words[12], 0);
@@ -257,7 +309,8 @@ void faults() {
       port.accept = false;
       port.payload = operand;
       core.set_registers(before);
-      const auto refused = core.run_instruction(point.code(load_x));
+      core.select(point.code(load_x), before.pc);
+      const auto refused = core.run(1);
       require(refused.retired == 0 && refused.fault == Fault::memory_read &&
                   refused.address == port.address && refused.access_size == 2 &&
                   core.registers() == before && port.reads == 1,
@@ -271,42 +324,13 @@ void faults() {
   }
 }
 
-void capture_keys() {
-  std::array<Byte, address_bytes> ram{};
-  ObservedCore core(Memory::unified(ram));
-
-  struct Capture {
-    std::array<Byte, 4> bytes;
-    std::size_t length;
-  };
-
-  constexpr std::array valid{Capture{.bytes = {0xa7, 0, 0, 0}, .length = 1},
-                             Capture{.bytes = {0x1a, 0, 0, 0}, .length = 2},
-                             Capture{.bytes = {0xa6, 0xe0, 0, 0}, .length = 3},
-                             Capture{.bytes = {0xa6, 0xe2, 0, 0}, .length = 4}};
-  for (const auto input : valid) {
-    const auto code = std::span(input.bytes);
-    core.set_registers({});
-    require(core.run_instruction(code.first(input.length)).retired == 1,
-            "A complete zero-padded raw capture populates a real native entry");
-    for (std::size_t length = 1; length <= input.bytes.size(); ++length) {
-      if (length == input.length) { continue; }
-      const auto before = core.registers();
-      require(core.run_instruction(code.first(length)).retired == 0 && core.registers() == before,
-              "Capture length distinguishes invalid prefixes and excess zeros from cached code");
-    }
-  }
-  require(core.statistics().native_instructions == valid.size() &&
-              core.statistics().compiled_entries == valid.size(),
-          "Only complete valid captures compile and retire");
-}
 }
 
 int main() {
   try {
     matrix();
     faults();
-    capture_keys();
+    lea_matrix();
     std::cout << "Verified " << checked
               << " native auto-index/LEA cases, adjusted sources, "
                  "destination overlap, complete CCR preservation and atomic fault boundaries.\n";

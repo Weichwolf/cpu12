@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #pragma once
 #include "cpu12/core.hpp"
+#include "isa.hpp"
 
 #include <array>
 #include <cstddef>
@@ -107,21 +108,47 @@ struct WordOperation {
   Function function;
 };
 
+template <isa::Opcode operation> constexpr auto op = static_cast<std::uint8_t>(operation);
+
 inline constexpr std::array words{
-    WordOperation{.opcode = 0xec, .field = &Registers::d, .function = Function::load},
-    WordOperation{.opcode = 0xed, .field = &Registers::y, .function = Function::load},
-    WordOperation{.opcode = 0xee, .field = &Registers::x, .function = Function::load},
-    WordOperation{.opcode = 0xef, .field = &Registers::sp, .function = Function::load},
-    WordOperation{.opcode = 0xac, .field = &Registers::d, .function = Function::compare},
-    WordOperation{.opcode = 0xad, .field = &Registers::y, .function = Function::compare},
-    WordOperation{.opcode = 0xae, .field = &Registers::x, .function = Function::compare},
-    WordOperation{.opcode = 0xaf, .field = &Registers::sp, .function = Function::compare},
-    WordOperation{.opcode = 0xe3, .field = &Registers::d, .function = Function::add},
-    WordOperation{.opcode = 0xa3, .field = &Registers::d, .function = Function::subtract},
-    WordOperation{.opcode = 0x6c, .field = &Registers::d, .function = Function::store},
-    WordOperation{.opcode = 0x6d, .field = &Registers::y, .function = Function::store},
-    WordOperation{.opcode = 0x6e, .field = &Registers::x, .function = Function::store},
-    WordOperation{.opcode = 0x6f, .field = &Registers::sp, .function = Function::store}};
+    WordOperation{
+        .opcode = op<isa::Opcode::ldd_indexed>, .field = &Registers::d, .function = Function::load},
+    WordOperation{
+        .opcode = op<isa::Opcode::ldy_indexed>, .field = &Registers::y, .function = Function::load},
+    WordOperation{
+        .opcode = op<isa::Opcode::ldx_indexed>, .field = &Registers::x, .function = Function::load},
+    WordOperation{.opcode = op<isa::Opcode::lds_indexed>,
+                  .field = &Registers::sp,
+                  .function = Function::load},
+    WordOperation{.opcode = op<isa::Opcode::cpd_indexed>,
+                  .field = &Registers::d,
+                  .function = Function::compare},
+    WordOperation{.opcode = op<isa::Opcode::cpy_indexed>,
+                  .field = &Registers::y,
+                  .function = Function::compare},
+    WordOperation{.opcode = op<isa::Opcode::cpx_indexed>,
+                  .field = &Registers::x,
+                  .function = Function::compare},
+    WordOperation{.opcode = op<isa::Opcode::cps_indexed>,
+                  .field = &Registers::sp,
+                  .function = Function::compare},
+    WordOperation{
+        .opcode = op<isa::Opcode::addd_indexed>, .field = &Registers::d, .function = Function::add},
+    WordOperation{.opcode = op<isa::Opcode::subd_indexed>,
+                  .field = &Registers::d,
+                  .function = Function::subtract},
+    WordOperation{.opcode = op<isa::Opcode::std_indexed>,
+                  .field = &Registers::d,
+                  .function = Function::store},
+    WordOperation{.opcode = op<isa::Opcode::sty_indexed>,
+                  .field = &Registers::y,
+                  .function = Function::store},
+    WordOperation{.opcode = op<isa::Opcode::stx_indexed>,
+                  .field = &Registers::x,
+                  .function = Function::store},
+    WordOperation{.opcode = op<isa::Opcode::sts_indexed>,
+                  .field = &Registers::sp,
+                  .function = Function::store}};
 
 inline Registers
 word_expected(const Registers before, const WordOperation operation, const unsigned operand) {
