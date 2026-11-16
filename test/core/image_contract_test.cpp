@@ -4,11 +4,56 @@
 #include "cpu12/memory.hpp"
 #include "image_model.hpp"
 #include "image_support.hpp"
+#include "isa.hpp"
 
 #include <array>
+#include <cstdint>
+#include <limits>
 
 namespace cpu12::test::image {
 namespace {
+void query_after_execution() {
+  constexpr Address data_first = 0x5000;
+  constexpr Byte displacement = 0xfc;
+  constexpr Byte payload = 0x5a;
+  constexpr Address loaded = unsigned{payload} << byte_bits;
+  std::array<Byte, 4> code{static_cast<Byte>(isa::Opcode::ldaa_indexed), 0, bra, displacement};
+  std::array<Byte, 1> data{payload};
+  std::array<Byte, 1> known{};
+  const std::array spans{CodeSpan{.address = entry, .words = code}};
+  const std::array entries{entry};
+  const std::array variants{CodeVariant{.id = first_id, .code = spans, .entries = entries}};
+  const std::array regions{Ram{.first = entry, .bytes = code, .writable = false},
+                           Ram{.first = data_first, .bytes = data, .known = known}};
+  const std::array grants{RegionLayout{.first = entry, .size = code.size(), .writable = false},
+                          RegionLayout{.first = data_first, .size = data.size(), .tracked = true}};
+  const std::array layouts{VariantLayout{.id = first_id, .memory = grants}};
+  const auto image = Core::compile(
+      {.variants = variants},
+      {.memory = layouts, .interrupts = {}, .transitions = {}, .callbacks = {}, .bindings = {}});
+  Core core(Memory::mapped(regions));
+  core.install(image, first_id);
+  known[0] = 1;
+  core.set_registers({.pc = entry, .x = data_first});
+  const auto result = core.run(1);
+  require(result.fault == Fault::none && result.retired == 1 && core.registers().d == loaded,
+          "Native execution needs no preceding prefix query");
+  core.set_registers({.pc = entry, .x = data_first});
+  const auto state = core.state();
+  const auto time = core.progress();
+  const auto bytes = data;
+  constexpr auto infinite = std::numeric_limits<std::uint64_t>::max();
+  require(core.foreground_prefix() == infinite && core.state() == state &&
+              core.progress() == time && data == bytes,
+          "The first later query observes initialized storage without execution or owner effects");
+  known[0] = 0;
+  require(core.foreground_prefix() == 0,
+          "A cached storage predicate still rejects revoked knowledge");
+  known[0] = 1;
+  require(core.foreground_prefix() == infinite,
+          "Restored actual knowledge admits the same pure native loop");
+}
+
 void unknown_entry(Core &core, Fixture &fixture, const Address pc) {
   auto seed = initial;
   seed.pc = pc;
@@ -102,6 +147,7 @@ void indirect_gap(const NativeImage &image) {
 }
 
 void image_contracts() {
+  query_after_execution();
   const auto image = compile();
   Fixture fixture{Source(negative)};
   Core core(fixture.memory());

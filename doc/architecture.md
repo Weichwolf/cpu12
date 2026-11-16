@@ -91,6 +91,10 @@ or emission; no production interpreter or ordinary-emitter coverage fallback.
 
 ## Native code and validation
 
+Build storage-predicate graphs only for explicit stopped-owner prefix queries.
+Installing an image validates code and memory independently; native execution
+requires no prefix query or additional graph construction.
+
 Expose `Core::foreground_prefix()` as a stopped-owner guarantee in nominal
 cycles before a possible owner access or context boundary. Zero certifies nothing;
 an unbounded pure cycle is not an incoming-IRQ horizon. Relevant state, code or

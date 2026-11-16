@@ -98,7 +98,13 @@ struct Mapping {
   std::shared_ptr<const llvm19::ImageProgram> image;
   std::vector<std::uint64_t> variants;
   std::vector<InterruptRequest> interrupts;
-  GuardedPrefixes guarded, local_reads, local_effects;
+  mutable std::optional<GuardedPrefixes> guarded;
+  GuardedPrefixes local_reads, local_effects;
+
+  [[nodiscard]] const GuardedPrefixes &guarded_prefixes() const {
+    if (!guarded) { guarded.emplace(instructions(), memory); }
+    return *guarded;
+  }
 
   [[nodiscard]] const void *entry(const Address pc) const noexcept {
     const auto *page = native_regions[pc >> native_page_shift];
@@ -230,7 +236,6 @@ void Jit::install(std::shared_ptr<const llvm19::ImageProgram> image,
     throw std::invalid_argument("CPU12 image has no prepared STOP-wake entry");
   }
   mapping->blocks.emplace(stop_event_key, Entry{.code = wake});
-  mapping->guarded = GuardedPrefixes(mapping->instructions(), mapping->memory);
   impl_->current = std::move(mapping);
   impl_->pending.reset();
 }
@@ -280,7 +285,7 @@ Jit::foreground_prefix(const State &state, const bool local, const ChannelAccess
     return instruction_timing(*instruction).base;
   }
   return std::max({mapping.image->foreground_prefix(*source, pc),
-                   mapping.guarded.prefix(pc, state.registers),
+                   mapping.guarded_prefixes().prefix(pc, state.registers),
                    local ? mapping.local_reads.prefix(pc, state.registers) : 0,
                    local ? mapping.local_effects.prefix(pc, state.registers) : 0,
                    local && instruction != nullptr
