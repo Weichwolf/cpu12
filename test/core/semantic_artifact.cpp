@@ -10,6 +10,7 @@
 #include "llvm-c/Transforms/PassBuilder.h"
 #include "llvm-c/Types.h"
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/SHA256.h"
 
 #include <algorithm>
@@ -72,6 +73,18 @@ SemanticImage
 roundtrip(const CodeImage image, const CompileOptions options, SemanticImage producer) {
   require(builders != 0 && !Core::compiler_identity().empty() && !producer.artifact().empty(),
           "Cold lowering constructs LLVM IR and supplies a versioned artifact");
+  LLVMMemoryBufferRef runtime = nullptr;
+  char *message = nullptr;
+  const auto failed =
+      LLVMCreateMemoryBufferWithContentsOfFile(CPU12_RUNTIME_BITCODE, &runtime, &message);
+  if (message != nullptr) { LLVMDisposeMessage(message); }
+  require(failed == 0 && runtime != nullptr, "Read the actual packaged runtime IR input");
+  const auto runtime_hash = llvm::SHA256::hash(
+      llvm::ArrayRef(reinterpret_cast<const std::uint8_t *>(LLVMGetBufferStart(runtime)),
+                     LLVMGetBufferSize(runtime)));
+  LLVMDisposeMemoryBuffer(runtime);
+  require(Core::compiler_identity().ends_with(llvm::toHex(llvm::ArrayRef(runtime_hash), true)),
+          "Cheap compiler identity includes the exact host/build-specific runtime IR digest");
   const std::vector<std::byte> original(producer.artifact().begin(), producer.artifact().end());
   auto transport = original;
   const std::string identity(producer.identity());
@@ -90,17 +103,19 @@ roundtrip(const CodeImage image, const CompileOptions options, SemanticImage pro
        {std::size_t{0}, std::size_t{31}, original.size() / 2, original.size() - 1}) {
     rejected(image, options, std::span(original).first(size), "artifact");
   }
-  auto stale = original;
   const auto compiler = Core::compiler_identity();
-  const auto match = std::ranges::search(stale, std::as_bytes(std::span(compiler)));
-  require(!match.empty(), "Artifact records the cheap compiler identity");
-  *match.begin() ^= std::byte{1};
-  constexpr std::size_t digest_bytes = 32;
-  const auto payload = std::span(stale).subspan(digest_bytes);
-  const auto digest = llvm::SHA256::hash(
-      llvm::ArrayRef(reinterpret_cast<const std::uint8_t *>(payload.data()), payload.size()));
-  std::ranges::copy(std::as_bytes(std::span(digest)), stale.begin());
-  rejected(image, options, stale, "compiler identity mismatch");
+  for (const auto offset : {std::size_t{0}, compiler.size() - 1}) {
+    auto stale = original;
+    const auto match = std::ranges::search(stale, std::as_bytes(std::span(compiler)));
+    require(!match.empty(), "Artifact records the cheap compiler identity");
+    match.begin()[static_cast<std::ptrdiff_t>(offset)] ^= std::byte{1};
+    constexpr std::size_t digest_bytes = 32;
+    const auto payload = std::span(stale).subspan(digest_bytes);
+    const auto digest = llvm::SHA256::hash(
+        llvm::ArrayRef(reinterpret_cast<const std::uint8_t *>(payload.data()), payload.size()));
+    std::ranges::copy(std::as_bytes(std::span(digest)), stale.begin());
+    rejected(image, options, stale, "compiler identity mismatch");
+  }
 
   auto variants = std::vector(image.variants.begin(), image.variants.end());
   auto spans = std::vector(variants.front().code.begin(), variants.front().code.end());

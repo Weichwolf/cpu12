@@ -2,9 +2,9 @@
 #include "cpu12/core.hpp"
 #include "jit/llvm/identity.hpp"
 #include "jit/llvm/image.hpp"
+#include "runtime_identity.hpp"
 #include "semantic.hpp"
 #include "serialization.hpp"
-#include "source_identity.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -66,7 +66,7 @@ std::string fingerprint(const CodeImage image, const CompileOptions options) {
 }
 
 std::string_view Core::compiler_identity() noexcept {
-  return detail::llvm19::source_identity;
+  return detail::llvm19::artifact_identity;
 }
 
 SemanticImage Core::load(const CodeImage image,

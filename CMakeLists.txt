@@ -84,23 +84,6 @@ find_program(CPU12_LLVM_EXTRACT NAMES llvm-extract llvm-extract-19
   HINTS "${LLVM_TOOLS_BINARY_DIR}" REQUIRED NO_DEFAULT_PATH)
 find_program(CPU12_LLVM_LINK NAMES llvm-link llvm-link-19
   HINTS "${LLVM_TOOLS_BINARY_DIR}" REQUIRED NO_DEFAULT_PATH)
-set(cpu12_runtime_bitcode "${CMAKE_CURRENT_BINARY_DIR}/runtime_bitcode.inc")
-add_custom_command(OUTPUT "${cpu12_runtime_bitcode}"
-  COMMAND "${CPU12_LLVM_EXTRACT}" $<TARGET_OBJECTS:cpu12-core-bitcode>
-    --func=_ZNK5cpu124Core9registersEv --func=_ZNK5cpu124Core5stateEv
-    --func=_ZNK5cpu124Core8progressEv --func=_ZN5cpu124Core13request_yieldEv
-    -o "${CMAKE_CURRENT_BINARY_DIR}/core_interfaces.bc"
-  COMMAND "${CPU12_LLVM_LINK}" $<TARGET_OBJECTS:cpu12-runtime-bitcode>
-    "${CMAKE_CURRENT_BINARY_DIR}/core_interfaces.bc"
-    -o "${CMAKE_CURRENT_BINARY_DIR}/runtime.bc"
-  COMMAND "${CMAKE_COMMAND}" "-DINPUT=${CMAKE_CURRENT_BINARY_DIR}/runtime.bc"
-    "-DOUTPUT=${cpu12_runtime_bitcode}" -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedBitcode.cmake"
-  DEPENDS cpu12-runtime-bitcode cpu12-core-bitcode $<TARGET_OBJECTS:cpu12-runtime-bitcode>
-    $<TARGET_OBJECTS:cpu12-core-bitcode> cmake/EmbedBitcode.cmake
-  BYPRODUCTS "${CMAKE_CURRENT_BINARY_DIR}/core_interfaces.bc" "${CMAKE_CURRENT_BINARY_DIR}/runtime.bc"
-  VERBATIM)
-target_sources(cpu12_core PRIVATE "${cpu12_runtime_bitcode}")
-target_include_directories(cpu12_core PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
 file(GLOB_RECURSE cpu12_identity_files CONFIGURE_DEPENDS
   include/*.hpp src/*.hpp src/*.cpp cmake/*)
 list(APPEND cpu12_identity_files "${CMAKE_CURRENT_SOURCE_DIR}/CMakeLists.txt")
@@ -113,6 +96,25 @@ endforeach()
 string(SHA256 CPU12_SOURCE_ID "${cpu12_identity_input}")
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${cpu12_identity_files})
 configure_file(cmake/SourceIdentity.hpp.in source_identity.hpp @ONLY)
+set(cpu12_runtime_bitcode "${CMAKE_CURRENT_BINARY_DIR}/runtime_bitcode.inc")
+set(cpu12_runtime_identity "${CMAKE_CURRENT_BINARY_DIR}/runtime_identity.hpp")
+add_custom_command(OUTPUT "${cpu12_runtime_bitcode}" "${cpu12_runtime_identity}"
+  COMMAND "${CPU12_LLVM_EXTRACT}" $<TARGET_OBJECTS:cpu12-core-bitcode>
+    --func=_ZNK5cpu124Core9registersEv --func=_ZNK5cpu124Core5stateEv
+    --func=_ZNK5cpu124Core8progressEv --func=_ZN5cpu124Core13request_yieldEv
+    -o "${CMAKE_CURRENT_BINARY_DIR}/core_interfaces.bc"
+  COMMAND "${CPU12_LLVM_LINK}" $<TARGET_OBJECTS:cpu12-runtime-bitcode>
+    "${CMAKE_CURRENT_BINARY_DIR}/core_interfaces.bc"
+    -o "${CMAKE_CURRENT_BINARY_DIR}/runtime.bc"
+  COMMAND "${CMAKE_COMMAND}" "-DINPUT=${CMAKE_CURRENT_BINARY_DIR}/runtime.bc"
+    "-DOUTPUT=${cpu12_runtime_bitcode}" "-DOUTPUT_IDENTITY=${cpu12_runtime_identity}"
+    "-DIDENTITY=${CPU12_SOURCE_ID};${LLVM_PACKAGE_VERSION}" -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedBitcode.cmake"
+  DEPENDS cpu12-runtime-bitcode cpu12-core-bitcode $<TARGET_OBJECTS:cpu12-runtime-bitcode>
+    $<TARGET_OBJECTS:cpu12-core-bitcode> cmake/EmbedBitcode.cmake
+  BYPRODUCTS "${CMAKE_CURRENT_BINARY_DIR}/core_interfaces.bc" "${CMAKE_CURRENT_BINARY_DIR}/runtime.bc"
+  VERBATIM)
+target_sources(cpu12_core PRIVATE "${cpu12_runtime_bitcode}" "${cpu12_runtime_identity}")
+target_include_directories(cpu12_core PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
 if(NOT APPLE)
   target_link_options(cpu12_core PUBLIC -fuse-ld=lld)
 endif()
@@ -315,7 +317,8 @@ if(BUILD_TESTING AND CPU12_BUILD_TESTING)
   target_include_directories(cpu12-semantic-image-test SYSTEM PRIVATE ${LLVM_INCLUDE_DIRS})
   target_link_libraries(cpu12-semantic-image-test PRIVATE cpu12::core LLVM ${CMAKE_DL_LIBS})
   target_compile_definitions(cpu12-semantic-image-test PRIVATE
-    CPU12_PUBLIC_BINDINGS="$<TARGET_OBJECTS:cpu12-public-bindings>")
+    CPU12_PUBLIC_BINDINGS="$<TARGET_OBJECTS:cpu12-public-bindings>"
+    CPU12_RUNTIME_BITCODE="${CMAKE_CURRENT_BINARY_DIR}/runtime.bc")
   add_dependencies(cpu12-semantic-image-test cpu12-public-bindings)
   add_test(NAME public-semantic-images COMMAND cpu12-semantic-image-test)
   set_tests_properties(public-semantic-images PROPERTIES TIMEOUT 30)

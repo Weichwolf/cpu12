@@ -17,3 +17,6 @@ while(remaining GREATER 0)
 endwhile()
 string(APPEND output "}\n")
 file(WRITE "${OUTPUT}" "${output}")
+
+file(SHA256 "${INPUT}" digest)
+file(WRITE "${OUTPUT_IDENTITY}" "// SPDX-License-Identifier: GPL-3.0-only\n#pragma once\n#include <string_view>\nnamespace cpu12::detail::llvm19 {\ninline constexpr std::string_view artifact_identity = \"${IDENTITY};${digest}\";\n}\n")
