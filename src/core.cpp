@@ -11,7 +11,6 @@
 #include "runtime.hpp"
 #include "semantic.hpp"
 
-#include <algorithm>
 #include <array>
 #include <bit>
 #include <cstdint>
@@ -89,23 +88,6 @@ public:
   detail::Jit jit;
   bool active = false;
   bool deadline_active = false;
-  bool prefix_admitted = false;
-
-  [[nodiscard]] bool prefix_ready() const noexcept {
-    return !active && supported && prefix_admitted && context.cpu.failure.fault == Fault::none;
-  }
-
-  void admit_prefix_memory() noexcept {
-    const auto owner = std::bit_cast<std::uintptr_t>(this);
-    const auto outside = [&](const std::span<const Byte> bytes) {
-      if (bytes.empty()) { return true; }
-      const auto first = std::bit_cast<std::uintptr_t>(bytes.data());
-      return first <= owner ? owner - first >= bytes.size() : first - owner >= sizeof(*this);
-    };
-    prefix_admitted = std::ranges::all_of(jit.memory().regions(), [&](const Ram &region) {
-      return outside(region.bytes) && outside(region.known);
-    });
-  }
 
   void observe_interrupt_boundary(const Byte previous_masks, const Byte previous_delay) noexcept {
     constexpr unsigned masks = 0x50;
@@ -230,15 +212,9 @@ void Core::install(const NativeImage &image, const std::uint64_t variant) {
 void Core::install(const NativeImage &image, const std::span<const std::uint64_t> variants) {
   if (impl_->active) { throw std::logic_error("Cannot install an active CPU12 image"); }
   if (!image.impl_) { throw std::invalid_argument("Cannot install an empty CPU12 image"); }
-  impl_->jit.install(image.impl_->program, variants, image.impl_->interrupts);
-  impl_->admit_prefix_memory();
+  impl_->jit.install(image.impl_->program, image, variants, image.impl_->interrupts);
   impl_->context.memory_bindings = impl_->jit.bindings();
   impl_->context.memory_grants = impl_->jit.memory().regions();
-}
-
-void Core::isolate_accesses(const std::span<const LocalAccess> accesses) {
-  if (impl_->active) { throw std::logic_error("Cannot isolate active CPU12 accesses"); }
-  impl_->jit.isolate_accesses(accesses);
 }
 
 Registers Core::registers() const noexcept {
@@ -253,55 +229,15 @@ Progress Core::progress() const noexcept {
   return impl_->context.progress;
 }
 
-std::uint64_t Core::foreground_prefix() const {
-  const auto &state = impl_->context.cpu;
-  if (!impl_->prefix_ready() || state.execution != ExecutionState::running ||
-      state.returned_frame) {
-    return 0;
-  }
-  return impl_->jit.foreground_prefix(state);
-}
-
-std::uint64_t Core::event_prefix() const {
-  const auto &state = impl_->context.cpu;
-  if (!impl_->prefix_ready() ||
-      (state.execution != ExecutionState::running && state.execution != ExecutionState::waiting)) {
-    return 0;
-  }
-  return impl_->jit.event_prefix(state);
-}
-
-std::uint64_t Core::channel_prefix(const PrefixScope scope, const ChannelAccess access) const {
-  const auto &state = impl_->context.cpu;
-  if (!impl_->prefix_ready() ||
-      (state.execution != ExecutionState::running && state.execution != ExecutionState::waiting)) {
-    return 0;
-  }
-  if (scope == PrefixScope::events) { return impl_->jit.event_prefix(state, true, {}, access); }
-  if (scope != PrefixScope::foreground || state.execution != ExecutionState::running ||
-      state.returned_frame) {
-    return 0;
-  }
-  return impl_->jit.foreground_prefix(state, true, access);
-}
-
-std::uint64_t Core::channel_prefix(const std::span<const InterruptRequest> incoming,
-                                   const ChannelAccess access) const {
-  const auto &state = impl_->context.cpu;
-  if (!impl_->prefix_ready() ||
-      (state.execution != ExecutionState::running && state.execution != ExecutionState::waiting)) {
-    return 0;
-  }
-  return impl_->jit.event_prefix(state, true, incoming, access);
-}
-
 void Core::request_yield() noexcept {
   if (impl_->active) { impl_->context.yield_requested = true; }
 }
 
 Snapshot Core::save() const {
   if (impl_->active) { throw std::logic_error("Cannot save active CPU12 execution"); }
-  return {.state = impl_->context.cpu, .progress = impl_->context.progress};
+  return {.state = impl_->context.cpu,
+          .progress = impl_->context.progress,
+          .transfer = impl_->jit.transfer()};
 }
 
 void Core::restore(const Snapshot &snapshot) {
@@ -311,6 +247,12 @@ void Core::restore(const Snapshot &snapshot) {
       snapshot.state.failure.fault > Fault::unprepared_execution) {
     throw std::invalid_argument("Invalid CPU12 snapshot state");
   }
+  if (snapshot.transfer && (snapshot.transfer->image.report().prepared_entries == 0 ||
+                            snapshot.transfer->variants.empty() ||
+                            snapshot.transfer->entry != snapshot.state.registers.pc)) {
+    throw std::invalid_argument("Invalid CPU12 snapshot code transfer");
+  }
+  impl_->jit.restore_transfer(snapshot.transfer);
   auto &context = impl_->context;
   context.cpu = snapshot.state;
   context.progress = snapshot.progress;
@@ -338,7 +280,6 @@ void Core::set_registers(const Registers registers) {
 void Core::set_memory(const Memory memory) {
   if (impl_->active) { throw std::logic_error("Cannot remap active CPU12 memory"); }
   impl_->jit.set_memory(memory);
-  impl_->prefix_admitted = false;
   impl_->context.memory_bindings = impl_->jit.bindings();
   impl_->context.memory_grants = impl_->jit.memory().regions();
 }

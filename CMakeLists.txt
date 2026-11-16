@@ -58,7 +58,7 @@ add_library(cpu12_core STATIC
   src/jit/llvm/artifact.cpp
   src/jit/llvm/abi.cpp src/jit/llvm/module.cpp src/jit/llvm/optimize.cpp
   src/jit/llvm/callbacks.cpp src/jit/llvm/runtime_bitcode.cpp
-  src/jit/preparation.cpp src/jit/prefixes.cpp src/jit/guarded_prefixes.cpp src/jit/interrupt_prefix.cpp
+  src/jit/preparation.cpp
   src/runtime.cpp
   ${cpu12_host_sources})
 add_library(cpu12::core ALIAS cpu12_core)

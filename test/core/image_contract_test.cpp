@@ -7,12 +7,10 @@
 #include "isa.hpp"
 
 #include <array>
-#include <cstdint>
-#include <limits>
 
 namespace cpu12::test::image {
 namespace {
-void query_after_execution() {
+void initialized_data() {
   constexpr Address data_first = 0x5000;
   constexpr Byte displacement = 0xfc;
   constexpr Byte payload = 0x5a;
@@ -37,21 +35,15 @@ void query_after_execution() {
   core.set_registers({.pc = entry, .x = data_first});
   const auto result = core.run(1);
   require(result.fault == Fault::none && result.retired == 1 && core.registers().d == loaded,
-          "Native execution needs no preceding prefix query");
+          "Native execution observes data initialized after installation");
   core.set_registers({.pc = entry, .x = data_first});
-  const auto state = core.state();
-  const auto time = core.progress();
-  const auto bytes = data;
-  constexpr auto infinite = std::numeric_limits<std::uint64_t>::max();
-  require(core.foreground_prefix() == infinite && core.state() == state &&
-              core.progress() == time && data == bytes,
-          "The first later query observes initialized storage without execution or owner effects");
   known[0] = 0;
-  require(core.foreground_prefix() == 0,
-          "A cached storage predicate still rejects revoked knowledge");
+  require(core.run(1).fault == Fault::memory_read,
+          "A native load rejects actually revoked data knowledge");
   known[0] = 1;
-  require(core.foreground_prefix() == infinite,
-          "Restored actual knowledge admits the same pure native loop");
+  core.set_registers({.pc = entry, .x = data_first});
+  require(core.run(1).retired == 1 && core.registers().d == loaded,
+          "Restored actual knowledge permits the same native load");
 }
 
 void unknown_entry(Core &core, Fixture &fixture, const Address pc) {
@@ -147,7 +139,7 @@ void indirect_gap(const NativeImage &image) {
 }
 
 void image_contracts() {
-  query_after_execution();
+  initialized_data();
   const auto image = compile();
   Fixture fixture{Source(negative)};
   Core core(fixture.memory());

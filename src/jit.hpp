@@ -21,17 +21,12 @@ public:
   ~Jit();
   void set_memory(const Memory &memory);
   void install(std::shared_ptr<const llvm19::ImageProgram> image,
+               const NativeImage &owner,
                std::span<const std::uint64_t> variants,
                std::span<const InterruptRequest> interrupts);
-  void isolate_accesses(std::span<const LocalAccess> accesses);
   [[nodiscard]] bool transition_pending() const noexcept;
-  [[nodiscard]] std::uint64_t
-  foreground_prefix(const State &state, bool local = false, ChannelAccess access = {}) const;
-  [[nodiscard]] std::uint64_t
-  event_prefix(const State &state,
-               bool local = false,
-               std::optional<std::span<const InterruptRequest>> incoming = {},
-               ChannelAccess access = {}) const;
+  [[nodiscard]] const std::optional<Snapshot::Transfer> &transfer() const noexcept;
+  void restore_transfer(std::optional<Snapshot::Transfer> transfer);
   void cancel_transition() noexcept;
   [[nodiscard]] const Memory &memory() const noexcept;
   [[nodiscard]] const MemoryBinding *bindings() const noexcept;

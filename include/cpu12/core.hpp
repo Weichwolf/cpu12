@@ -6,8 +6,10 @@
 #include <cstdint>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string_view>
+#include <vector>
 
 namespace cpu12 {
 inline constexpr std::size_t maximum_capture_bytes = 6;
@@ -57,7 +59,6 @@ enum class Fault : std::uint8_t {
 };
 
 enum class ExecutionState : std::uint8_t { running, waiting, stopped };
-enum class PrefixScope : std::uint8_t { foreground, events };
 
 struct RunResult {
   std::uint32_t retired = 0;
@@ -103,12 +104,6 @@ struct Progress {
   bool operator==(const Progress &) const = default;
 };
 
-struct Snapshot {
-  State state;
-  Progress progress;
-  bool operator==(const Snapshot &) const = default;
-};
-
 struct PreparationReport {
   std::uint64_t prepared_entries = 0, unresolved_entries = 0, native_bytes = 0;
   RunResult failure;
@@ -138,18 +133,6 @@ struct RegionLayout {
 struct VariantLayout {
   std::uint64_t id;
   std::span<const RegionLayout> memory;
-};
-
-struct LocalAccess {
-  enum class Role : std::uint8_t { read, write, read_write };
-  Address first;
-  std::size_t size;
-  Role role = Role::read;
-};
-
-struct ChannelAccess {
-  std::span<const LocalAccess> ranges;
-  std::span<const ByteWrite> writes;
 };
 
 struct CodeTransition {
@@ -211,6 +194,7 @@ private:
 class NativeImage {
 public:
   NativeImage() = default;
+  bool operator==(const NativeImage &) const = default;
   [[nodiscard]] PreparationReport report() const noexcept;
 
 private:
@@ -218,6 +202,20 @@ private:
   explicit NativeImage(std::shared_ptr<const Impl> image) noexcept;
   std::shared_ptr<const Impl> impl_;
   friend class Core;
+};
+
+struct Snapshot {
+  struct Transfer {
+    NativeImage image;
+    std::vector<std::uint64_t> variants;
+    Address entry = 0;
+    bool operator==(const Transfer &) const = default;
+  };
+
+  State state;
+  Progress progress;
+  std::optional<Transfer> transfer;
+  bool operator==(const Snapshot &) const = default;
 };
 
 // The board owns clocks, pending-source arbitration and acknowledgement. Native
@@ -237,32 +235,12 @@ public:
   // Cold owner boundary: validate code/layout and bind RAM/events before publishing.
   void install(const NativeImage &image, std::uint64_t variant);
   void install(const NativeImage &image, std::span<const std::uint64_t> variants);
-  // Certify accesses as total and isolated from the chosen peer-data channel.
-  // Preserve architectural state, bound memory/knownness and clock rate; bound local inputs.
-  // Progress/yield coordination is allowed; writes end the prefix after their instruction.
-  // Install/remap revokes this description.
-  void isolate_accesses(std::span<const LocalAccess> accesses);
   [[nodiscard]] Registers registers() const noexcept;
   // A live read-only view, valid for this Core lifetime; inspect on the execution owner.
   [[nodiscard]] const State &state() const noexcept;
   [[nodiscard]] Progress progress() const noexcept;
   [[nodiscard]] Snapshot save() const;
   void restore(const Snapshot &snapshot);
-  // Stopped-owner foreground guarantee in nominal cycles, excluding asynchronous IRQs.
-  // State/code/binding changes invalidate it; zero is uncertified, UINT64_MAX is unbounded.
-  // Executes no guest or bus I/O.
-  [[nodiscard]] std::uint64_t foreground_prefix() const;
-  // Stopped-owner no-owner-access prefix including declared IRQ paths and return reuse.
-  // Uses current masks/bindings; conditional permission must stop at its first real input.
-  [[nodiscard]] std::uint64_t event_prefix() const;
-  // Event admission allowing the bound isolated accesses; native accesses remain unchanged.
-  // Query-local ranges and exact writes are owner-certified total/isolated now.
-  // A matching direct operand ends the prefix at its real instruction completion.
-  [[nodiscard]] std::uint64_t channel_prefix(PrefixScope scope = PrefixScope::events,
-                                             ChannelAccess access = {}) const;
-  // The owner bounds excluded IRQs by local deadlines; requests must be installed.
-  [[nodiscard]] std::uint64_t channel_prefix(std::span<const InterruptRequest> incoming,
-                                             ChannelAccess access = {}) const;
   // Clears a latched fault. Pending code transfers require installation or reset.
   void set_registers(Registers registers);
   // An installed image requires a matching install after every explicit remap.

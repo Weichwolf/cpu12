@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
+#include "image_transitions.hpp"
 #include "isa.hpp"
 
 #include <algorithm>
@@ -234,6 +235,50 @@ void faults_and_reentrancy(const NativeImage &image) {
   require(rejected && core.save() == failed && device.reads == reads,
           "Malformed snapshots fail before changing the processor");
 }
+
+void code_transfers() {
+  namespace transfer = cpu12::test::transitions;
+  constexpr std::uint32_t budget = 32;
+  constexpr std::uint32_t loader_instructions = 5;
+  const auto image = transfer::compile();
+  transfer::Fixture fixture;
+  Core core(fixture.memory());
+  core.install(image, transfer::from);
+  core.set_registers(transfer::seed);
+  const auto before = core.save();
+  require(core.run(budget).retired == loader_instructions, "Execute the actual loader handoff");
+  const auto pending = core.save();
+  if (!pending.transfer) { throw std::runtime_error("The snapshot omitted its pending transfer"); }
+  require(pending.transfer->image == image && pending.transfer->variants.size() == 1 &&
+              pending.transfer->variants[0] == transfer::to &&
+              pending.transfer->entry == transfer::destination,
+          "A pending snapshot owns the original native image and exact declared destinations");
+  core.restore(before);
+  require(core.save() == before && core.run(budget).retired == loader_instructions &&
+              core.save() == pending,
+          "Restoring a pre-transfer checkpoint clears the discarded future without reinstalling");
+  core.set_memory(fixture.memory(true));
+  core.install(image, transfer::to);
+  require(core.run(1).retired == 1, "Run the prepared target after its binding is admitted");
+  core.restore(pending);
+  const auto bytes = fixture.bytes;
+  require(core.save() == pending && core.run(budget).retired == 0 && core.save() == pending &&
+              fixture.bytes == bytes,
+          "Restoring a pending transfer restores its yield even after its target was executed");
+  core.install(pending.transfer->image, transfer::to);
+  require(core.run(1).retired == 1 && core.registers().pc == transfer::destination + 2,
+          "Only the consumer's declared target install resumes a restored transfer");
+  auto invalid = pending;
+  if (invalid.transfer) { invalid.transfer->variants.clear(); }
+  const auto completed = core.save();
+  bool rejected = false;
+  try {
+    core.restore(invalid);
+  } catch (const std::invalid_argument &) { rejected = true; }
+  require(rejected && core.save() == completed && fixture.bytes == bytes,
+          "A malformed transfer refuses transactionally without changing the binding or memory");
+}
+
 }
 
 int main() try {
@@ -251,6 +296,7 @@ int main() try {
   frames(image);
   stop(image);
   faults_and_reentrancy(image);
+  code_transfers();
 } catch (const std::exception &error) {
 
   std::cerr << error.what() << '\n';

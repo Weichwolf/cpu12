@@ -91,50 +91,13 @@ or emission; no production interpreter or ordinary-emitter coverage fallback.
 
 ## Native code and validation
 
-Build storage-predicate graphs only for explicit stopped-owner prefix queries.
-Installing an image validates code and memory independently; native execution
-requires no prefix query or additional graph construction.
+Validate code and storage at stopped-owner installation. Execute the prepared
+image directly; the consumer supplies event bounds and arbitrates sources.
 
-Expose `Core::foreground_prefix()` as a stopped-owner guarantee in nominal
-cycles before a possible owner access or context boundary. Zero certifies nothing;
-an unbounded pure cycle is not an incoming-IRQ horizon. Relevant state, code or
-binding changes invalidate the result. Admission changes no guest state or time.
-Admit WAI through its sleep boundary only when the full nine-byte stack frame
-belongs to private writable storage; tracked writes initialize their knownness.
-Admit RTI only through its eight-cycle completion when all nine saved bytes have
-one direct initialized grant. Retain the restored registers and return window;
-unknown, split or incomplete frames certify nothing. The successor needs its own proof.
-Expose `Core::event_prefix()` for conditional admission across a pending RTI poll
-or WAI: bound both foreground and every declared eligible IRQ path, including
-nested entries and mounted domains. Retain return-frame eligibility until the
-consumer has established the incoming ordering. End permission on the first real
-input; a future input does not become an IRQ at the earlier query time. Reuse
-installed validation and prepared metadata without decoding, hashing or executing.
-End a returned-frame prefix by the first following instruction's earliest boundary,
-where closing reuse can change later IRQ stack accesses.
-Bind shared address and initialization predicates for connected CFG groups whose
-index registers remain invariant. One predicate admits the complete stable loop,
-including conditional paths and mounted domains. Prove byte/knowledge planes
-disjoint at binding; native initialization writes then preserve known reads.
-End at pointer/context changes, indirect flow, possible validation faults or
-unproved accesses. Derive admission and native guards from the same semantics.
-Keep owner-free event admission distinct from channel admission. Prove
-single-operation channel bounds for pure context changes and private
-JSR/BSR, push/pull and RTS accesses. End at their real native completion; the
-successor requires a new proof. Keep owner-free queries and native accesses unchanged.
-Use actual-width register counts to bound private DBNE self-loops, including zero
-wrap. Retain every native iteration, cycle, flag and asynchronous IRQ boundary.
-Bind isolated access extents only when the consumer proves total accesses without peer-data
-effects or dependence on undelivered inputs, architectural/binding/knowledge
-changes or clock-rate changes. Allow progress/yield coordination and bound local
-input deadlines. Revoke these effects on installation/remap; retain actual native
-callbacks and faults. Queries never execute callbacks to predict their result.
-Allow the owner to supply the currently possible installed IRQ requests to
-channel admission. Bound excluded local sources by actual deadlines; retain
-mask/deferral, nested-entry and return-window rules. Refuse undeclared requests.
-Bind read/write roles explicitly. End an isolated write at its actual instruction
-completion and reconsider local deadlines before continuing. Keep independent
-read-only proofs so local-write contracts do not shorten ordinary RAM loops.
+Save complete processor state, including pending declared code transfers and
+their original native image ownership and destination variants. Restore exactly
+that continuation, clearing any transfer from discarded execution. Leave the
+installed image and consumer storage under consumer control.
 
 Build natural connected CFG/SSA regions, functions and loops, independent of
 quotas and catalogue entry density. Preserve all declared starts without turning

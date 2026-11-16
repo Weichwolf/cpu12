@@ -12,7 +12,6 @@
 #include "jit/llvm/lift.hpp"
 #include "jit/llvm/program.hpp"
 #include "jit/llvm/runtime_bitcode.hpp"
-#include "jit/prefixes.hpp"
 #include "serialization.hpp"
 #include "source_identity.hpp"
 
@@ -112,24 +111,9 @@ struct ImageSource {
       });
       if (!bindings.emplace(id, std::move(regions)).second) { ArtifactReader::fail(); }
     });
-    reader.sequence([&] {
-      const auto id = reader.integer();
-      std::map<Address, std::uint64_t> values;
-      reader.sequence([&] {
-        const auto pc = reader.integer<Address>();
-        const auto cycles = reader.integer();
-        if (!values.emplace(pc, cycles).second) { ArtifactReader::fail(); }
-      });
-      if (!prefixes.emplace(id, std::move(values)).second) { ArtifactReader::fail(); }
-    });
-    if (bindings.size() != plan.variants().size() || prefixes.size() != plan.variants().size()) {
-      ArtifactReader::fail();
-    }
+    if (bindings.size() != plan.variants().size()) { ArtifactReader::fail(); }
     for (const auto &variant : plan.variants()) {
-      if (!bindings.contains(variant.id) || !prefixes.contains(variant.id) ||
-          prefixes.at(variant.id).size() != variant.instructions.size()) {
-        ArtifactReader::fail();
-      }
+      if (!bindings.contains(variant.id)) { ArtifactReader::fail(); }
     }
   }
 
@@ -171,12 +155,6 @@ struct ImageSource {
                                       ": instruction has no LLVM lowering");
         }
       }
-      const auto memory = std::make_unique<CompilerMemory>(variant, found->second, topology);
-      prefixes.emplace(variant.id,
-                       foreground_prefixes(variant.instructions,
-                                           topology == MemoryTopology::dynamic
-                                               ? Memory::external()
-                                               : Memory::mapped(memory->memory)));
     }
   }
 
@@ -184,7 +162,6 @@ struct ImageSource {
   const std::vector<InterruptRequest> events;
   const MemoryTopology topology;
   std::map<std::uint64_t, std::vector<RegionLayout>> bindings;
-  std::map<std::uint64_t, std::map<Address, std::uint64_t>> prefixes;
 
   [[nodiscard]] std::string
   namespace_prefix(const std::span<const InterruptRequest> interrupts,
@@ -388,13 +365,6 @@ void ImageProgram::serialize(ArtifactWriter &writer) const {
       writer.integer(static_cast<std::uint64_t>(region.tracked));
     });
   });
-  writer.sequence(source.prefixes, [&](const auto &entry) {
-    writer.integer(entry.first);
-    writer.sequence(entry.second, [&](const auto &prefix) {
-      writer.integer(prefix.first);
-      writer.integer(prefix.second);
-    });
-  });
   writer.sequence(impl_->programs, [&](const auto &entry) {
     writer.integer(entry.first);
     entry.second->serialize(writer);
@@ -443,18 +413,6 @@ std::span<const ImagePlan::Variant> ImageProgram::variants() const noexcept {
 std::span<const RegionLayout> ImageProgram::layout(const std::uint64_t id) const {
   static_cast<void>(impl_->variant(id));
   return impl_->source->bindings.at(id);
-}
-
-std::uint64_t ImageProgram::foreground_prefix(const std::uint64_t id, const Address pc) const {
-  return impl_->source->prefixes.at(id).at(pc);
-}
-
-std::uint64_t ImageProgram::interrupt_entry_prefix(const std::uint64_t id,
-                                                   const State &state,
-                                                   const Memory &memory) const {
-  validate_binding(id, memory);
-  return detail::interrupt_entry_prefix(
-      state, memory, impl_->source->prefixes.at(id), impl_->source->events);
 }
 
 void ImageProgram::validate_binding(const std::uint64_t id, const Memory &memory) const {

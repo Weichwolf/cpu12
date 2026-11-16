@@ -246,8 +246,6 @@ void retained_owners() {
   const auto initial = seed(transfer_flags);
   first_owner.set_registers(initial);
   second_owner.set_registers(initial);
-  require(first_owner.event_prefix() > 0 && second_owner.event_prefix() > 0,
-          "Composed event admission retains the declared IRQ paths after image owners expire");
   constexpr unsigned count = 1024;
   require(first_owner.run(count).retired == count && second_owner.run(count).retired == count &&
               first_owner.registers() == predict(second, initial, count) &&
@@ -287,11 +285,10 @@ void returns() {
     Core core(f.memory());
     core.install(image, std::array{a, b});
     core.set_registers(seed(0));
-    const auto prefix = core.event_prefix();
     const auto result = core.run(16);
-    require(prefix > 0 && prefix <= 4 && result.fault == Fault::memory_read &&
-                result.retired == 2 && core.progress().estimated_cycles == 4,
-            "Composed admission ends before the actual unknown RTI frame read after LOAD1+JMP3");
+    require(result.fault == Fault::memory_read && result.retired == 2 &&
+                core.progress().estimated_cycles == 4,
+            "Native execution preserves the actual unknown RTI frame fault after LOAD1+JMP3");
   }
   for (unsigned flags = 0; flags < 256; ++flags) {
     constexpr unsigned mask_i = 0x10;
@@ -302,8 +299,6 @@ void returns() {
     core.install(image, (flags & 1U) == 0 ? std::array{a, b} : std::array{b, a});
     const auto before = seed(static_cast<Byte>(flags));
     core.set_registers(before);
-    require(core.event_prefix() > 0 && core.event_prefix() <= 4,
-            "Event admission resolves IRQ targets in the other mounted domain in either order");
     require(core.interrupt(events[0]).accepted &&
                 core.progress() == Progress{.estimated_cycles = irq_cycles},
             "Original mounted IRQ entry consumes nine nominal cycles");
@@ -312,9 +307,9 @@ void returns() {
                 core.state() == State{.registers = before, .failure = {}, .returned_frame = true} &&
                 core.progress() == Progress{.estimated_cycles = irq_cycles + rti_cycles},
             "RTI in another mounted domain restores the original full frame, flags and cycles");
-    require(core.event_prefix() == 1 && core.state().returned_frame &&
+    require(core.state().returned_frame &&
                 core.progress() == Progress{.estimated_cycles = irq_cycles + rti_cycles},
-            "Returned-frame event admission preserves the source poll before subsequent work");
+            "The returned frame retains its original cycles before subsequent work");
     require(core.run(1).retired == 1 && !core.state().returned_frame &&
                 core.registers() == predict(second, before, 1) &&
                 core.progress() == Progress{.estimated_cycles = irq_cycles + rti_cycles + 1},
