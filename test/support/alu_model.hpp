@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #pragma once
 #include "cpu12/core.hpp"
-#include "observed_core.hpp"
+#include "instruction_image.hpp"
 
 #include <cstdint>
 #include <span>
@@ -29,12 +29,13 @@ inline Registers accumulator(Registers before, const bool b, const unsigned valu
   return before;
 }
 
-inline void retired(ObservedCore &core,
+inline void retired(InstructionCore &core,
                     const std::span<const Byte> code,
                     const Registers before,
                     const Registers wanted) {
   core.set_registers(before);
-  const auto actual = core.run_instruction(code);
+  core.select(code, before.pc);
+  const auto actual = core.run(1);
   if (actual.retired != 1 || actual.fault != Fault::none || actual.pc != before.pc ||
       actual.opcode != code[0] || core.registers() != wanted) {
     const auto result = core.registers();
