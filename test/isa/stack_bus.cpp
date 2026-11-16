@@ -1,15 +1,36 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
-#include "observed_core.hpp"
+#include "instruction_image.hpp"
+#include "isa.hpp"
 #include "stack_model.hpp"
 
 #include <array>
 #include <cstdint>
 #include <span>
+#include <vector>
 
 namespace cpu12::test::stack {
 namespace {
+using cpu12::test::InstructionCore;
+constexpr Address entry = 0x4000;
+unsigned contexts = 0;
+
+constexpr Registers initial() {
+  auto result = seeds[0];
+  result.pc = entry;
+  return result;
+}
+
+InstructionCore prepared(const std::span<const Byte> code,
+                         Io &io,
+                         const std::span<const Ram> data = {},
+                         const std::span<const Address> landings = {}) {
+  const std::array operations{std::vector<Byte>(code.begin(), code.end())};
+  constexpr std::array positions{entry};
+  return {operations, positions, &io, landings, data};
+}
+
 struct Event {
   std::uint16_t address;
   unsigned width;
@@ -17,7 +38,7 @@ struct Event {
 };
 
 struct Port {
-  ObservedCore *core = nullptr;
+  Core *core = nullptr;
   Registers before{};
   std::array<Byte, memory_bytes> ram{};
   std::array<Event, 4> events{};
@@ -72,29 +93,30 @@ struct Port {
   }
 };
 
-void refusal(ObservedCore &core,
+void refusal(Core &core,
+             const Port &port,
              const std::span<const Byte> code,
              const Registers before,
              const RunResult fault) {
-  const auto result = core.run_instruction(code);
+  const auto result = core.run(1);
   require(
       result.retired == 0 && result.fault == fault.fault && result.pc == before.pc &&
           result.opcode == code[0] && result.address == fault.address &&
           result.value == fault.value && result.access_size == fault.access_size &&
           core.registers() == before,
       "Refused stack/call access must retain exact actual data, width, address and original CPU");
-  const auto count = core.statistics();
-  require(core.run_instruction(code).retired == 0 &&
-              core.statistics().read_callbacks == count.read_callbacks &&
-              core.statistics().write_callbacks == count.write_callbacks,
+  const auto count = port.used;
+  require(core.run(1).retired == 0 && port.used == count,
           "A latched stack/call fault cannot replay real external effects");
 }
 
 void inherent(const StackOp operation) {
   for (const bool accept : {false, true}) {
-    Port port{.before = seeds[0], .accept_read = accept, .accept_write = accept};
+    Port port{.before = initial(), .accept_read = accept, .accept_write = accept};
+    const std::array code{operation.opcode};
     auto io = port.io();
-    ObservedCore core(Memory::external(), &io);
+    auto core = prepared(code, io);
+    core.select(code, entry);
     port.core = &core;
     core.set_registers(port.before);
     constexpr std::uint16_t operand = 0x1234;
@@ -111,11 +133,12 @@ void inherent(const StackOp operation) {
       constexpr Byte previous = 0xa5;
       port.ram[address] = previous;
     }
-    const std::array code{operation.opcode};
+    ++contexts;
     if (accept) {
       retired(core, code, port.before, wanted);
     } else {
       refusal(core,
+              port,
               code,
               port.before,
               {.fault = operation.push ? Fault::memory_write : Fault::memory_read,
@@ -141,18 +164,21 @@ struct Acceptance {
 void indirect_case(const Acceptance acceptance) {
   constexpr std::uint16_t pointer = 0x2000;
   constexpr std::uint16_t target = 0x5432;
-  constexpr std::array<Byte, 4> code{0x15, 0xe3, 0, 0};
+  constexpr auto code =
+      isa::program(isa::opcode<isa::Opcode::jsr_indexed>(), std::array<Byte, 3>{0xe3, 0, 0});
   const auto read = acceptance.read;
   const auto write = acceptance.write;
-  Port port{.before = seeds[0], .accept_read = read, .accept_write = write};
+  Port port{.before = initial(), .accept_read = read, .accept_write = write};
   port.before.x = pointer;
   word(port.ram, pointer, target);
   auto io = port.io();
-  ObservedCore core(Memory::external(), &io);
+  auto core = prepared(code, io);
+  core.select(code, entry);
   port.core = &core;
   core.set_registers(port.before);
   const auto stack = static_cast<std::uint16_t>(static_cast<int>(port.before.sp) - 2);
   const auto return_pc = static_cast<std::uint16_t>(port.before.pc + code.size());
+  ++contexts;
   if (read && write) {
     auto wanted = port.before;
     wanted.pc = target;
@@ -160,6 +186,7 @@ void indirect_case(const Acceptance acceptance) {
     call(core, port.ram, code, port.before, wanted);
   } else {
     refusal(core,
+            port,
             code,
             port.before,
             {.fault = read ? Fault::memory_write : Fault::memory_read,
@@ -190,25 +217,38 @@ void ordinary_calls() {
     std::uint16_t target;
   };
 
-  constexpr std::array<Call, 4> calls{{{.code = {0x16, 0x12, 0x34}, .length = 3, .target = 0x1234},
-                                       {.code = {0x17, 0x56, 0}, .length = 2, .target = 0x56},
-                                       {.code = {7, 0xfe, 0}, .length = 2, .target = 0xfffe},
-                                       {.code = {0x15, 0, 0}, .length = 2, .target = 0x1234}}};
+  constexpr std::array<Call, 4> calls{
+      {{.code = {static_cast<Byte>(isa::Opcode::jsr_extended), 0x12, 0x34},
+        .length = 3,
+        .target = 0x1234},
+       {.code = {static_cast<Byte>(isa::Opcode::jsr_direct), 0x56, 0}, .length = 2, .target = 0x56},
+       {.code = {static_cast<Byte>(isa::Opcode::bsr_relative), 0xfe, 0},
+        .length = 2,
+        .target = entry},
+       {.code = {static_cast<Byte>(isa::Opcode::jsr_indexed), 0, 0},
+        .length = 2,
+        .target = 0x1234}}};
   for (const auto point : calls) {
     for (const bool accept : {false, true}) {
-      Port port{.before = seeds[0], .accept_write = accept};
+      Port port{.before = initial(), .accept_write = accept};
+      const auto code = std::span(point.code).first(point.length);
       auto io = port.io();
-      ObservedCore core(Memory::external(), &io);
+      const std::array landings{point.target};
+      const auto targets =
+          point.target == entry ? std::span<const Address>{} : std::span<const Address>(landings);
+      auto core = prepared(code, io, {}, targets);
+      core.select(code, entry);
       port.core = &core;
       core.set_registers(port.before);
-      const auto code = std::span(point.code).first(point.length);
       auto wanted = port.before;
       wanted.pc = point.target;
       wanted.sp = static_cast<std::uint16_t>(static_cast<int>(wanted.sp) - 2);
+      ++contexts;
       if (accept) {
         call(core, port.ram, code, port.before, wanted);
       } else {
         refusal(core,
+                port,
                 code,
                 port.before,
                 {.fault = Fault::memory_write,
@@ -217,8 +257,7 @@ void ordinary_calls() {
                  .access_size = 2});
       }
       require(port.observed && port.used == 1 && port.events[0].write &&
-                  port.events[0].address == wanted.sp && port.events[0].width == 2 &&
-                  core.statistics().read_callbacks == 0,
+                  port.events[0].address == wanted.sp && port.events[0].width == 2,
               "Ordinary calls perform exactly the return-stack write and no target data read");
     }
   }
@@ -226,24 +265,30 @@ void ordinary_calls() {
 
 void window_seams() {
   constexpr std::uint16_t first = 0xffff;
-  constexpr StackOp push_x{.opcode = 0x34, .target = Target::x, .width = 2, .push = true};
+  constexpr StackOp push_x{.opcode = static_cast<Byte>(isa::Opcode::pshx),
+                           .target = Target::x,
+                           .width = 2,
+                           .push = true};
   for (const bool accept : {false, true}) {
-    Port port{.before = seeds[0], .accept_write = accept};
+    Port port{.before = initial(), .accept_write = accept};
     auto io = port.io();
-    ObservedCore core(
-        Memory::window({.first = first, .bytes = std::span(port.ram).subspan(first, 1)}), &io);
+    const std::array code{push_x.opcode};
+    const std::array grants{Ram{.first = first, .bytes = std::span(port.ram).subspan(first, 1)}};
+    auto core = prepared(code, io, grants);
+    core.select(code, entry);
     port.core = &core;
     core.set_registers(port.before);
     constexpr Byte untouched = 0xa5;
     port.ram[0] = untouched;
     const auto wanted = expected(push_x, port.before, 0);
-    const std::array code{push_x.opcode};
+    ++contexts;
     if (accept) {
       retired(core, code, port.before, wanted);
       require(word(port.ram, first) == port.before.x,
               "Accepted seam write stores the actual source word");
     } else {
       refusal(core,
+              port,
               code,
               port.before,
               {.fault = Fault::memory_write,
@@ -260,10 +305,11 @@ void window_seams() {
 }
 }
 
-void external_bus() {
+unsigned external_bus() {
   for (const auto operation : operations) { inherent(operation); }
   indirect_call();
   ordinary_calls();
   window_seams();
+  return contexts;
 }
 }

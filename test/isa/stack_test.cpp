@@ -236,9 +236,11 @@ int main() {
     full_byte_domains(core, ram);
     full_ccr_domains(core, ram);
     nested_program();
+    const auto contexts = external_bus();
     std::cout << "Verified " << checked
               << " native stack/call cases, CCR X restrictions, nested returns, "
-                 "wrapped stack data and complete independent register/memory expectations.\n";
+                 "wrapped stack data and complete independent register/memory expectations; "
+              << contexts << " external access contexts.\n";
   } catch (const std::exception &error) {
     std::cerr << error.what() << '\n';
     return 1;

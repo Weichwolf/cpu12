@@ -182,5 +182,5 @@ inline void call(Core &core,
 }
 
 void calls();
-void external_bus();
+unsigned external_bus();
 }
