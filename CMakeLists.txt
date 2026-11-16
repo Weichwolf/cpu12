@@ -36,7 +36,7 @@ else()
   set(cpu12_host_sources src/jit/run.cpp)
 endif()
 add_library(cpu12_core STATIC
-  src/core.cpp src/cycles.cpp src/image.cpp src/semantic.cpp
+  src/core.cpp src/cycles.cpp src/image.cpp src/semantic.cpp src/semantic_artifact.cpp
   src/fetch.cpp src/immutable.cpp
   src/decode.cpp
   src/indexed.cpp
@@ -310,7 +310,7 @@ if(BUILD_TESTING AND CPU12_BUILD_TESTING)
   add_test(NAME complete-code-images COMMAND cpu12-image-test)
   set_tests_properties(complete-code-images PROPERTIES TIMEOUT 30)
   add_executable(cpu12-semantic-image-test test/core/semantic_test.cpp test/core/semantic_native.cpp
-    test/core/semantic_calls.cpp test/core/semantic_callbacks.cpp)
+    test/core/semantic_calls.cpp test/core/semantic_callbacks.cpp test/core/semantic_artifact.cpp)
   target_include_directories(cpu12-semantic-image-test PRIVATE test/support)
   target_include_directories(cpu12-semantic-image-test SYSTEM PRIVATE ${LLVM_INCLUDE_DIRS})
   target_link_libraries(cpu12-semantic-image-test PRIVATE cpu12::core LLVM ${CMAKE_DL_LIBS})

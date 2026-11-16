@@ -51,15 +51,16 @@ template <Address Input> SemanticImage lower(const MemoryTopology topology) {
   const std::array variants{CodeVariant{.id = variant, .code = source, .entries = roots}};
   const std::array regions{RegionLayout{.first = entry, .size = bytes.size(), .writable = false}};
   const std::array layouts{VariantLayout{.id = variant, .memory = regions}};
-  return Core::lower({.variants = variants},
-                     {.memory = topology == MemoryTopology::fixed
-                                    ? std::span<const VariantLayout>(layouts)
-                                    : std::span<const VariantLayout>{},
-                      .interrupts = {},
-                      .transitions = {},
-                      .callbacks = callbacks,
-                      .bindings = {},
-                      .topology = topology});
+  const CodeImage image{.variants = variants};
+  const CompileOptions options{.memory = topology == MemoryTopology::fixed
+                                             ? std::span<const VariantLayout>(layouts)
+                                             : std::span<const VariantLayout>{},
+                               .interrupts = {},
+                               .transitions = {},
+                               .callbacks = callbacks,
+                               .bindings = {},
+                               .topology = topology};
+  return roundtrip(image, options, Core::lower(image, options));
 }
 
 std::vector<std::byte> host_ir() {
@@ -362,6 +363,7 @@ int main() {
       cpu12::test::semantic::lifetime(topology);
       cpu12::test::semantic::standalone(topology);
     }
+    cpu12::test::semantic::artifact_events(cpu12::test::semantic::host_ir());
     cpu12::test::semantic::callback_roles(cpu12::test::semantic::host_ir());
     std::cout << "Verified public lower/bind, one independent native owner, exact I/O/state and "
                  "resource lifetime.\n";

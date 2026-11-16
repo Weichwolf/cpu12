@@ -10,6 +10,8 @@
 #include <vector>
 
 namespace cpu12::detail {
+class ArtifactReader;
+class ArtifactWriter;
 using cpu12::CodeImage;
 using cpu12::CodeSpan;
 using cpu12::CodeVariant;
@@ -18,6 +20,8 @@ using CodeTargets = std::map<Address, std::vector<std::uint64_t>>;
 class ImagePlan {
 public:
   explicit ImagePlan(CodeImage image, std::span<const CodeTransition> transitions = {});
+  explicit ImagePlan(ArtifactReader &reader);
+  void serialize(ArtifactWriter &writer) const;
 
   struct Variant {
     struct Source {

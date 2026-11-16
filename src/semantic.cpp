@@ -73,13 +73,16 @@ void add_export(std::map<std::string, std::string> &exports,
 }
 }
 
-SemanticImage::Impl::Impl(const CodeImage image, const CompileOptions options)
+SemanticImage::Impl::Impl(const CompileOptions options)
     : interrupts(checked_interrupts(options.interrupts)) {
   callback_names.reserve(options.callbacks.size());
   for (const auto binding : options.callbacks) { callback_names.emplace_back(binding.symbol); }
   for (std::size_t i = 0; i < options.callbacks.size(); ++i) {
     callbacks.push_back({.role = options.callbacks[i].role, .symbol = callback_names[i]});
   }
+}
+
+SemanticImage::Impl::Impl(const CodeImage image, const CompileOptions options) : Impl(options) {
   program =
       std::make_shared<const detail::llvm19::ImageProgram>(image,
                                                            options.memory,
@@ -123,6 +126,7 @@ SemanticImage::Impl::Impl(const CodeImage image, const CompileOptions options)
     hash.add(abi);
   }
   identity = hash.finish();
+  serialize(image, options);
 }
 
 SemanticImage::SemanticImage(std::shared_ptr<const Impl> image) noexcept

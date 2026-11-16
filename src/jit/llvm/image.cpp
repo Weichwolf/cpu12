@@ -13,6 +13,7 @@
 #include "jit/llvm/program.hpp"
 #include "jit/llvm/runtime_bitcode.hpp"
 #include "jit/prefixes.hpp"
+#include "serialization.hpp"
 #include "source_identity.hpp"
 
 #include "llvm/Config/llvm-config.h"
@@ -30,6 +31,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace cpu12::detail::llvm19 {
@@ -78,7 +80,59 @@ bool same_layout(const std::span<const RegionLayout> layout, const Memory &memor
 }
 
 namespace {
+std::vector<InterruptRequest> read_events(ArtifactReader &reader) {
+  std::vector<InterruptRequest> events;
+  reader.sequence([&] {
+    const auto vector = reader.integer<Address>();
+    const auto kind = reader.integer<unsigned>();
+    if (kind > static_cast<unsigned>(InterruptKind::xirq)) { ArtifactReader::fail(); }
+    events.push_back({.vector = vector, .kind = static_cast<InterruptKind>(kind)});
+  });
+  return events;
+}
+
 struct ImageSource {
+  explicit ImageSource(ArtifactReader &reader)
+      : plan(reader),
+        events(read_events(reader)),
+        topology(static_cast<MemoryTopology>(reader.integer<Byte>())) {
+    if (topology != MemoryTopology::fixed && topology != MemoryTopology::dynamic) {
+      ArtifactReader::fail();
+    }
+    reader.sequence([&] {
+      const auto id = reader.integer();
+      std::vector<RegionLayout> regions;
+      reader.sequence([&] {
+        const auto first = reader.integer<Address>();
+        const auto size = reader.integer<std::size_t>();
+        const bool writable = reader.boolean();
+        const bool tracked = reader.boolean();
+        if (size == 0 || size > address_bytes - first) { ArtifactReader::fail(); }
+        regions.push_back({.first = first, .size = size, .writable = writable, .tracked = tracked});
+      });
+      if (!bindings.emplace(id, std::move(regions)).second) { ArtifactReader::fail(); }
+    });
+    reader.sequence([&] {
+      const auto id = reader.integer();
+      std::map<Address, std::uint64_t> values;
+      reader.sequence([&] {
+        const auto pc = reader.integer<Address>();
+        const auto cycles = reader.integer();
+        if (!values.emplace(pc, cycles).second) { ArtifactReader::fail(); }
+      });
+      if (!prefixes.emplace(id, std::move(values)).second) { ArtifactReader::fail(); }
+    });
+    if (bindings.size() != plan.variants().size() || prefixes.size() != plan.variants().size()) {
+      ArtifactReader::fail();
+    }
+    for (const auto &variant : plan.variants()) {
+      if (!bindings.contains(variant.id) || !prefixes.contains(variant.id) ||
+          prefixes.at(variant.id).size() != variant.instructions.size()) {
+        ArtifactReader::fail();
+      }
+    }
+  }
+
   ImageSource(const CodeImage image,
               const std::span<const VariantLayout> layouts,
               const std::span<const CodeTransition> transitions,
@@ -188,6 +242,24 @@ public:
     NativeIndex index{};
   };
 
+  explicit Impl(ArtifactReader &reader) : source(std::make_shared<const ImageSource>(reader)) {
+    reader.sequence([&] {
+      const auto id = reader.integer();
+      if (!programs.emplace(id, std::make_unique<Program>(reader)).second) {
+        ArtifactReader::fail();
+      }
+    });
+    if (programs.size() != source->plan.variants().size()) { ArtifactReader::fail(); }
+    for (const auto &variant : source->plan.variants()) {
+      if (!programs.contains(variant.id)) { ArtifactReader::fail(); }
+      for (const auto &operation : variant.instructions) {
+        try {
+          static_cast<void>(programs.at(variant.id)->symbol(operation.pc));
+        } catch (const std::out_of_range &) { ArtifactReader::fail(); }
+      }
+    }
+  }
+
   void prepare_index(const ImagePlan::Variant &variant) {
     auto &table = entries.try_emplace(variant.id).first->second;
     const auto &program = *programs.at(variant.id);
@@ -296,6 +368,38 @@ ImageProgram::ImageProgram(const CodeImage image,
 
 ImageProgram::ImageProgram(const ImageProgram &semantic, const NativeSymbols &symbols)
     : impl_(std::make_unique<Impl>(*semantic.impl_, symbols)) {}
+
+ImageProgram::ImageProgram(ArtifactReader &reader) : impl_(std::make_unique<Impl>(reader)) {}
+
+void ImageProgram::serialize(ArtifactWriter &writer) const {
+  const auto &source = *impl_->source;
+  source.plan.serialize(writer);
+  writer.sequence(source.events, [&](const auto request) {
+    writer.integer(request.vector);
+    writer.integer(static_cast<unsigned>(request.kind));
+  });
+  writer.integer(static_cast<unsigned>(source.topology));
+  writer.sequence(source.bindings, [&](const auto &entry) {
+    writer.integer(entry.first);
+    writer.sequence(entry.second, [&](const auto region) {
+      writer.integer(region.first);
+      writer.integer(region.size);
+      writer.integer(static_cast<std::uint64_t>(region.writable));
+      writer.integer(static_cast<std::uint64_t>(region.tracked));
+    });
+  });
+  writer.sequence(source.prefixes, [&](const auto &entry) {
+    writer.integer(entry.first);
+    writer.sequence(entry.second, [&](const auto &prefix) {
+      writer.integer(prefix.first);
+      writer.integer(prefix.second);
+    });
+  });
+  writer.sequence(impl_->programs, [&](const auto &entry) {
+    writer.integer(entry.first);
+    entry.second->serialize(writer);
+  });
+}
 
 ImageProgram::~ImageProgram() = default;
 

@@ -29,6 +29,8 @@ public:
                const std::string &prefix = "cpu12_",
                MemoryTopology topology = MemoryTopology::fixed);
   ImageProgram(const ImageProgram &semantic, const NativeSymbols &symbols);
+  explicit ImageProgram(ArtifactReader &reader);
+  void serialize(ArtifactWriter &writer) const;
   ~ImageProgram();
   ImageProgram(const ImageProgram &) = delete;
   ImageProgram &operator=(const ImageProgram &) = delete;

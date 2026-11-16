@@ -196,6 +196,7 @@ class SemanticImage {
 public:
   SemanticImage() = default;
   [[nodiscard]] std::span<const std::byte> bitcode() const noexcept;
+  [[nodiscard]] std::span<const std::byte> artifact() const noexcept;
   [[nodiscard]] std::span<const SemanticExport> exports() const noexcept;
   [[nodiscard]] std::string_view identity() const noexcept;
 
@@ -227,7 +228,10 @@ public:
   ~Core();
   Core(const Core &) = delete;
   Core &operator=(const Core &) = delete;
+  [[nodiscard]] static std::string_view compiler_identity() noexcept;
   [[nodiscard]] static SemanticImage lower(CodeImage image, CompileOptions options);
+  [[nodiscard]] static SemanticImage
+  load(CodeImage image, CompileOptions options, std::span<const std::byte> artifact);
   [[nodiscard]] static NativeImage bind(const SemanticImage &image, const NativeSymbols &symbols);
   [[nodiscard]] static NativeImage compile(CodeImage image, CompileOptions options);
   // Cold owner boundary: validate code/layout and bind RAM/events before publishing.

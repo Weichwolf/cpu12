@@ -12,6 +12,11 @@
 #include <string>
 #include <string_view>
 
+namespace cpu12::detail {
+class ArtifactReader;
+class ArtifactWriter;
+}
+
 namespace cpu12::detail::llvm19 {
 enum class ArtifactOutput : std::uint8_t { none, native, semantic };
 enum class RegisterSource : std::uint8_t { argument, owner };
@@ -36,6 +41,8 @@ public:
   Program(const Program &semantic,
           std::span<const BlockInstruction> instructions,
           const NativeSymbols &symbols);
+  explicit Program(ArtifactReader &reader);
+  void serialize(ArtifactWriter &writer) const;
   ~Program();
   Program(const Program &) = delete;
   Program &operator=(const Program &) = delete;

@@ -18,6 +18,9 @@ struct Calls {
 [[nodiscard]] Calls calls() noexcept;
 void initialized() noexcept;
 void finalized() noexcept;
+[[nodiscard]] SemanticImage
+roundtrip(CodeImage image, CompileOptions options, SemanticImage producer);
+void artifact_events(std::span<const std::byte> host);
 void callback_roles(std::span<const std::byte> host);
 
 class Code {

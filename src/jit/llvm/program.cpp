@@ -16,6 +16,7 @@
 #include "jit/llvm/regions.hpp"
 #include "jit/llvm/runtime_bitcode.hpp"
 #include "runtime.hpp"
+#include "serialization.hpp"
 
 #include "llvm-c/Core.h"
 #include "llvm-c/Error.h"
@@ -155,6 +156,35 @@ public:
   std::map<Address, std::string> symbols;
   std::vector<std::byte> bitcode, object;
 };
+
+void Program::serialize(ArtifactWriter &writer) const {
+  writer.sequence(impl_->symbols, [&](const auto &entry) {
+    writer.integer(entry.first);
+    writer.text(entry.second);
+  });
+  writer.sequence(impl_->event_symbols, [&](const auto &entry) {
+    writer.integer(entry.first);
+    writer.text(entry.second);
+  });
+}
+
+Program::Program(ArtifactReader &reader) : impl_(std::make_unique<Impl>()) {
+  reader.sequence([&] {
+    const auto pc = reader.integer<Address>();
+    auto name = reader.text();
+    if (name.empty() || !impl_->symbols.emplace(pc, std::move(name)).second) {
+      ArtifactReader::fail();
+    }
+  });
+  reader.sequence([&] {
+    const auto key = reader.integer();
+    auto name = reader.text();
+    if (name.empty() || !impl_->event_symbols.emplace(key, std::move(name)).second) {
+      ArtifactReader::fail();
+    }
+  });
+  if (impl_->symbols.empty() || impl_->event_symbols.empty()) { ArtifactReader::fail(); }
+}
 
 Program::Program(const std::span<const BlockInstruction> instructions, const Memory &memory)
     : Program(instructions, {.memory = memory, .bindings = {}, .interrupts = {}, .callbacks = {}}) {

@@ -7,6 +7,7 @@
 #include "instruction.hpp"
 #include "jit/block.hpp"
 #include "jit/preparation.hpp"
+#include "serialization.hpp"
 
 #include <algorithm>
 #include <array>
@@ -18,6 +19,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace cpu12::detail {
@@ -151,5 +153,70 @@ ImagePlan::ImagePlan(const CodeImage image, const std::span<const CodeTransition
   for (const auto variant : image.variants) {
     variants_.push_back(analyze(variant, declared.at(variant.id)));
   }
+}
+
+void ImagePlan::serialize(ArtifactWriter &writer) const {
+  writer.sequence(variants_, [&](const auto &variant) {
+    writer.integer(variant.id);
+    writer.sequence(variant.code, [&](const auto &span) {
+      writer.integer(span.address);
+      writer.bytes(std::as_bytes(std::span(span.words)));
+    });
+    writer.sequence(variant.instructions, [&](const auto &instruction) {
+      writer.integer(instruction.pc);
+      writer.integer(instruction.instruction.length);
+    });
+    writer.sequence(variant.entries, [&](const auto pc) { writer.integer(pc); });
+    writer.sequence(variant.transitions, [&](const auto &edge) {
+      writer.integer(edge.first);
+      writer.sequence(edge.second, [&](const auto id) { writer.integer(id); });
+    });
+  });
+}
+
+ImagePlan::ImagePlan(ArtifactReader &reader) {
+  reader.sequence([&] {
+    Variant variant{
+        .id = reader.integer(), .code = {}, .instructions = {}, .entries = {}, .transitions = {}};
+    Source source;
+    reader.sequence([&] {
+      const auto address = reader.integer<Address>();
+      const auto bytes = reader.bytes();
+      const auto words = std::span(reinterpret_cast<const Byte *>(bytes.data()), bytes.size());
+      collect(source,
+              {.id = variant.id, .code = {}, .entries = {}},
+              {.address = address, .words = words});
+      variant.code.push_back({.address = address, .words = {words.begin(), words.end()}});
+    });
+    std::bitset<address_bytes> starts;
+    reader.sequence([&] {
+      const auto pc = reader.integer<Address>();
+      const auto size = reader.integer<Byte>();
+      if (size == 0 || size > maximum_capture_bytes || starts[pc]) { ArtifactReader::fail(); }
+      starts[pc] = true;
+      std::array<Byte, maximum_capture_bytes> bytes{};
+      for (unsigned offset = 0; offset < size; ++offset) {
+        const auto address = static_cast<Address>(pc + offset);
+        if (!source.known[address]) { ArtifactReader::fail(); }
+        bytes[offset] = source.bytes[address];
+      }
+      const auto instruction = decode_first(std::span(bytes).first(size));
+      if (!instruction || instruction->length != size) { ArtifactReader::fail(); }
+      variant.instructions.push_back({.instruction = *instruction, .pc = pc});
+    });
+    reader.sequence([&] { variant.entries.push_back(reader.integer<Address>()); });
+    reader.sequence([&] {
+      const auto pc = reader.integer<Address>();
+      std::vector<std::uint64_t> targets;
+      reader.sequence([&] { targets.push_back(reader.integer()); });
+      if (!variant.transitions.emplace(pc, std::move(targets)).second) { ArtifactReader::fail(); }
+    });
+    if (variant.code.empty() || variant.instructions.empty() || variant.entries.empty() ||
+        std::ranges::any_of(variants_, [&](const auto &value) { return value.id == variant.id; })) {
+      ArtifactReader::fail();
+    }
+    variants_.push_back(std::move(variant));
+  });
+  if (variants_.empty()) { ArtifactReader::fail(); }
 }
 }
