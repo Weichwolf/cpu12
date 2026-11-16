@@ -109,11 +109,6 @@ struct Snapshot {
   bool operator==(const Snapshot &) const = default;
 };
 
-struct Statistics {
-  // Translation-only accounting; execution and transport observers belong to the owner.
-  std::uint64_t compiled_entries = 0;
-};
-
 struct PreparationReport {
   std::uint64_t prepared_entries = 0, unresolved_entries = 0, native_bytes = 0;
   RunResult failure;
@@ -268,9 +263,6 @@ public:
   void set_registers(Registers registers);
   // An installed image requires a matching install after every explicit remap.
   void set_memory(Memory memory);
-  [[nodiscard]] PreparationReport prepare(std::span<const Address> established_entries);
-  [[nodiscard]] RunResult run_instruction(std::span<const std::uint8_t> bytes);
-  [[nodiscard]] RunResult step();
   [[nodiscard]] EventResult reset(std::uint16_t vector) noexcept;
   [[nodiscard]] bool interrupt_ready(InterruptKind kind) const noexcept;
   [[nodiscard]] bool interrupt_frame_available() const noexcept;
@@ -288,7 +280,6 @@ public:
   [[nodiscard]] RunResult run_until(std::uint64_t base_cycle_deadline);
   // Owner-thread I/O may request return after the current complete instruction.
   void request_yield() noexcept;
-  [[nodiscard]] Statistics statistics() const noexcept;
 
 private:
   class Impl;

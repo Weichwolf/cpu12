@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
+#include "interrupt_image.hpp"
 #include "interrupt_model.hpp"
-#include "observed_core.hpp"
+#include "isa.hpp"
 
 #include <array>
 #include <span>
@@ -17,7 +18,7 @@ struct Read {
 
 struct Bus {
   Image image{};
-  ObservedCore *core = nullptr;
+  Core *core = nullptr;
   unsigned calls = 0, failure = 5, writes = 0;
   bool unchanged = true;
   std::array<Read, 16> trace{};
@@ -62,24 +63,25 @@ void all_external() {
     Bus bus{.failure = phase};
     put(bus.image, seed.sp, literal);
     Io io{.owner = &bus, .read = Bus::byte, .write = Bus::write, .read_word = Bus::word};
-    ObservedCore core(Memory::external(), &io);
+    auto code = isa::rti;
+    Core core(Memory::window({.first = seed.pc, .bytes = code, .writable = false}), &io);
     bus.core = &core;
     core.set_registers(seed);
+    core.install(return_image(), 0);
     if (phase == sequence.size()) {
       accept(core, seed, expected(seed, restored));
     } else {
-      const auto result = core.run_instruction(rti);
+      const auto result = core.run(1);
       require(result.retired == 0 && result.fault == Fault::memory_read && result.pc == seed.pc &&
                   result.opcode == rti[0] && result.address == sequence[phase].address &&
                   result.value == diagnostic_values[phase] &&
                   result.access_size == sequence[phase].width && core.registers() == seed,
               "A refused RTI phase reports the actual access and preserves every CPU register");
-      require(core.run_instruction(rti).fault == Fault::memory_read && bus.calls == phase + 1,
+      require(core.run(1).fault == Fault::memory_read && bus.calls == phase + 1,
               "Failed RTI does not replay earlier external reads across cache clearing");
     }
     const auto calls = phase < sequence.size() ? phase + 1 : sequence.size();
-    require(bus.calls == calls && bus.writes == 0 && bus.unchanged &&
-                core.statistics().read_callbacks == calls,
+    require(bus.calls == calls && bus.writes == 0 && bus.unchanged,
             "External observers see the original state until every RTI read has succeeded");
     for (unsigned index = 0; index < calls; ++index) {
       require(bus.trace[index] == sequence[index],
@@ -99,13 +101,15 @@ void missing_word() {
   Bus bus;
   put(bus.image, seed.sp, literal);
   Io io{.owner = &bus, .read = Bus::byte};
-  ObservedCore core(Memory::external(), &io);
+  auto code = isa::rti;
+  Core core(Memory::window({.first = seed.pc, .bytes = code, .writable = false}), &io);
   bus.core = &core;
   core.set_registers(seed);
-  const auto result = core.run_instruction(rti);
+  core.install(return_image(), 0);
+  const auto result = core.run(1);
   require(result.fault == Fault::memory_read && result.retired == 0 &&
               result.address == sequence[1].address && result.access_size == 2 &&
-              core.registers() == seed && bus.calls == 1 && core.statistics().read_callbacks == 1,
+              core.registers() == seed && bus.calls == 1,
           "Missing wide bus refuses instead of inventing two accepted byte reads");
 }
 
@@ -113,11 +117,15 @@ void partial_window() {
   Bus bus;
   put(bus.image, seed.sp, literal);
   Io io{.owner = &bus, .read = Bus::byte, .read_word = Bus::word};
-  ObservedCore core(Memory::unified(std::span(bus.image).first(8)), &io);
+  auto code = isa::rti;
+  const std::array windows{Ram{.bytes = std::span(bus.image).first(8)},
+                           Ram{.first = seed.pc, .bytes = code, .writable = false}};
+  Core core(Memory::mapped(windows), &io);
   bus.core = &core;
   core.set_registers(seed);
+  core.install(return_image(), 0);
   accept(core, seed, expected(seed, restored));
-  require(bus.calls == 3 && bus.unchanged && core.statistics().read_callbacks == 3,
+  require(bus.calls == 3 && bus.unchanged,
           "Partial RAM stages the complete RTI before CPU publication");
   for (unsigned phase = 0; phase < 3; ++phase) {
     require(bus.trace[phase] == sequence[phase],

@@ -27,7 +27,7 @@ struct FrameBus {
   Fixture *fixture = nullptr;
   WordWrite transaction{};
   unsigned writes = 0;
-  bool install_refused = false, remap_refused = false, prepare_refused = false, run_refused = false;
+  bool install_refused = false, remap_refused = false, run_refused = false;
 
   static bool write(void *owner, const WordWrite value) noexcept {
     auto &self = *static_cast<FrameBus *>(owner);
@@ -35,8 +35,6 @@ struct FrameBus {
     ++self.writes;
     self.install_refused = refused([&] { self.core->install(*self.image, first_id); });
     self.remap_refused = refused([&] { self.core->set_memory(self.fixture->memory()); });
-    const std::array entries{entry};
-    self.prepare_refused = self.core->prepare(entries).failure.fault == Fault::reentrant;
     self.run_refused = self.core->run(1).fault == Fault::reentrant;
     return false;
   }
@@ -51,18 +49,16 @@ void frame_boundary(const NativeImage &image) {
   constexpr Registers before{.pc = entry, .sp = entry + 9};
   core.set_registers(before);
   core.install(image, first_id);
-  const auto compiled = core.statistics().compiled_entries;
   const auto progress = core.progress();
   const auto memory = fixture.bytes;
   const auto result = core.interrupt(interrupts[0]);
   require(!result.accepted && result.fault == Fault::memory_write && result.access_size == 2 &&
               result.address == before.sp - 2 && result.value == before.pc && bus.writes == 1 &&
               bus.transaction.address == result.address && bus.transaction.value == result.value &&
-              bus.install_refused && bus.remap_refused && bus.prepare_refused && bus.run_refused &&
-              core.registers() == before && core.progress() == progress &&
-              fixture.bytes == memory && core.statistics().compiled_entries == compiled,
+              bus.install_refused && bus.remap_refused && bus.run_refused &&
+              core.registers() == before && core.progress() == progress && fixture.bytes == memory,
           "A prepared real IRQ write must preserve the exact fault boundary and reject "
-          "reentrant installation/remapping/preparation/execution");
+          "reentrant installation/remapping/execution");
 }
 
 struct Port {
@@ -112,7 +108,6 @@ void io_yield() {
   constexpr Registers before{.pc = entry, .d = 0x1234, .ccr = 0x20};
   constexpr Registers wanted{.pc = entry + 3, .d = 0x5a34, .ccr = 0x20};
   core.set_registers(before);
-  const auto compiled = core.statistics().compiled_entries;
   constexpr unsigned budget = 64;
   require(core.run(budget).retired == 1 &&
               core.state() == State{.registers = wanted, .failure = {}} &&
@@ -121,13 +116,11 @@ void io_yield() {
           "Prepared real I/O must return after the accepted yielding instruction with exact state");
   require(core.run(budget).retired == budget && core.registers() == wanted && port.reads == 1 &&
               port.fetches == 0 &&
-              core.progress().estimated_cycles == 3 + (std::uint64_t{budget} * 3) &&
-              core.statistics().compiled_entries == compiled,
+              core.progress().estimated_cycles == 3 + (std::uint64_t{budget} * 3),
           "The next owner grant must resume original prepared code without replaying I/O or "
           "translation");
   core.set_registers({.pc = Port::address});
-  require(core.step().fault == Fault::unprepared_execution && port.reads == 1 &&
-              port.fetches == 0 && core.statistics().compiled_entries == compiled,
+  require(core.run(1).fault == Fault::unprepared_execution && port.reads == 1 && port.fetches == 0,
           "Strict unknown entries cannot invoke fetch/I/O callbacks to discover new code");
 }
 }

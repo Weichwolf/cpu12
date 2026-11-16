@@ -39,7 +39,7 @@ struct Bus {
     if (!audit) { return true; }
     const auto &state = core->state();
     unchanged &=
-        state == before && core->progress() == progress && core->step().fault == Fault::reentrant;
+        state == before && core->progress() == progress && core->run(1).fault == Fault::reentrant;
     if (calls < trace.size()) { trace[calls] = access; }
     if (calls == yielding) { core->request_yield(); }
     return calls++ != failure;
@@ -90,7 +90,7 @@ void seed(Core &core, fixture::Fixture &memory, const Frame frame, Registers ini
   }
   core.set_registers(initial);
   if (frame != Frame::push) {
-    require(core.step().retired == 1 && core.state().returned_frame == (frame == Frame::returned),
+    require(core.run(1).retired == 1 && core.state().returned_frame == (frame == Frame::returned),
             "The IRQ fixture enters an actual prepared WAI/RTI boundary");
   }
   memory.bytes[fixture::vector] = static_cast<Byte>(handler >> byte_bits);
@@ -130,11 +130,9 @@ void check(const NativeImage &image,
   auto io = bus.io();
   Core core(memory.memory(), &io);
   bus.core = &core;
-  const auto compiled = core.statistics().compiled_entries;
   const auto pristine = memory.bytes;
   core.install(image, fixture::variant_id);
-  require(core.statistics().compiled_entries == compiled && memory.bytes == pristine,
-          "Image installation binds already compiled IRQ/wake entries without new native code");
+  require(memory.bytes == pristine, "Image installation preserves the complete consumer memory");
   seed(core, memory, frame, initial);
   bus.before = core.state();
   bus.progress = core.progress();
@@ -149,8 +147,7 @@ void check(const NativeImage &image,
   apply(expected_memory, std::span(accesses).first(calls));
   const auto result = core.interrupt(request);
   require(
-      bus.unchanged && bus.calls == calls && memory.bytes == expected_memory &&
-          core.statistics().compiled_entries == compiled,
+      bus.unchanged && bus.calls == calls && memory.bytes == expected_memory,
       "Each IRQ preserves original callback state, ordered real effects and cold code ownership");
   for (unsigned index = 0; index < calls; ++index) {
     require(bus.trace[index] == accesses[index],

@@ -6,7 +6,6 @@
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
 #include "cycles.hpp"
-#include "immutable.hpp"
 #include "instruction.hpp"
 #include "jit/block.hpp"
 #include "jit/interrupt.hpp"
@@ -17,7 +16,6 @@
 
 #include <algorithm>
 #include <array>
-#include <bitset>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -174,7 +172,6 @@ public:
   };
 
   std::unique_ptr<Mapping> current;
-  Statistics statistics;
   std::optional<Transfer> pending;
 
   void completed_transfer(const ExitLocation from, const Address pc, NativeContext &context) {
@@ -185,33 +182,6 @@ public:
     if (target == targets.end()) { return; }
     pending = Transfer{.image = current->image, .variants = target->second, .entry = pc};
     context.yield_requested = true;
-  }
-
-  [[nodiscard]] PreparationReport prepared_image(const std::span<const Address> entries) const {
-    if (pending.has_value()) {
-      const auto pc = pending->entry;
-      return {.unresolved_entries = 1,
-              .failure = {.fault = Fault::unprepared_execution, .pc = pc, .address = pc}};
-    }
-    PreparationReport report;
-    std::bitset<address_bytes> unresolved;
-    if (current->image) {
-      for (const auto id : current->variants) {
-        report.prepared_entries += current->image->instructions(id).size();
-      }
-    }
-    for (const auto address : entries) {
-      if (!current->image || current->entry(address) == nullptr) {
-        if (report.failure.fault == Fault::none) {
-          report.failure = {
-              .fault = Fault::unprepared_execution, .pc = address, .address = address};
-        }
-        unresolved[address] = true;
-      }
-    }
-    if (!current->image && entries.empty()) { report.failure.fault = Fault::unprepared_execution; }
-    report.unresolved_entries = unresolved.count();
-    return report;
   }
 };
 
@@ -358,23 +328,6 @@ void Jit::cancel_transition() noexcept {
   impl_->pending.reset();
 }
 
-Fault Jit::validate_instruction(const Address pc, const std::span<const Byte> bytes) const {
-  const auto &mapping = *impl_->current;
-  if (!mapping.image) { return Fault::unprepared_execution; }
-  const auto *instruction = mapping.instruction(pc);
-  if (instruction == nullptr) { return Fault::unprepared_execution; }
-  if (instruction->length != bytes.size()) { return Fault::invalid_input; }
-  for (std::size_t offset = 0; offset < bytes.size(); ++offset) {
-    const auto source = immutable_bytes(mapping.memory, static_cast<Address>(pc + offset));
-    if (source.empty() || source.front() != bytes[offset]) { return Fault::invalid_input; }
-  }
-  return Fault::none;
-}
-
-PreparationReport Jit::prepare(const std::span<const Address> established_entries) {
-  return impl_->prepared_image(established_entries);
-}
-
 const Memory &Jit::memory() const noexcept {
   return impl_->current->memory;
 }
@@ -440,7 +393,4 @@ void Jit::resume_stop(Registers &registers, NativeContext &context) {
   enter(found->second.code, registers, context);
 }
 
-Statistics Jit::statistics() const noexcept {
-  return impl_->statistics;
-}
 }

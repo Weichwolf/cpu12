@@ -38,25 +38,6 @@ struct CompilerMemory {
   explicit CompilerMemory(const ImagePlan::Variant &variant,
                           const std::span<const RegionLayout> layout,
                           const MemoryTopology topology) {
-    for (const auto &span : variant.code) {
-      for (std::size_t offset = 0; offset < span.words.size(); ++offset) {
-        const auto address = static_cast<Address>(span.address + offset);
-        source[address] = span.words[offset];
-        known[address] = 1;
-      }
-    }
-    for (std::size_t first = 0; first < address_bytes;) {
-      if (known[first] == 0) {
-        ++first;
-        continue;
-      }
-      auto end = first + 1;
-      while (end < address_bytes && known[end] != 0) { ++end; }
-      code.push_back({.first = static_cast<Address>(first),
-                      .bytes = std::span(source).subspan(first, end - first),
-                      .writable = false});
-      first = end;
-    }
     for (const auto &region : layout) {
       if (region.size == 0 || region.size > address_bytes - region.first) {
         throw std::invalid_argument("CPU12 image region is outside the address space");
@@ -82,8 +63,8 @@ struct CompilerMemory {
     }
   }
 
-  std::array<Byte, address_bytes> source{}, known{}, scratch{}, tracked{};
-  std::vector<Ram> code, memory;
+  std::array<Byte, address_bytes> scratch{}, tracked{};
+  std::vector<Ram> memory;
 };
 
 bool same_layout(const std::span<const RegionLayout> layout, const Memory &memory) {
@@ -242,21 +223,19 @@ public:
           variant.id,
           std::make_unique<Program>(
               variant.instructions,
-              ProgramOptions{.memory = {.source = Memory::mapped(memory->code),
-                                        .bindings = topology == MemoryTopology::dynamic
-                                                        ? Memory::external()
-                                                        : Memory::mapped(memory->memory)},
-                             .prefix = names + "variant_" + std::to_string(variant.id) + "_region_",
-                             .bindings = linked,
-                             .output = output,
-                             .interrupts = interrupts,
-                             .prepare_events = true,
-                             .runtime_io = output == ArtifactOutput::semantic,
-                             .registers = output == ArtifactOutput::semantic
-                                              ? RegisterSource::owner
-                                              : RegisterSource::argument,
-                             .callbacks = callbacks,
-                             .dynamic_memory = topology == MemoryTopology::dynamic}));
+              ProgramOptions{
+                  .memory = topology == MemoryTopology::dynamic ? Memory::external()
+                                                                : Memory::mapped(memory->memory),
+                  .prefix = names + "variant_" + std::to_string(variant.id) + "_region_",
+                  .bindings = linked,
+                  .output = output,
+                  .interrupts = interrupts,
+                  .prepare_events = true,
+                  .runtime_io = output == ArtifactOutput::semantic,
+                  .registers = output == ArtifactOutput::semantic ? RegisterSource::owner
+                                                                  : RegisterSource::argument,
+                  .callbacks = callbacks,
+                  .dynamic_memory = topology == MemoryTopology::dynamic}));
       if (output != ArtifactOutput::semantic) { prepare_index(variant); }
     }
   }

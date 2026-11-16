@@ -151,8 +151,6 @@ public:
     return result;
   }
 
-  RunResult step() { return block_result(jit.run_prepared(1, context.cpu.registers, context)); }
-
   template <bool Timed>
   [[gnu::always_inline]] RunResult run_native(const std::uint32_t instruction_budget) {
     RunResult result;
@@ -345,82 +343,6 @@ void Core::set_memory(const Memory memory) {
   impl_->context.memory_grants = impl_->jit.memory().regions();
 }
 
-PreparationReport Core::prepare(const std::span<const Address> established_entries) {
-  PreparationReport report;
-  if (impl_->active) {
-    report.failure = {.fault = Fault::reentrant,
-                      .state = impl_->context.cpu.execution,
-                      .pc = impl_->context.cpu.registers.pc};
-    return report;
-  }
-  if (!impl_->supported) {
-    report.failure = {.fault = Fault::unsupported_host,
-                      .state = impl_->context.cpu.execution,
-                      .pc = impl_->context.cpu.registers.pc};
-    return report;
-  }
-  impl_->active = true;
-  try {
-    report = impl_->jit.prepare(established_entries);
-  } catch (...) {
-    impl_->active = false;
-    throw;
-  }
-  impl_->active = false;
-  report.failure.state = impl_->context.cpu.execution;
-  return report;
-}
-
-RunResult Core::run_instruction(const std::span<const std::uint8_t> bytes) {
-  RunResult result{.state = impl_->context.cpu.execution,
-                   .pc = impl_->context.cpu.registers.pc,
-                   .opcode = bytes.empty() ? std::uint8_t{0} : bytes[0]};
-  if (impl_->active) {
-    result.fault = Fault::reentrant;
-    return result;
-  }
-  if (impl_->context.cpu.failure.fault != Fault::none) { return impl_->context.cpu.failure; }
-  if (impl_->jit.transition_pending()) { return result; }
-  if (!impl_->supported) {
-    result.fault = Fault::unsupported_host;
-    return result;
-  }
-  if (impl_->context.cpu.execution != ExecutionState::running) { return result; }
-  if (bytes.empty() || bytes.size() > maximum_capture_bytes) {
-    result.fault = Fault::invalid_input;
-    return result;
-  }
-  const auto pc = impl_->context.cpu.registers.pc;
-  if (impl_->jit.validate_instruction(pc, bytes) == Fault::invalid_input) {
-    result.fault = Fault::invalid_input;
-    return result;
-  }
-  return step();
-}
-
-RunResult Core::step() {
-  RunResult result{.state = impl_->context.cpu.execution, .pc = impl_->context.cpu.registers.pc};
-  if (impl_->active) {
-    result.fault = Fault::reentrant;
-    return result;
-  }
-  if (impl_->context.cpu.failure.fault != Fault::none) { return impl_->context.cpu.failure; }
-  if (!impl_->supported) {
-    result.fault = Fault::unsupported_host;
-    return result;
-  }
-  if (result.state != ExecutionState::running) { return result; }
-  impl_->active = true;
-  try {
-    result = impl_->step();
-  } catch (...) {
-    impl_->active = false;
-    throw;
-  }
-  impl_->active = false;
-  return result;
-}
-
 [[gnu::always_inline]] RunResult Core::run(const std::uint32_t instruction_budget) {
   RunResult result{.state = impl_->context.cpu.execution, .pc = impl_->context.cpu.registers.pc};
   if (impl_->active) {
@@ -609,10 +531,6 @@ EventResult Core::resume_from_stop() {
   if (impl_->context.fault != Fault::none) { return impl_->failed_event(result); }
   result.accepted = true;
   return result;
-}
-
-Statistics Core::statistics() const noexcept {
-  return impl_->jit.statistics();
 }
 
 }

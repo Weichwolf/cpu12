@@ -32,7 +32,7 @@ struct Bus {
   bool observe(const Access access) noexcept {
     unchanged &= core->registers() == before && core->progress() == progress &&
                  core->state().execution == ExecutionState::running &&
-                 core->step().fault == Fault::reentrant && !core->resume_from_stop().accepted;
+                 core->run(1).fault == Fault::reentrant && !core->resume_from_stop().accepted;
     if (calls < trace.size()) { trace[calls] = access; }
     if (calls == yielding) { core->request_yield(); }
     return calls++ != failure;
@@ -128,15 +128,13 @@ void external_case(const NativeImage &image,
   bus.core = &core;
   core.install(image, variant_id);
   core.set_registers(before);
-  const auto compiled = core.statistics().compiled_entries;
   const auto accesses = sequence(before);
   auto memory = fixture.bytes;
   const bool accepted = yielding || phase == accesses.size();
   const auto calls = accepted ? accesses.size() : phase + 1;
   for (const auto access : std::span(accesses).first(calls)) { apply(memory, access); }
   const auto result = core.run(1);
-  require(bus.unchanged && bus.calls == calls && bus.fetches == 0 && fixture.bytes == memory &&
-              core.statistics().compiled_entries == compiled,
+  require(bus.unchanged && bus.calls == calls && bus.fetches == 0 && fixture.bytes == memory,
           "Prepared frame callbacks see original CPU/time, retain real effects and never fetch or "
           "compile");
   for (std::size_t index = 0; index < calls; ++index) {
@@ -163,12 +161,12 @@ void external_case(const NativeImage &image,
                 !core.state().returned_frame && core.progress() == Progress{},
             "Every refused prepared frame field preserves registers/time and reports exact "
             "operation diagnostics");
-    require(core.step().fault == fault && core.run(16).fault == fault && bus.calls == calls &&
+    require(core.run(1).fault == fault && core.run(16).fault == fault && bus.calls == calls &&
                 fixture.bytes == memory,
             "A latched frame fault cannot replay earlier external transactions");
     bus.failure = 16;
     core.set_registers(before);
-    require(core.step().retired == 1 && bus.calls == calls + accesses.size() && bus.unchanged,
+    require(core.run(1).retired == 1 && bus.calls == calls + accesses.size() && bus.unchanged,
             "An explicit new architectural boundary recovers a failed prepared frame without stale "
             "staging");
   }
@@ -192,7 +190,7 @@ void partial_case(const NativeImage &image, const Address pc) {
   auto memory = fixture.bytes;
   const auto accesses = sequence(before);
   for (const auto access : accesses) { apply(memory, access); }
-  require(core.step().retired == 1 && bus.calls == 3 && bus.unchanged && fixture.bytes == memory,
+  require(core.run(1).retired == 1 && bus.calls == 3 && bus.unchanged && fixture.bytes == memory,
           "Mixed tracked RAM and actual I/O stage each complete frame before committing CPU state");
   const auto start = pc == rti ? 0U : 2U;
   for (unsigned phase = 0; phase < bus.calls; ++phase) {

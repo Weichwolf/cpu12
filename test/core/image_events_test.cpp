@@ -48,7 +48,7 @@ RunResult enter(Core &core, Fixture &fixture, const std::span<const Byte> instru
                               .callbacks = {},
                               .bindings = {}}),
                first_id);
-  const auto result = core.run_instruction(instruction);
+  const auto result = core.run(1);
   std::ranges::copy(std::span(original).first(bytes.size()), bytes.begin());
   return result;
 }
@@ -75,7 +75,6 @@ void event(const NativeImage &image, const Frame frame, const InterruptRequest r
   const auto progress = core.progress();
   auto memory = fixture.bytes;
   core.install(image, first_id);
-  const auto compiled = core.statistics().compiled_entries;
   require(core.state() == before && core.progress() == progress && fixture.bytes == memory,
           "Cold IRQ preparation cannot replay or alter an existing architectural frame");
   auto expected = before.registers;
@@ -89,12 +88,10 @@ void event(const NativeImage &image, const Frame frame, const InterruptRequest r
   require(
       result.accepted && result.fault == Fault::none && result.pc == before.registers.pc &&
           core.state() == State{.registers = expected, .failure = {}} &&
-          core.progress() == Progress{.estimated_cycles = cycles} && fixture.bytes == memory &&
-          core.statistics().compiled_entries == compiled,
+          core.progress() == Progress{.estimated_cycles = cycles} && fixture.bytes == memory,
       "Prepared IRQ contracts preserve exact push/wait/return frames, masks, memory and cycles");
   require(core.run(1).retired == 1 && core.registers() == expected &&
-              core.progress().estimated_cycles == cycles + 3 &&
-              core.statistics().compiled_entries == compiled,
+              core.progress().estimated_cycles == cycles + 3,
           "The real vector enters prepared firmware without compiling the first IRQ or handler");
 }
 
@@ -108,7 +105,6 @@ void undeclared(const NativeImage &image) {
   constexpr InterruptRequest unknown{.vector = vector + 2};
   const auto memory = fixture.bytes;
   const auto progress = core.progress();
-  const auto compiled = core.statistics().compiled_entries;
   const auto blocked = core.interrupt(unknown);
   require(!blocked.accepted && blocked.fault == Fault::none && core.registers() == masked,
           "A masked undeclared event still performs no hardware transaction");
@@ -116,8 +112,7 @@ void undeclared(const NativeImage &image) {
   const auto missing = core.interrupt(unknown);
   require(!missing.accepted && missing.fault == Fault::unprepared_execution &&
               missing.address == unknown.vector && missing.pc == seed.pc &&
-              core.registers() == seed && core.progress() == progress && fixture.bytes == memory &&
-              core.statistics().compiled_entries == compiled,
+              core.registers() == seed && core.progress() == progress && fixture.bytes == memory,
           "An undeclared IRQ contract fails before frame/vector I/O or first-use compilation");
 }
 
@@ -134,7 +129,6 @@ void wake(const NativeImage &image, const bool remap) {
   const auto stopped = core.state();
   const auto progress = core.progress();
   const auto memory = fixture.bytes;
-  const auto compiled = core.statistics().compiled_entries;
   const auto result = core.resume_from_stop();
   if (remap) {
     require(!result.accepted && result.fault == Fault::unprepared_execution &&
@@ -147,8 +141,7 @@ void wake(const NativeImage &image, const bool remap) {
                 core.state() == State{.registers = before, .failure = {}},
             "Prepared masked-XIRQ STOP wake restores only the real continuation and SP/state");
   }
-  require(core.progress() == progress && fixture.bytes == memory &&
-              core.statistics().compiled_entries == compiled,
+  require(core.progress() == progress && fixture.bytes == memory,
           "STOP-wake events perform no hidden vector/frame reads, writes or translation");
 }
 
@@ -162,9 +155,8 @@ void returned_instruction(const NativeImage &image) {
   require(enter(core, fixture, isa::rti).retired == 1 && core.state().returned_frame,
           "The return-window fixture must expose the actual pending-source poll boundary");
   core.install(image, first_id);
-  const auto compiled = core.statistics().compiled_entries;
-  require(core.step().retired == 1 && !core.state().returned_frame &&
-              !core.interrupt_frame_available() && core.statistics().compiled_entries == compiled,
+  require(core.run(1).retired == 1 && !core.state().returned_frame &&
+              !core.interrupt_frame_available(),
           "The first prepared non-RTI instruction closes a preserved native return window");
 }
 }

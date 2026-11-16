@@ -16,7 +16,6 @@ void deadline(
   auto memory = fixture.bytes;
   core.set_registers(before);
   const auto cycles = core.progress().estimated_cycles;
-  const auto compiled = core.statistics().compiled_entries;
   auto wanted = before;
   State state{.registers = wanted, .failure = {}};
   unsigned retired = 0;
@@ -53,8 +52,7 @@ void deadline(
   state.registers = wanted;
   const auto result = core.run_until(cycles + delta);
   require(result.retired == retired && result.fault == Fault::none && core.state() == state &&
-              core.progress().estimated_cycles == cycles + cost && fixture.bytes == memory &&
-              core.statistics().compiled_entries == compiled,
+              core.progress().estimated_cycles == cycles + cost && fixture.bytes == memory,
           "Prepared frame deadlines preserve exact atomic prefixes, cycles, masks, sleep and "
           "return boundaries");
 }
@@ -67,7 +65,7 @@ void return_delay(Core &core, Fixture &fixture) {
   frames::put(fixture.bytes, before.sp, frames::encode(seed));
   core.set_registers(before);
   const auto cycles = core.progress().estimated_cycles;
-  require(core.step().retired == 1 && core.state().irq_delay == 1,
+  require(core.run(1).retired == 1 && core.state().irq_delay == 1,
           "A prepared CLI creates the genuine delayed IRQ window before RTI");
   require(core.run_until(cycles + 16).retired == 1 && core.state().irq_delay == 0 &&
               core.state().returned_frame && core.registers().pc == seed.pc &&

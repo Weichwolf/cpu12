@@ -161,7 +161,6 @@ void prefixes(const NativeImage &image, Address second) {
                     core.state() ==
                         State{.registers = predict(second, before, count), .failure = {}} &&
                     core.progress() == Progress{.estimated_cycles = cycles(count)} &&
-                    core.statistics().compiled_entries == 0 &&
                     std::ranges::all_of(f.ram, [](Byte v) { return v == 0; }) &&
                     std::ranges::all_of(f.known, [](Byte v) { return v == 0; }),
                 "Mounted native loops preserve independent full-CCR/quota/deadline state, cycles "
@@ -200,8 +199,7 @@ void contracts(const NativeImage &image, Address second) {
           "Mounting an actual matching prepared target never replays the jump");
   require(
       core.run(6).retired == 6 && core.registers() == predict(second, seed(transfer_flags), 8) &&
-          core.progress() == Progress{.estimated_cycles = cycles(8)} &&
-          core.statistics().compiled_entries == 0,
+          core.progress() == Progress{.estimated_cycles = cycles(8)},
       "Suspended scalar transfer resumes through mounted domains with the exact original suffix");
   const auto fixed = prepare(second, true, MemoryTopology::fixed);
   rejects([&] { core.install(fixed, std::array{a, b}); }, "require dynamic topology");
@@ -230,7 +228,7 @@ void interrupts(const NativeImage &image, Address second) {
             "Every original IRQ stack byte and surrounding knownness is exact");
   }
   require(core.run(1).retired == 1 && core.registers().pc == second + 2 &&
-              core.registers().d == irq_d && core.statistics().compiled_entries == 0,
+              core.registers().d == irq_d,
           "The mounted original IRQ target executes once without installation or new code");
 }
 
@@ -255,9 +253,7 @@ void retained_owners() {
               first_owner.registers() == predict(second, initial, count) &&
               first_owner.state() == second_owner.state() &&
               first_owner.progress() == Progress{.estimated_cycles = cycles(count)} &&
-              first_owner.progress() == second_owner.progress() &&
-              first_owner.statistics().compiled_entries == 0 &&
-              second_owner.statistics().compiled_entries == 0,
+              first_owner.progress() == second_owner.progress(),
           "Distinct mounted owners retain shared native code and independent merged pages after "
           "every public image owner is destroyed");
 }
@@ -311,7 +307,7 @@ void returns() {
     require(core.interrupt(events[0]).accepted &&
                 core.progress() == Progress{.estimated_cycles = irq_cycles},
             "Original mounted IRQ entry consumes nine nominal cycles");
-    const auto result = core.step();
+    const auto result = core.run(1);
     require(result.retired == 1 && result.fault == Fault::none &&
                 core.state() == State{.registers = before, .failure = {}, .returned_frame = true} &&
                 core.progress() == Progress{.estimated_cycles = irq_cycles + rti_cycles},
@@ -321,8 +317,7 @@ void returns() {
             "Returned-frame event admission preserves the source poll before subsequent work");
     require(core.run(1).retired == 1 && !core.state().returned_frame &&
                 core.registers() == predict(second, before, 1) &&
-                core.progress() == Progress{.estimated_cycles = irq_cycles + rti_cycles + 1} &&
-                core.statistics().compiled_entries == 0,
+                core.progress() == Progress{.estimated_cycles = irq_cycles + rti_cycles + 1},
             "The restored domain closes its exact return window on its first original instruction");
   }
 }
@@ -386,8 +381,7 @@ void fault_prefixes() {
                 record.observed == expected && record.access.address == unmapped &&
                 record.access.value == low_value &&
                 std::ranges::all_of(f.ram, [](Byte value) { return value == 0; }) &&
-                std::ranges::all_of(f.known, [](Byte value) { return value == 0; }) &&
-                core.statistics().compiled_entries == 0,
+                std::ranges::all_of(f.known, [](Byte value) { return value == 0; }),
             "A real I/O fault after a native domain crossing preserves every original prefix "
             "effect, published callback state and fault field");
   }

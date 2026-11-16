@@ -13,15 +13,11 @@
 #include <string_view>
 
 namespace cpu12::detail::llvm19 {
-struct ProgramMemory {
-  Memory source, bindings;
-};
-
 enum class ArtifactOutput : std::uint8_t { none, native, semantic };
 enum class RegisterSource : std::uint8_t { argument, owner };
 
 struct ProgramOptions {
-  ProgramMemory memory;
+  Memory memory;
   std::string prefix = "cpu12_region_";
   std::span<const std::byte> bindings;
   ArtifactOutput output = ArtifactOutput::none;
@@ -51,10 +47,6 @@ public:
   [[nodiscard]] std::span<const std::byte> object() const noexcept;
   [[nodiscard]] const void *event(std::uint64_t key) const;
   [[nodiscard]] std::string_view event_symbol(std::uint64_t key) const;
-  // Generated functions contain no captured RAM pointers. Reuse requires the
-  // complete transitive native code and any lowered memory topology.
-  [[nodiscard]] const void *find(std::span<const BlockInstruction> region,
-                                 const Memory &memory) const;
   [[nodiscard]] std::uint64_t native_bytes() const noexcept;
 
 private:

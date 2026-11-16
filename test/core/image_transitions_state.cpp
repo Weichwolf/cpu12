@@ -81,8 +81,7 @@ void boundary(const Bytes instruction, const ExecutionState execution) {
           "fresh IRQ delay");
   core.set_memory(memory(loaded));
   core.install(image, to);
-  require(core.state() == wanted && fixture.bytes == bytes &&
-              core.statistics().compiled_entries == 0,
+  require(core.state() == wanted && fixture.bytes == bytes,
           "Binding a prepared fallthrough preserves hidden wait/deferral state and its original "
           "memory effects");
   if (stopped) {
@@ -100,7 +99,7 @@ void boundary(const Bytes instruction, const ExecutionState execution) {
             "The first real IRQ after binding reuses WAI's frame and performs only its actual "
             "vector entry");
   } else {
-    require(!core.interrupt_ready(InterruptKind::maskable) && core.step().retired == 1 &&
+    require(!core.interrupt_ready(InterruptKind::maskable) && core.run(1).retired == 1 &&
                 core.state().irq_delay == 0 && core.interrupt_ready(InterruptKind::maskable) &&
                 core.progress().estimated_cycles == cycles + 1,
             "The target's first real instruction consumes the preserved CLI delay exactly once");

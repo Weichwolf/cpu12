@@ -62,11 +62,11 @@ void rejected_binding() {
   rejects([&] { core.install(image, to); }, "executable source does not match");
   fixture.bytes[destination] ^= 1;
   require(core.run(32).retired == 0 && core.state() == before && core.progress() == progress &&
-              fixture.bytes == memory && core.statistics().compiled_entries == 0,
+              fixture.bytes == memory,
           "Rejected identities/layouts/unknown or changed words retain the complete suspended "
           "transfer");
   core.install(image, to);
-  require(core.step().retired == 1 && core.registers().pc == destination + 2,
+  require(core.run(1).retired == 1 && core.registers().pc == destination + 2,
           "A corrected real target binding resumes the same pending original transfer");
 }
 
@@ -110,8 +110,7 @@ void reset_ownership() {
           "time");
   const auto independent = compile();
   core.install(independent, to);
-  require(core.step().retired == 1 && core.registers().pc == destination + 2 &&
-              core.statistics().compiled_entries == 0,
+  require(core.run(1).retired == 1 && core.registers().pc == destination + 2,
           "Reset permits a new explicitly installed prepared image without stale pending identity");
 }
 }

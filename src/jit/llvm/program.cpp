@@ -3,7 +3,6 @@
 
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
-#include "immutable.hpp"
 #include "instruction.hpp"
 #include "jit/block.hpp"
 #include "jit/llvm/artifact.hpp"
@@ -13,12 +12,9 @@
 #include "jit/llvm/io_abi.hpp"
 #include "jit/llvm/lifetime.hpp"
 #include "jit/llvm/lift.hpp"
-#include "jit/llvm/memory.hpp"
 #include "jit/llvm/native.hpp"
 #include "jit/llvm/regions.hpp"
 #include "jit/llvm/runtime_bitcode.hpp"
-#include "jit/llvm/stack.hpp"
-#include "jit/preparation.hpp"
 #include "runtime.hpp"
 
 #include "llvm-c/Core.h"
@@ -30,7 +26,6 @@
 #include "llvm-c/TargetMachine.h"
 #include "llvm-c/Types.h"
 
-#include <algorithm>
 #include <array>
 #include <bit>
 #include <cstddef>
@@ -39,7 +34,6 @@
 #include <iostream>
 #include <map>
 #include <memory>
-#include <set>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -85,71 +79,6 @@ void bind_io(LLVMOrcLLJITRef engine) {
     LLVMOrcDisposeMaterializationUnit(unit);
     require(error);
   }
-}
-
-struct Layout {
-  Address first;
-  std::size_t size;
-  bool writable, tracked;
-  bool operator==(const Layout &) const = default;
-};
-
-std::vector<Layout> layout(const Memory &memory) {
-  std::vector<Layout> result;
-  for (const auto &region : memory.regions()) {
-    result.push_back({.first = region.first,
-                      .size = region.bytes.size(),
-                      .writable = region.writable,
-                      .tracked = !region.known.empty()});
-  }
-  return result;
-}
-
-struct Encoding {
-  Address pc = 0;
-  std::array<Byte, maximum_capture_bytes> bytes{};
-  Byte length = 0;
-  bool operator==(const Encoding &) const = default;
-};
-
-std::vector<Encoding> capture(const std::span<const BlockInstruction> region,
-                              const Memory &memory) {
-  std::vector<Encoding> result;
-  result.reserve(region.size());
-  for (const auto &operation : region) {
-    Encoding source{.pc = operation.pc, .length = operation.instruction.length};
-    if (source.length > source.bytes.size()) {
-      throw std::logic_error("Prepared CPU12 code lost its immutable instruction bytes");
-    }
-    for (unsigned offset = 0; offset < source.length; ++offset) {
-      const auto address = static_cast<Address>(source.pc + offset);
-      const auto bytes = immutable_bytes(memory, address);
-      if (bytes.empty()) {
-        throw std::logic_error("Prepared CPU12 code lost its immutable instruction bytes");
-      }
-      source.bytes[offset] = bytes.front();
-    }
-    result.push_back(source);
-  }
-  return result;
-}
-
-bool matches(const std::span<const Encoding> source, const Memory &memory) {
-  for (const auto &operation : source) {
-    for (unsigned offset = 0; offset < operation.length; ++offset) {
-      const auto address = static_cast<Address>(operation.pc + offset);
-      const auto bytes = immutable_bytes(memory, address);
-      if (bytes.empty() || bytes.front() != operation.bytes[offset]) { return false; }
-    }
-  }
-  return true;
-}
-
-bool needs_bindings(const Instruction &instruction) {
-  if (instruction.kind == Kind::effective_address) { return false; }
-  if (instruction.kind == Kind::jump) { return instruction.indexed.indirect; }
-  return memory_operand(instruction) || stack_operand(instruction) || frame_operand(instruction) ||
-         instruction.kind == Kind::move;
 }
 
 Owner<LLVMTargetMachineRef, LLVMDisposeTargetMachine> target_machine(const ArtifactOutput output) {
@@ -217,66 +146,6 @@ public:
     Instruction instruction;
   };
 
-  std::vector<std::vector<BlockInstruction>>
-  prepare(const std::span<const BlockInstruction> instructions, const ProgramMemory memory) {
-    auto optimizing = regions(instructions);
-    std::map<Address, Address> owners;
-    for (const auto &region : optimizing) {
-      for (const auto &operation : region) { owners.emplace(operation.pc, region.front().pc); }
-    }
-    for (const auto &region : optimizing) {
-      sources.emplace(region.front().pc, capture(region, memory.source));
-      const bool uses_memory = std::ranges::any_of(
-          region, [](const auto &operation) { return needs_bindings(operation.instruction); });
-      if (uses_memory) { layouts.emplace(region.front().pc, layout(memory.bindings)); }
-      dependencies(region, owners);
-    }
-    return optimizing;
-  }
-
-  void dependencies(const std::span<const BlockInstruction> region,
-                    const std::map<Address, Address> &owners) {
-    const auto head = region.front().pc;
-    for (const auto &operation : region) {
-      const auto flow = successors(operation);
-      const auto kind = operation.instruction.kind;
-      if (flow.indirect && kind != Kind::wait && kind != Kind::stop &&
-          kind != Kind::return_interrupt) {
-        indirect.insert(head);
-      }
-      for (const auto address : std::span(flow.direct).first(flow.count)) {
-        const auto found = owners.find(address);
-        if (found != owners.end() && found->second != head) { targets[head].insert(found->second); }
-      }
-    }
-  }
-
-  [[nodiscard]] bool binding(const Address head, const Memory &memory) const {
-    const auto found = layouts.find(head);
-    return matches(sources.at(head), memory) &&
-           (found == layouts.end() || found->second == layout(memory));
-  }
-
-  [[nodiscard]] bool dependencies(const Address head, const Memory &memory) const {
-    std::set<Address> visited;
-    std::vector<Address> pending{head};
-    while (!pending.empty()) {
-      const auto unit = pending.back();
-      pending.pop_back();
-      if (!visited.insert(unit).second) { continue; }
-      if (!binding(unit, memory)) { return false; }
-      if (indirect.contains(unit)) {
-        return std::ranges::all_of(
-            sources, [&](const auto &source) { return binding(source.first, memory); });
-      }
-      const auto found = targets.find(unit);
-      if (found != targets.end()) {
-        pending.insert(pending.end(), found->second.begin(), found->second.end());
-      }
-    }
-    return true;
-  }
-
   std::uint64_t native_bytes = 0;
   Engine engine;
   std::shared_ptr<const void> owner;
@@ -285,22 +154,15 @@ public:
   std::map<std::uint64_t, std::string> event_symbols;
   std::map<Address, std::string> symbols;
   std::vector<std::byte> bitcode, object;
-  std::map<Address, std::vector<Encoding>> sources;
-  std::map<Address, std::vector<Layout>> layouts;
-  std::map<Address, std::set<Address>> targets;
-  std::set<Address> indirect;
 };
 
 Program::Program(const std::span<const BlockInstruction> instructions, const Memory &memory)
-    : Program(instructions,
-              {.memory = {.source = memory, .bindings = memory},
-               .bindings = {},
-               .interrupts = {},
-               .callbacks = {}}) {}
+    : Program(instructions, {.memory = memory, .bindings = {}, .interrupts = {}, .callbacks = {}}) {
+}
 
 Program::Program(const std::span<const BlockInstruction> instructions, const ProgramOptions options)
     : impl_(std::make_unique<Impl>()) {
-  const auto functions = impl_->prepare(instructions, options.memory);
+  const auto functions = regions(instructions);
   if (functions.empty()) { return; }
   weichwolf::llvm19::initialize_native();
   Owner<LLVMTargetMachineRef, LLVMDisposeTargetMachine> machine;
@@ -326,13 +188,13 @@ Program::Program(const std::span<const BlockInstruction> instructions, const Pro
   };
   const Flow flow(module.get(),
                   functions,
-                  options.memory.bindings,
+                  options.memory,
                   options.prefix,
                   options.output != ArtifactOutput::none,
                   options.registers);
   impl_->event_symbols = options.prepare_events
                              ? lift_events(module.get(),
-                                           options.memory.bindings,
+                                           options.memory,
                                            options.prefix,
                                            options.interrupts,
                                            options.output != ArtifactOutput::none)
@@ -409,10 +271,6 @@ Program::Program(const Program &semantic,
   impl_->owner = symbols.owner;
   impl_->symbols = semantic.impl_->symbols;
   impl_->event_symbols = semantic.impl_->event_symbols;
-  impl_->sources = semantic.impl_->sources;
-  impl_->layouts = semantic.impl_->layouts;
-  impl_->targets = semantic.impl_->targets;
-  impl_->indirect = semantic.impl_->indirect;
   std::map<std::string, const void *> addresses;
   for (const auto symbol : symbols.symbols) { addresses.emplace(symbol.name, symbol.address); }
   for (const auto &operation : instructions) {
@@ -458,15 +316,6 @@ const void *Program::event(const std::uint64_t key) const {
 
 std::string_view Program::event_symbol(const std::uint64_t key) const {
   return impl_->event_symbols.at(key);
-}
-
-const void *Program::find(const std::span<const BlockInstruction> region,
-                          const Memory &memory) const {
-  if (region.empty()) { return nullptr; }
-  const auto found = impl_->sources.find(region.front().pc);
-  if (found == impl_->sources.end() || found->second != capture(region, memory)) { return nullptr; }
-  if (!impl_->dependencies(region.front().pc, memory)) { return nullptr; }
-  return entry(region.front().pc);
 }
 
 std::uint64_t Program::native_bytes() const noexcept {

@@ -15,7 +15,6 @@ namespace cpu12::test::image {
 namespace {
 std::size_t prefixes(Core &core, Fixture &fixture) {
   const auto original = fixture.bytes;
-  const auto compiled = core.statistics().compiled_entries;
   std::size_t count = 0;
   for (unsigned selection = 0; selection < 4; ++selection) {
     for (const auto ccr : flags) {
@@ -36,7 +35,7 @@ std::size_t prefixes(Core &core, Fixture &fixture) {
         require(result.retired == grant && result.fault == Fault::none &&
                     core.state() == State{.registers = expected.registers, .failure = {}} &&
                     core.progress() == Progress{.estimated_cycles = cycles + expected.cycles} &&
-                    fixture.bytes == memory && core.statistics().compiled_entries == compiled,
+                    fixture.bytes == memory,
                 "Installed public execution must preserve independent state/progress/RAM prefixes "
                 "without translation");
         ++count;

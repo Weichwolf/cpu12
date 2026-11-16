@@ -29,7 +29,7 @@ void indirect(const NativeImage &image, const Address target, const bool declare
   if (!declared) { return; }
   core.set_memory(fixture.memory(true));
   core.install(image, to);
-  require(core.step().retired == 1, "An indexed target resumes the already prepared version");
+  require(core.run(1).retired == 1, "An indexed target resumes the already prepared version");
 }
 
 void call_return() {
@@ -64,8 +64,7 @@ void call_return() {
   core.set_memory(fixture.memory());
   core.install(image, from);
   require(core.run(8).retired == 8 && core.registers() == expected && fixture.bytes == bytes &&
-              core.progress().estimated_cycles == 9 + (8 * 3) &&
-              core.statistics().compiled_entries == 0,
+              core.progress().estimated_cycles == 9 + (8 * 3),
           "The prepared caller continues without replaying JSR, RTS or their version transitions");
 }
 
@@ -112,7 +111,7 @@ void irq(const bool returned, const bool reuse) {
         "An IRQ after a cross-version RTI reuses the original frame instead of pushing a new one");
   } else {
     require(
-        core.step().retired == 1 && !core.state().returned_frame &&
+        core.run(1).retired == 1 && !core.state().returned_frame &&
             core.progress().estimated_cycles == progress.estimated_cycles + 1,
         "The first prepared target instruction closes a preserved returned-frame window normally");
   }

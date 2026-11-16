@@ -179,15 +179,12 @@ void check(
   const auto expected = predict(bus, before, scenario);
   const auto extra = bus.extra;
   const auto progress = core.progress().estimated_cycles;
-  const auto translated = core.statistics().compiled_entries;
   const auto result = core.run(2);
-  require(
-      result.retired == scenario.retired && result.fault == scenario.fault &&
-          core.state() == expected.state &&
-          core.progress().estimated_cycles ==
-              progress + (std::uint64_t{scenario.retired} * instruction_cycles) &&
-          core.statistics().compiled_entries == translated,
-      "Dynamic word remaps preserve independent full state and exact progress without translation");
+  require(result.retired == scenario.retired && result.fault == scenario.fault &&
+              core.state() == expected.state &&
+              core.progress().estimated_cycles ==
+                  progress + (std::uint64_t{scenario.retired} * instruction_cycles),
+          "Dynamic word remaps preserve independent full state and exact progress");
   require(
       bus.bytes == expected.bytes && bus.known == expected.known && bus.extra == extra &&
           bus.code == program,

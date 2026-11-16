@@ -25,7 +25,6 @@ void deadlines(const NativeImage &image) {
   Core core(fixture.memory());
   core.install(image, first_id);
   const auto original = fixture.bytes;
-  const auto compiled = core.statistics().compiled_entries;
   constexpr unsigned bound = 64;
   for (unsigned delta = 0; delta <= bound; ++delta) {
     fixture.bytes = original;
@@ -42,7 +41,7 @@ void deadlines(const NativeImage &image) {
     require(result.retired == count && result.fault == Fault::none &&
                 core.state() == State{.registers = expected.registers, .failure = {}} &&
                 core.progress() == Progress{.estimated_cycles = progress + expected.cycles} &&
-                fixture.bytes == memory && core.statistics().compiled_entries == compiled,
+                fixture.bytes == memory,
             "Prepared deadline execution must preserve exact independent atomic prefixes and RAM");
   }
 }
@@ -63,16 +62,14 @@ void deferral() {
   auto before = initial;
   before.ccr = 0x10;
   core.set_registers(before);
-  const auto compiled = core.statistics().compiled_entries;
-  require(core.step().retired == 1 && core.state().irq_delay == 1 &&
+  require(core.run(1).retired == 1 && core.state().irq_delay == 1 &&
               !core.interrupt_ready(InterruptKind::maskable),
           "A prepared CLI must retain the fresh one-instruction IRQ delay");
   const auto cycles = core.progress().estimated_cycles;
   constexpr unsigned deadline = 100;
   require(core.run_until(cycles + deadline).retired == 1 && core.state().irq_delay == 0 &&
               core.interrupt_ready(InterruptKind::maskable) &&
-              core.progress().estimated_cycles == cycles + 3 &&
-              core.statistics().compiled_entries == compiled,
+              core.progress().estimated_cycles == cycles + 3,
           "Prepared execution must return at the exact IRQ-unmask boundary without lazy codegen");
 }
 }

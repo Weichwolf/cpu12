@@ -20,7 +20,6 @@ namespace frames = cpu12::test::interrupts;
 constexpr std::array<Address, 8> positions{0, 1, 4, 8, 9, 0xfffc, 0xffff, 0x9000};
 
 void wait_case(Core &core, Fixture &fixture, const Form form, const Registers before) {
-  const auto compiled = core.statistics().compiled_entries;
   core.set_registers(before);
   const auto cycles = core.progress().estimated_cycles;
   auto memory = fixture.bytes;
@@ -36,7 +35,7 @@ void wait_case(Core &core, Fixture &fixture, const Form form, const Registers be
   }
   const auto execution = masked ? ExecutionState::running : form.execution;
   const auto cost = masked ? 2U : form.cycles;
-  const auto result = core.step();
+  const auto result = core.run(1);
   if (core.registers() != wanted || core.progress().estimated_cycles != cycles + cost ||
       fixture.bytes != memory) {
     throw std::runtime_error(
@@ -50,11 +49,10 @@ void wait_case(Core &core, Fixture &fixture, const Form form, const Registers be
   require(result.retired == 1 && result.fault == Fault::none && result.pc == form.pc &&
               result.opcode == form.opcode &&
               core.state() == State{.registers = wanted, .failure = {}, .execution = execution} &&
-              core.progress().estimated_cycles == cycles + cost && fixture.bytes == memory &&
-              core.statistics().compiled_entries == compiled,
+              core.progress().estimated_cycles == cycles + cost && fixture.bytes == memory,
           "Prepared WAI/STOP preserve independent full-CCR/wrapped-stack states, RAM and cycles");
   if (!masked) {
-    require(core.run(16).retired == 0 && core.step().retired == 0 && fixture.bytes == memory &&
+    require(core.run(16).retired == 0 && core.run(1).retired == 0 && fixture.bytes == memory &&
                 core.progress().estimated_cycles == cycles + cost,
             "A prepared sleeping owner cannot fetch, retire or replay its frame");
   }
@@ -79,7 +77,6 @@ std::size_t waits(Core &core, Fixture &fixture) {
 
 std::size_t returns(Core &core, Fixture &fixture) {
   std::size_t count = 0;
-  const auto compiled = core.statistics().compiled_entries;
   for (unsigned ccr = 0; ccr <= byte_mask; ++ccr) {
     for (unsigned restored = 0; restored <= byte_mask; ++restored) {
       auto before = seed;
@@ -93,14 +90,13 @@ std::size_t returns(Core &core, Fixture &fixture) {
       const auto memory = fixture.bytes;
       core.set_registers(before);
       const auto cycles = core.progress().estimated_cycles;
-      const auto result = core.step();
+      const auto result = core.run(1);
       require(result.retired == 1 && result.fault == Fault::none && result.pc == rti &&
                   result.opcode == isa::rti[0] &&
                   core.state() == State{.registers = frames::expected(before, target),
                                         .failure = {},
                                         .returned_frame = true} &&
-                  core.progress().estimated_cycles == cycles + 8 && fixture.bytes == memory &&
-                  core.statistics().compiled_entries == compiled,
+                  core.progress().estimated_cycles == cycles + 8 && fixture.bytes == memory,
               "Prepared RTI stages all fields, enforces every sticky-X combination and opens its "
               "return window");
       require(core.run(1).retired == 1 && !core.state().returned_frame &&
@@ -117,22 +113,20 @@ void events(Core &core, Fixture &fixture) {
     core.set_registers(seed);
     fixture.bytes[vector] = static_cast<Byte>(rti >> byte_bits);
     fixture.bytes[vector + 1] = static_cast<Byte>(rti);
-    const auto compiled = core.statistics().compiled_entries;
     const auto cycles = core.progress().estimated_cycles;
     require(core.run(16).retired == 1 && core.state().execution == ExecutionState::waiting &&
                 core.interrupt(request).accepted && core.registers().pc == rti &&
                 core.registers().sp == sleeping(seed).sp,
             "A prepared WAI consumes the actual declared IRQ without stacking a second frame");
     require(
-        core.step().retired == 1 && core.state().returned_frame &&
+        core.run(1).retired == 1 && core.state().returned_frame &&
             core.registers() == Registers{.pc = wai + 1,
                                           .d = seed.d,
                                           .x = seed.x,
                                           .y = seed.y,
                                           .sp = seed.sp,
                                           .ccr = seed.ccr} &&
-            core.progress().estimated_cycles == cycles + 7 + 6 + 8 &&
-            core.statistics().compiled_entries == compiled,
+            core.progress().estimated_cycles == cycles + 7 + 6 + 8,
         "A complete prepared WAI/IRQ/RTI round trip restores the real frame without compilation");
   }
   auto before = seed;

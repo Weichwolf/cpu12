@@ -33,8 +33,6 @@ public:
                std::optional<std::span<const InterruptRequest>> incoming = {},
                ChannelAccess access = {}) const;
   void cancel_transition() noexcept;
-  [[nodiscard]] Fault validate_instruction(Address pc, std::span<const Byte> bytes) const;
-  [[nodiscard]] PreparationReport prepare(std::span<const Address> established_entries);
   [[nodiscard]] const Memory &memory() const noexcept;
   [[nodiscard]] const MemoryBinding *bindings() const noexcept;
   Jit(const Jit &) = delete;
@@ -43,7 +41,6 @@ public:
   run_prepared(std::uint32_t budget, Registers &registers, NativeContext &context);
   void interrupt(InterruptRequest request, Registers &registers, NativeContext &context);
   void resume_stop(Registers &registers, NativeContext &context);
-  [[nodiscard]] Statistics statistics() const noexcept;
 
 private:
   class Impl;

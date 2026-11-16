@@ -66,7 +66,7 @@ Semantic lower() {
   const detail::ImagePlan plan({.variants = variants});
   const auto memory = Memory::window({.first = entry, .bytes = bytes, .writable = false});
   const detail::llvm19::Program program(plan.variants().front().instructions,
-                                        {.memory = {.source = memory, .bindings = memory},
+                                        {.memory = memory,
                                          .prefix = "semantic_",
                                          .bindings = {},
                                          .output = detail::llvm19::ArtifactOutput::semantic,

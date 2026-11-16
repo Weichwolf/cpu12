@@ -116,8 +116,7 @@ void verify_prefix(const Core &core,
       bus.calls == (failed ? failure + 1 : operations) &&
           core.progress().estimated_cycles == expected_cycles &&
           result.retired == (yielding ? 1 : retired) &&
-          core.registers().pc == (failed ? entry + (failure * 3) : idle) &&
-          core.statistics().compiled_entries == 0,
+          core.registers().pc == (failed ? entry + (failure * 3) : idle),
       "Each selected callback preserves its exact completed prefix, PC, cycles and no translation");
   if (failed) {
     verify_fault(result, point);
@@ -180,7 +179,7 @@ void mapped_ram(const NativeImage &image, const Byte value, const bool writable)
   constexpr std::uint64_t cycles = 17;
   require(result.fault == Fault::none && result.retired == operations &&
               core.registers().pc == idle && core.registers().d == word &&
-              core.progress().estimated_cycles == cycles && core.statistics().compiled_entries == 0,
+              core.progress().estimated_cycles == cycles,
           "Dynamic grants retain original data and cycles with selected host bindings");
   if (writable) {
     require(bus.calls == 0 && written == data && known == std::array<Byte, 2>{1, 1},

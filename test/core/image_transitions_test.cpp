@@ -2,7 +2,6 @@
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
 #include "image_transitions.hpp"
-#include "isa.hpp"
 
 #include <algorithm>
 #include <array>
@@ -19,11 +18,9 @@ void suspended(Core &core, Fixture &fixture) {
   const auto progress = core.progress();
   const auto bytes = fixture.bytes;
   const auto known = fixture.known;
-  const auto compiled = core.statistics().compiled_entries;
   for (unsigned repeat = 0; repeat < 3; ++repeat) {
-    require(core.run(8).retired == 0 && core.step().retired == 0 &&
-                core.run_until(progress.estimated_cycles + 32).retired == 0 &&
-                core.run_instruction(isa::nop).retired == 0,
+    require(core.run(8).retired == 0 && core.run(1).retired == 0 &&
+                core.run_until(progress.estimated_cycles + 32).retired == 0,
             "Every execution API waits at the real prepared transfer without replay");
     require(!core.interrupt_ready(InterruptKind::maskable) &&
                 !core.interrupt_ready(InterruptKind::xirq) && !core.interrupt_frame_available() &&
@@ -31,12 +28,9 @@ void suspended(Core &core, Fixture &fixture) {
             "A suspended transfer cannot admit new events before its declared target is bound");
     rejects([&] { core.set_registers(seed); }, "pending CPU12 transition");
     rejects([&] { core.close_return_window(); }, "return boundary");
-    const auto preparation = core.prepare(targets);
-    require(preparation.failure.fault == Fault::unprepared_execution &&
-                preparation.unresolved_entries == 1 && core.state() == state &&
-                core.progress() == progress && fixture.bytes == bytes && fixture.known == known &&
-                core.statistics().compiled_entries == compiled,
-            "Pending preparation and rejected bypasses retain complete state, RAM, time and "
+    require(core.state() == state && core.progress() == progress && fixture.bytes == bytes &&
+                fixture.known == known,
+            "Rejected bypasses retain complete state, RAM, time and "
             "prepared code");
   }
 }
@@ -82,9 +76,9 @@ void prefix(const NativeImage &image,
   expected.pc = destination + 2;
   expected.d = static_cast<Address>((expected.d & high_byte_mask) | payload[1]);
   expected.ccr = static_cast<Byte>(expected.ccr & ~nzv);
-  require(core.step().retired == 1 && core.state() == State{.registers = expected, .failure = {}} &&
+  require(core.run(1).retired == 1 && core.state() == State{.registers = expected, .failure = {}} &&
               core.progress().estimated_cycles == elapsed + 1 && fixture.bytes == bytes &&
-              fixture.known == known && core.statistics().compiled_entries == 0,
+              fixture.known == known,
           "The prepared target executes its original first instruction without decoding, emission "
           "or loader replay");
 }

@@ -71,11 +71,11 @@ void bind_choice(Core &core, Fixture &fixture, const NativeImage &image, const B
           "Finite choices survive repeated remaps and rejected identities/bytes without replay");
   core.install(image, selected);
   require(core.state() == before && core.progress() == progress && fixture.bytes == bytes &&
-              fixture.known == known && core.statistics().compiled_entries == 0,
+              fixture.known == known,
           "A matching declared choice binds retained native code without changing guest state");
   auto expected = before;
   expected.registers.pc = destination + 2;
-  require(core.step().retired == 1 && core.state() == expected &&
+  require(core.run(1).retired == 1 && core.state() == expected &&
               core.progress().estimated_cycles == progress.estimated_cycles + 1 &&
               fixture.bytes == bytes && fixture.known == known,
           "The chosen original target executes its LDAB once with exact flags and storage");
