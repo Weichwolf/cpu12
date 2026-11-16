@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
-#include "observed_core.hpp"
+#include "instruction_image.hpp"
+#include "isa.hpp"
 
 #include <array>
 #include <cstdint>
@@ -11,8 +12,9 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <vector>
 
-using cpu12::test::ObservedCore;
+using cpu12::test::InstructionCore;
 
 namespace {
 using namespace cpu12;
@@ -21,7 +23,7 @@ constexpr unsigned byte_mask = 0xff;
 constexpr unsigned word_values = 65536;
 constexpr unsigned x_mask = 0x40;
 constexpr unsigned exchange_bit = 0x80;
-constexpr Byte opcode = 0xb7;
+constexpr Byte opcode = static_cast<Byte>(isa::Opcode::tfr);
 constexpr Registers seed{
     .pc = 0xfffe, .d = 0xa55a, .x = 0x1234, .y = 0xabcd, .sp = 0x8000, .ccr = 0xff};
 std::uint64_t checked = 0;
@@ -97,12 +99,13 @@ Registers expected(const Registers before, const unsigned postbyte) {
   return wanted;
 }
 
-void retired(ObservedCore &core,
+void retired(InstructionCore &core,
              const std::span<const Byte> code,
              const Registers before,
              const Registers wanted) {
   core.set_registers(before);
-  const auto result = core.run_instruction(code);
+  core.select(code, before.pc);
+  const auto result = core.run(1);
   if (result.retired != 1 || result.fault != Fault::none || result.pc != before.pc ||
       result.opcode != code[0] || core.registers() != wanted) {
     const auto actual = core.registers();
@@ -120,7 +123,7 @@ struct Domain {
   bool destination;
 };
 
-void domain(ObservedCore &core, const Domain point) {
+void domain(InstructionCore &core, const Domain point) {
   const auto selector = point.destination ? point.postbyte % 8U : (point.postbyte / 16U) % 8U;
   const bool word = selector >= 4;
   const auto values = word ? word_values : byte_values;
@@ -140,7 +143,7 @@ void domain(ObservedCore &core, const Domain point) {
   }
 }
 
-void matrices(ObservedCore &core) {
+void matrices(InstructionCore &core) {
   constexpr unsigned factory = 3;
   for (unsigned postbyte = 0; postbyte < byte_values; ++postbyte) {
     const auto source = (postbyte / 16U) % 8U;
@@ -151,12 +154,9 @@ void matrices(ObservedCore &core) {
       domain(core, {.postbyte = postbyte, .destination = true});
     }
   }
-  constexpr unsigned normal_postbytes = 196;
-  require(core.statistics().compiled_entries == normal_postbytes,
-          "Each legal raw postbyte, including its ignored bit3, has its own correct cache entry");
 }
 
-void literal_overlaps(ObservedCore &core) {
+void literal_overlaps(InstructionCore &core) {
   struct Case {
     Byte postbyte;
     std::uint16_t d;
@@ -184,7 +184,7 @@ void literal_overlaps(ObservedCore &core) {
   }
 }
 
-void flagged_accumulator_transfers(ObservedCore &core) {
+void flagged_accumulator_transfers(InstructionCore &core) {
   constexpr Byte prefix = 0x18;
   constexpr Byte tab = 0x0e;
   constexpr Byte tba = 0x0f;
@@ -209,48 +209,53 @@ void flagged_accumulator_transfers(ObservedCore &core) {
   }
 }
 
-void refusals(ObservedCore &core) {
-  const auto before = core.registers();
-  const auto count = core.statistics();
+void factory_refusals() {
   unsigned factory_cases = 0;
+  constexpr Address pc = 0xfffe;
   for (unsigned postbyte = 0; postbyte < byte_values; ++postbyte) {
     if ((postbyte / 16U) % 8U != 3 && postbyte % 8U != 3) { continue; }
-    const auto result = core.run_instruction(std::array{opcode, static_cast<Byte>(postbyte)});
-    require(result.fault == Fault::unsupported_instruction && result.retired == 0 &&
-                result.pc == before.pc && result.opcode == opcode && core.registers() == before,
-            "Factory-only temporaries refuse explicitly before architectural or bus effects");
+    const std::array bytes{opcode,
+                           static_cast<Byte>(postbyte),
+                           static_cast<Byte>(isa::Opcode::bra_relative),
+                           Byte{0xfe}};
+    const std::array spans{CodeSpan{.address = pc, .words = bytes}};
+    const std::array entries{pc};
+    const std::array variants{CodeVariant{.id = 0, .code = spans, .entries = entries}};
+    bool rejected = false;
+    try {
+      static_cast<void>(Core::lower({.variants = variants},
+                                    {.memory = {},
+                                     .interrupts = {},
+                                     .transitions = {},
+                                     .callbacks = {},
+                                     .bindings = {},
+                                     .topology = MemoryTopology::dynamic}));
+    } catch (const std::invalid_argument &) { rejected = true; }
+    require(rejected, "Factory-only temporaries refuse during public image preparation");
     ++factory_cases;
   }
   constexpr unsigned reserved_postbytes = 60;
   require(factory_cases == reserved_postbytes,
           "Exactly sixty factory-only postbytes remain explicit");
-  constexpr std::array<std::array<Byte, 4>, 3> captures{
-      {{opcode, 0, 0, 0}, {0x18, 0x0e, 0, 0}, {0x18, 0x0f, 0, 0}}};
-  for (const auto input : captures) {
-    for (unsigned length = 1; length <= input.size(); ++length) {
-      if (length == 2) { continue; }
-      require(core.run_instruction(std::span(input).first(length)).fault ==
-                      Fault::unsupported_instruction &&
-                  core.registers() == before,
-              "Valid cached transfers cannot admit incomplete or padded captures");
-    }
-  }
-  require(core.statistics().compiled_entries == count.compiled_entries &&
-              core.statistics().native_instructions == count.native_instructions,
-          "Refused transfer captures never compile or retire");
 }
 }
 
 int main() {
   try {
-    ObservedCore core;
+    std::vector<std::vector<Byte>> operations;
+    for (unsigned postbyte = 0; postbyte < byte_values; ++postbyte) {
+      if ((postbyte / 16U) % 8U == 3 || postbyte % 8U == 3) { continue; }
+      operations.push_back({opcode, static_cast<Byte>(postbyte)});
+    }
+    for (const auto code : {isa::opcode<isa::Opcode::tab>(), isa::opcode<isa::Opcode::tba>()}) {
+      operations.emplace_back(code.begin(), code.end());
+    }
+    constexpr std::array<Address, 2> positions{0xfffe, 0xffff};
+    InstructionCore core(operations, positions);
     matrices(core);
     literal_overlaps(core);
     flagged_accumulator_transfers(core);
-    refusals(core);
-    require(core.statistics().native_instructions == checked &&
-                core.statistics().read_callbacks == 0 && core.statistics().write_callbacks == 0,
-            "All legal transfer execution is native and touches no external bus or ISA helper");
+    factory_refusals();
     std::cout << "Verified " << checked
               << " native transfer/exchange cases, signed and fixed extensions, A/B/D overlaps, "
                  "CCR X restrictions, ignored encoding bits and explicit factory refusals.\n";

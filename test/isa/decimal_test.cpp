@@ -3,31 +3,32 @@
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
 #include "decimal_model.hpp"
-#include "observed_core.hpp"
+#include "instruction_image.hpp"
+#include "isa.hpp"
 
 #include <array>
 #include <cstdint>
 #include <span>
 #include <stdexcept>
+#include <vector>
 
 namespace cpu12::test::accumulator {
 namespace {
 constexpr unsigned qualified_flags = 0xfd;
 
-void unsupported(ObservedCore &core, const Registers before) {
-  const auto native = core.statistics().native_instructions;
-  const auto result = core.run_instruction(decimal_code);
+void unsupported(InstructionCore &core, const Registers before) {
+  core.select(decimal_code, before.pc);
+  const auto result = core.run(1);
   require(result.retired == 0 && result.fault == Fault::unsupported_state &&
               result.pc == before.pc && result.opcode == decimal_code[0] &&
               result.value == actual_input(before) && result.address == 0 &&
-              result.access_size == 0 && core.registers() == before &&
-              core.statistics().native_instructions == native,
+              result.access_size == 0 && core.registers() == before,
           "Unqualified DAA input reports actual A/C/H and PC without CPU mutation, fake memory "
           "access or retirement");
   ++unqualified;
 }
 
-void table_domain(ObservedCore &core) {
+void table_domain(InstructionCore &core) {
   const auto accepted = checked;
   const auto refused = unqualified;
   constexpr unsigned preserved_b = 0x5a;
@@ -61,7 +62,10 @@ unsigned packed_decimal(const unsigned value) {
   return ((value / 10U) * 16U) + (value % 10U);
 }
 
-void bcd_sum(ObservedCore &core, const unsigned left, const unsigned right, const unsigned carry) {
+void bcd_sum(InstructionCore &core,
+             const unsigned left,
+             const unsigned right,
+             const unsigned carry) {
   constexpr unsigned decimal_range = 100;
   constexpr unsigned preserved_b = 0x5a;
   auto before = seed;
@@ -70,7 +74,8 @@ void bcd_sum(ObservedCore &core, const unsigned left, const unsigned right, cons
   before.ccr = static_cast<Byte>(upper_flags | carry);
   core.set_registers(before);
   const auto operand = packed_decimal(right);
-  const std::array<Byte, 2> adc{0x89, static_cast<Byte>(operand)};
+  const std::array<Byte, 2> adc{static_cast<Byte>(isa::Opcode::adca_immediate),
+                                static_cast<Byte>(operand)};
   const auto raw = arithmetic({.operation = Operation::add, .before = before},
                               {.left = packed_decimal(left), .right = operand, .carry = carry});
   retired(core, adc, before, raw);
@@ -80,7 +85,7 @@ void bcd_sum(ObservedCore &core, const unsigned left, const unsigned right, cons
   retired(core, decimal_code, raw, wanted, qualified_flags);
 }
 
-void aba_sum(ObservedCore &core, const unsigned left, const unsigned right) {
+void aba_sum(InstructionCore &core, const unsigned left, const unsigned right) {
   constexpr unsigned decimal_range = 100;
   auto before = seed;
   before.d =
@@ -98,7 +103,7 @@ void aba_sum(ObservedCore &core, const unsigned left, const unsigned right) {
           qualified_flags);
 }
 
-void decimal_sums(ObservedCore &core) {
+void decimal_sums(InstructionCore &core) {
   constexpr unsigned maximum = 99;
   for (unsigned left = 0; left <= maximum; ++left) {
     for (unsigned right = 0; right <= maximum; ++right) {
@@ -124,10 +129,15 @@ struct Read {
 void fault_boundary() {
   Read read;
   Io io{.owner = &read, .read = Read::refused};
-  ObservedCore core(Memory::external(), &io);
+  constexpr auto read_code =
+      isa::program(isa::opcode<isa::Opcode::ldaa_extended>(), std::array<Byte, 2>{0x12, 0x34});
+  const std::array operations{std::vector<Byte>(read_code.begin(), read_code.end()),
+                              std::vector<Byte>(decimal_code.begin(), decimal_code.end())};
+  constexpr std::array<Address, 1> positions{seed.pc};
+  InstructionCore core(operations, positions, &io);
   core.set_registers(seed);
-  constexpr std::array<Byte, 3> old_read{0xb6, 0x12, 0x34};
-  const auto old = core.run_instruction(old_read);
+  core.select(read_code, seed.pc);
+  const auto old = core.run(1);
   constexpr unsigned old_address = 0x1234;
   require(old.fault == Fault::memory_read && old.address == old_address && old.access_size == 1 &&
               read.calls == 1,
@@ -138,7 +148,7 @@ void fault_boundary() {
   before.ccr = half_flag;
   core.set_registers(before);
   unsupported(core, before);
-  const auto repeated = core.run_instruction(decimal_code);
+  const auto repeated = core.run(1);
   require(
       repeated.fault == Fault::unsupported_state && repeated.value == actual_input(before) &&
           repeated.address == 0 && repeated.access_size == 0 && read.calls == 1 &&
@@ -151,7 +161,7 @@ void fault_boundary() {
   if (!selected) {
     throw std::runtime_error("Explicit fresh registers must provide a documented DAA input");
   }
-  const auto recovered = core.run_instruction(decimal_code);
+  const auto recovered = core.run(1);
   const auto expected = decimal_result(
       before,
       {.a = (static_cast<unsigned>(before.d >> byte_bits) + selected->correction) & byte_mask,
@@ -163,7 +173,7 @@ void fault_boundary() {
 }
 }
 
-void decimal_cases(ObservedCore &core) {
+void decimal_cases(InstructionCore &core) {
   table_domain(core);
   decimal_sums(core);
   fault_boundary();

@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #pragma once
 #include "cpu12/core.hpp"
-#include "observed_core.hpp"
+#include "instruction_image.hpp"
+#include "isa.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <span>
@@ -26,14 +28,20 @@ struct Encoding {
 };
 
 inline Encoding encode(const Operation operation) {
-  constexpr std::array<Encoding, 8> codes{{{.bytes = {0x12, 0}, .length = 1},
-                                           {.bytes = {0x13, 0}, .length = 1},
-                                           {.bytes = {0x18, 0x13}, .length = 2},
-                                           {.bytes = {0x18, 0x10}, .length = 2},
-                                           {.bytes = {0x18, 0x15}, .length = 2},
-                                           {.bytes = {0x11, 0}, .length = 1},
-                                           {.bytes = {0x18, 0x14}, .length = 2},
-                                           {.bytes = {0x18, 0x11}, .length = 2}}};
+  constexpr auto make = []<isa::Opcode opcode>() {
+    constexpr auto bytes = isa::opcode<opcode>();
+    Encoding result{.bytes = {}, .length = bytes.size()};
+    std::ranges::copy(bytes, result.bytes.begin());
+    return result;
+  };
+  constexpr std::array codes{make.operator()<isa::Opcode::mul>(),
+                             make.operator()<isa::Opcode::emul>(),
+                             make.operator()<isa::Opcode::emuls>(),
+                             make.operator()<isa::Opcode::idiv>(),
+                             make.operator()<isa::Opcode::idivs>(),
+                             make.operator()<isa::Opcode::ediv>(),
+                             make.operator()<isa::Opcode::edivs>(),
+                             make.operator()<isa::Opcode::fdiv>()};
   return codes.at(static_cast<unsigned>(operation));
 }
 
@@ -86,10 +94,11 @@ inline Expected multiply(const Input input) {
   return {.registers = wanted};
 }
 
-inline void retired(ObservedCore &core, const Input input, const Expected expected) {
+inline void retired(InstructionCore &core, const Input input, const Expected expected) {
   core.set_registers(input.before);
   const auto code = encode(input.operation);
-  const auto result = core.run_instruction(code.view());
+  core.select(code.view(), input.before.pc);
+  const auto result = core.run(1);
   const auto actual = core.registers();
   auto defined = actual;
   if (expected.undefined_d) { defined.d = expected.registers.d; }
@@ -107,5 +116,5 @@ inline void retired(ObservedCore &core, const Input input, const Expected expect
   if (expected.undefined_d || expected.defined_ccr != byte_mask) { ++policy_cases; }
 }
 
-void divisions(ObservedCore &core);
+void divisions(InstructionCore &core);
 }

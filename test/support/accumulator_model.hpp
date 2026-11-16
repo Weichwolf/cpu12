@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #pragma once
 #include "cpu12/core.hpp"
-#include "observed_core.hpp"
+#include "instruction_image.hpp"
+#include "isa.hpp"
 
 #include <array>
 #include <cstdint>
@@ -64,17 +65,19 @@ inline Registers arithmetic(const Input point, const Operands operands) {
 }
 
 inline std::array<Byte, 2> encode(const Operation operation) {
-  constexpr std::array<Byte, 3> instructions{6, 0x16, 0x17};
-  constexpr Byte prefix = 0x18;
-  return {prefix, instructions.at(static_cast<unsigned>(operation))};
+  constexpr std::array instructions{isa::opcode<isa::Opcode::aba>(),
+                                    isa::opcode<isa::Opcode::sba>(),
+                                    isa::opcode<isa::Opcode::cba>()};
+  return instructions.at(static_cast<unsigned>(operation));
 }
 
-inline void retired(ObservedCore &core,
+inline void retired(InstructionCore &core,
                     const std::span<const Byte> code,
                     const Registers before,
                     const Registers wanted,
                     const unsigned defined_ccr = byte_mask) {
-  const auto result = core.run_instruction(code);
+  core.select(code, before.pc);
+  const auto result = core.run(1);
   const auto actual = core.registers();
   auto defined = actual;
   defined.ccr = wanted.ccr;
@@ -89,5 +92,5 @@ inline void retired(ObservedCore &core,
   ++checked;
 }
 
-void decimal_cases(ObservedCore &core);
+void decimal_cases(InstructionCore &core);
 }

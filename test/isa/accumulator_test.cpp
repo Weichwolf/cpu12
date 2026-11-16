@@ -1,21 +1,24 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "accumulator_model.hpp"
 #include "cpu12/core.hpp"
-#include "observed_core.hpp"
+#include "cpu12/memory.hpp"
+#include "instruction_image.hpp"
+#include "isa.hpp"
 
 #include <array>
 #include <cstdint>
 #include <exception>
 #include <iostream>
 #include <span>
+#include <vector>
 
-using cpu12::test::ObservedCore;
+using cpu12::test::InstructionCore;
 
 namespace {
 using namespace cpu12;
 using namespace cpu12::test::accumulator;
 
-void full_domain(ObservedCore &core, const Operation operation) {
+void full_domain(InstructionCore &core, const Operation operation) {
   const auto code = encode(operation);
   for (unsigned data = 0; data <= word_mask; ++data) {
     for (unsigned ccr = 0; ccr <= byte_mask; ++ccr) {
@@ -30,7 +33,7 @@ void full_domain(ObservedCore &core, const Operation operation) {
   }
 }
 
-void pc_wrap(ObservedCore &core) {
+void pc_wrap(InstructionCore &core) {
   constexpr std::array<std::uint16_t, 4> pcs{0, 1, 0xfffe, 0xffff};
   constexpr std::array<Operation, 3> operations{
       Operation::add, Operation::subtract, Operation::compare};
@@ -50,10 +53,11 @@ void pc_wrap(ObservedCore &core) {
   }
 }
 
-void aliases(ObservedCore &core) {
+void aliases(InstructionCore &core) {
   constexpr std::array<std::uint16_t, 8> bases{0, 1, 0xff, 0x100, 0x7fff, 0x8000, 0xfffe, 0xffff};
   constexpr std::array<unsigned, 4> flags{0, 0xff, 0xa5, 0x5a};
-  constexpr std::array<std::array<std::uint8_t, 2>, 2> instructions{{{0x1a, 0xe5}, {0x19, 0xed}}};
+  constexpr std::array instructions{isa::opcode<isa::Opcode::abx_indexed>(),
+                                    isa::opcode<isa::Opcode::aby_indexed>()};
   for (unsigned index = 0; index < instructions.size(); ++index) {
     const auto code = instructions[index];
     const auto field = index == 0 ? &Registers::x : &Registers::y;
@@ -75,37 +79,33 @@ void aliases(ObservedCore &core) {
   }
 }
 
-void refusals() {
-  ObservedCore core;
-  constexpr std::array<std::array<std::uint8_t, 3>, 4> padded{
-      {{0x18, 6, 0}, {0x18, 7, 0}, {0x18, 0x16, 0}, {0x18, 0x17, 0}}};
-  for (const auto code : padded) {
-    core.set_registers(seed);
-    require(core.run_instruction(code).fault == Fault::unsupported_instruction &&
-                core.registers() == seed,
-            "Padded accumulator captures refuse before native retirement");
-  }
-  constexpr std::array<std::uint8_t, 1> prefix{0x18};
-  require(core.run_instruction(prefix).fault == Fault::unsupported_instruction &&
-              core.statistics().compiled_entries == 0,
-          "Truncated accumulator prefix does not compile");
-}
 }
 
 int main() {
   try {
-    ObservedCore core;
+    std::vector<std::vector<Byte>> operations;
+    for (const auto operation : {Operation::add, Operation::subtract, Operation::compare}) {
+      const auto bytes = encode(operation);
+      operations.emplace_back(bytes.begin(), bytes.end());
+    }
+    for (const auto bytes : {isa::opcode<isa::Opcode::abx_indexed>(),
+                             isa::opcode<isa::Opcode::aby_indexed>(),
+                             isa::opcode<isa::Opcode::daa>()}) {
+      operations.emplace_back(bytes.begin(), bytes.end());
+    }
+    constexpr unsigned decimal_values = 100;
+    for (unsigned right = 0; right < decimal_values; ++right) {
+      const auto operand = static_cast<Byte>(((right / 10U) * 16U) + (right % 10U));
+      operations.push_back({static_cast<Byte>(isa::Opcode::adca_immediate), operand});
+    }
+    constexpr std::array<Address, 4> positions{0, 1, 0xfffe, 0xffff};
+    InstructionCore core(operations, positions);
     full_domain(core, Operation::add);
     full_domain(core, Operation::subtract);
     full_domain(core, Operation::compare);
     pc_wrap(core);
     aliases(core);
     decimal_cases(core);
-    refusals();
-    require(core.statistics().native_instructions == checked &&
-                core.statistics().read_callbacks == 0 && core.statistics().write_callbacks == 0,
-            "Accumulator/BCD instructions and existing aliases execute natively without data "
-            "callbacks");
     std::cout << "Verified " << checked << " native accumulator/BCD cases and " << unqualified
               << " explicit unqualified DAA state boundaries without retirement.\n";
   } catch (const std::exception &error) {

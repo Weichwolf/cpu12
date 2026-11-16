@@ -2,13 +2,14 @@
 #pragma once
 #include "accumulator_model.hpp"
 #include "cpu12/core.hpp"
+#include "isa.hpp"
 
 #include <array>
 #include <cstdint>
 #include <optional>
 
 namespace cpu12::test::accumulator {
-inline constexpr std::array<Byte, 2> decimal_code{0x18, 7};
+inline constexpr auto decimal_code = isa::opcode<isa::Opcode::daa>();
 inline constexpr unsigned half_flag = 0x20;
 
 struct Row {
