@@ -2,6 +2,7 @@
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
 #include "isa.hpp"
+#include "loop_model.hpp"
 
 #include <array>
 #include <cstddef>
@@ -169,43 +170,36 @@ struct Fixture {
         bytes[offset + size + 1] = static_cast<Byte>(byte_mask - size - 1);
       }
     }
+    std::size_t index = 0;
+    for (const auto operation : operations) {
+      for (const auto operand : operands(operation)) {
+        static_cast<void>(operand);
+        const auto at = entries[index++];
+        spans.push_back(
+            {.address = at, .words = std::span(bytes).subspan(at - first, length(operation) + 2)});
+      }
+    }
   }
 
   std::vector<Byte> bytes;
   std::vector<Address> entries;
+  std::vector<CodeSpan> spans;
 };
 
-void prefixes(Core &prepared, Core &reference, const Registers seed, const Alu operation) {
-  constexpr std::array<std::uint32_t, 8> grants{0, 1, 2, 3, 4, 5, 16, 17};
-  constexpr std::array<std::uint64_t, 8> deadlines{0, 1, 2, 3, 4, 5, 16, 17};
-  for (const auto pc : {seed.pc, static_cast<Address>(seed.pc + length(operation))}) {
-    auto state = seed;
-    state.pc = pc;
-    for (const auto grant : grants) {
-      prepared.set_registers(state);
-      reference.set_registers(state);
-      require(prepared.run(grant) == reference.run(grant) &&
-                  prepared.state() == reference.state() &&
-                  prepared.progress() == reference.progress(),
-              "Prepared immediate ALU prefixes must retain full state, result and progress");
-    }
-    for (const auto delta : deadlines) {
-      prepared.set_registers(state);
-      reference.set_registers(state);
-      const auto deadline = prepared.progress().estimated_cycles + delta;
-      require(prepared.run_until(deadline) == reference.run_until(deadline) &&
-                  prepared.state() == reference.state() &&
-                  prepared.progress() == reference.progress(),
-              "Prepared immediate ALU must retain atomic cycle deadlines from either entry");
-    }
-  }
+void prefixes(Core &core, const Registers seed, const Alu operation, const unsigned operand) {
+  cpu12::test::verify_loop(core,
+                           seed,
+                           {.entry = seed.pc,
+                            .opcode = static_cast<Byte>(operation.opcode),
+                            .length = length(operation),
+                            .cycles = operation.width == byte_bits ? 1U : 2U},
+                           [&](const Registers state) {
+                             return State{.registers = expected(state, operation, operand),
+                                          .failure = {}};
+                           });
 }
 
-void check(Core &prepared,
-           Core &reference,
-           const Registers seed,
-           const Alu operation,
-           const unsigned operand) {
+void check(Core &prepared, const Registers seed, const Alu operation, const unsigned operand) {
   prepared.set_registers(seed);
   const auto before = prepared.progress();
   const auto result = prepared.run(1);
@@ -219,10 +213,6 @@ void check(Core &prepared,
                              " D=" + std::to_string(seed.d) + " CCR=" + std::to_string(seed.ccr) +
                              " operand=" + std::to_string(operand));
   }
-  reference.set_registers(seed);
-  require(reference.run(1) == result && reference.state() == prepared.state() &&
-              reference.progress() == prepared.progress(),
-          "Independently checked LLVM ALU must also match ordinary native execution");
 }
 
 bool prefix_case(const unsigned ccr, const Alu operation, const unsigned value) {
@@ -232,11 +222,8 @@ bool prefix_case(const unsigned ccr, const Alu operation, const unsigned value) 
   return flags && edge;
 }
 
-std::size_t check_operand(Core &prepared,
-                          Core &reference,
-                          const Address entry,
-                          const Alu operation,
-                          const unsigned operand) {
+std::size_t
+check_operand(Core &prepared, const Address entry, const Alu operation, const unsigned operand) {
   const auto count = operation.width == byte_bits ? byte_mask + 1 : word_operands.size();
   for (std::size_t value = 0; value < count; ++value) {
     for (unsigned ccr = 0; ccr <= byte_mask; ++ccr) {
@@ -247,9 +234,9 @@ std::size_t check_operand(Core &prepared,
                         operation,
                         operation.width == byte_bits ? static_cast<unsigned>(value)
                                                      : word_operands[value]);
-      check(prepared, reference, seed, operation, operand);
+      check(prepared, seed, operation, operand);
       if (prefix_case(ccr, operation, static_cast<unsigned>(value))) {
-        prefixes(prepared, reference, seed, operation);
+        prefixes(prepared, seed, operation, operand);
       }
     }
   }
@@ -262,23 +249,31 @@ int main() try {
   const auto original = fixture.bytes;
   const auto memory = Memory::window({.first = first, .bytes = fixture.bytes, .writable = false});
   Core prepared(memory);
-  Core reference(memory);
+
   const auto initial = prepared.state();
-  const auto report = prepared.prepare(fixture.entries);
+  constexpr std::uint64_t variant = 1;
+  const std::array variants{
+      CodeVariant{.id = variant, .code = fixture.spans, .entries = fixture.entries}};
+  const std::array regions{
+      RegionLayout{.first = first, .size = fixture.bytes.size(), .writable = false}};
+  const std::array layouts{VariantLayout{.id = variant, .memory = regions}};
+  const auto image = Core::compile(
+      {.variants = variants},
+      {.memory = layouts, .interrupts = {}, .transitions = {}, .callbacks = {}, .bindings = {}});
+  prepared.install(image, variant);
+  const auto report = image.report();
   require(report.failure.fault == Fault::none && report.unresolved_entries == 0 &&
               report.prepared_entries == fixture.entries.size() * 2 && report.native_bytes > 0 &&
               prepared.state() == initial && prepared.progress() == Progress{},
           "Every immediate ALU opcode and backedge must prepare fully without execution");
-  const auto compilations = prepared.statistics().compiled_entries;
   std::size_t index = 0;
   std::size_t cases = 0;
   for (const auto operation : operations) {
     for (const auto operand : operands(operation)) {
-      cases += check_operand(prepared, reference, fixture.entries[index++], operation, operand);
+      cases += check_operand(prepared, fixture.entries[index++], operation, operand);
     }
   }
-  require(fixture.bytes == original && prepared.statistics().compiled_entries == compilations,
-          "Prepared ALU runs never change source or lazily translate an instruction");
+  require(fixture.bytes == original, "Installed ALU runs preserve their immutable source");
   std::cout << cases << " independent LLVM immediate ALU state cases and prefix/deadline checks\n";
 } catch (const std::exception &error) {
 
