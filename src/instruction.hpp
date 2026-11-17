@@ -32,6 +32,7 @@ enum class Kind : std::uint8_t {
   memory_bits,
   bit_branch,
   move,
+  multiply_accumulate,
   multiply_divide,
   return_interrupt,
   software_interrupt,

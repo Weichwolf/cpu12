@@ -38,6 +38,16 @@ std::optional<Instruction> multiply_divide(const std::span<const std::uint8_t> b
   if (bytes.empty()) { return {}; }
   constexpr unsigned prefix = 0x18;
   const bool page = bytes[0] == prefix;
+  constexpr unsigned emacs = 0x12;
+  constexpr unsigned byte_bits = 8;
+  if (page && bytes.size() == 4 && bytes[1] == emacs) {
+    return Instruction{
+        .kind = Kind::multiply_accumulate,
+        .opcode = bytes[0],
+        .length = 4,
+        .addressing = Addressing::extended,
+        .address = static_cast<std::uint16_t>((unsigned{bytes[2]} << byte_bits) | bytes[3])};
+  }
   if (bytes.size() != (page ? 2U : 1U)) { return {}; }
   const auto math = math_operation(bytes[page ? 1U : 0U], page);
   if (!math) { return {}; }

@@ -67,6 +67,7 @@ Successors successors(const BlockInstruction &operation) {
     case Kind::memory_unary:
     case Kind::memory_bits:
     case Kind::move:
+    case Kind::multiply_accumulate:
     case Kind::multiply_divide: return {.direct = {next}, .count = 1};
     default: throw std::logic_error("Invalid CPU12 preparation instruction kind");
   }

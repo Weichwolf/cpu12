@@ -161,6 +161,7 @@ InstructionTiming derive_timing(const Instruction &instruction) {
     }
     case Kind::loop: return {.base = 3};
     case Kind::move: return {.base = move_cycles(instruction)};
+    case Kind::multiply_accumulate: return {.base = 13};
     case Kind::multiply_divide: return {.base = math_cycles(instruction)};
     case Kind::return_interrupt: return {.base = 8};
     case Kind::software_interrupt: return {.base = 9};
@@ -194,7 +195,8 @@ bool may_access_owner(const Instruction &instruction, const Memory &memory) {
     case Kind::return_interrupt:
     case Kind::software_interrupt:
     case Kind::wait:
-    case Kind::stop: return true;
+    case Kind::stop:
+    case Kind::multiply_accumulate: return true;
     case Kind::move:
       return !ordinary_operand(memory, instruction.move_source, {.word = instruction.word}) ||
              !ordinary_operand(
