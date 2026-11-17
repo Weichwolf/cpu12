@@ -34,7 +34,7 @@ organizational boundaries. Keep LLVM private and production execution native-onl
 
 ## Qualification
 
-Use authored fixtures in test/isa, test/core, test/jit and test/bench. Compare
+Use authored fixtures in test/isa, test/core and test/bench (contract section 7). Compare
 complete independently calculated results with equivalent portable C++ compiled
 by Clang19 O3 for the same target, aiming at throughput parity. Prevent dead-code
 elimination; report actual lowering/coverage, cold and warm timing, native size,
