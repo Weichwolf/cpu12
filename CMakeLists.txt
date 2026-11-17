@@ -47,6 +47,7 @@ add_library(cpu12_core STATIC
   src/move.cpp
   src/jit.cpp
   src/jit/llvm/arithmetic.cpp src/jit/llvm/lift.cpp src/jit/llvm/program.cpp src/jit/llvm/regions.cpp
+  src/jit/llvm/grants.cpp
   src/jit/llvm/memory.cpp
   src/jit/llvm/indexed.cpp
   src/jit/llvm/flow.cpp
@@ -126,6 +127,10 @@ endif()
 set(CPU12_FORMAT_TARGET "${CPU12_TOOL_PREFIX}format-check")
 add_custom_target(${CPU12_FORMAT_TARGET} COMMAND "${CPU12_CLANG_FORMAT}" --dry-run --Werror ${CPU12_FORMAT_FILES} VERBATIM)
 if(BUILD_TESTING AND CPU12_BUILD_TESTING)
+  add_executable(cpu12-grants-test test/core/grants_test.cpp)
+  target_link_libraries(cpu12-grants-test PRIVATE cpu12::core)
+  add_test(NAME native-grant-prefixes COMMAND cpu12-grants-test)
+  set_tests_properties(native-grant-prefixes PROPERTIES TIMEOUT 30)
   add_executable(cpu12-mac-test test/isa/mac_test.cpp)
   target_link_libraries(cpu12-mac-test PRIVATE cpu12::core)
   add_test(NAME multiply-accumulate-isa COMMAND cpu12-mac-test)

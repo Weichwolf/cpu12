@@ -9,6 +9,7 @@
 #include "jit/llvm/builder.hpp"
 #include "jit/llvm/flags.hpp"
 #include "jit/llvm/flow.hpp"
+#include "jit/llvm/grants.hpp"
 #include "jit/llvm/indexed.hpp"
 #include "jit/llvm/mac.hpp"
 #include "jit/llvm/math.hpp"
@@ -25,6 +26,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <map>
+#include <optional>
+#include <set>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -45,6 +48,7 @@ public:
         builder_(context_, LLVMAppendBasicBlockInContext(context_, function_, "entry")),
         instructions_(instructions),
         memory_(memory),
+        grants_(instructions),
         registers_(flow_.registers(builder_, function_)),
         owner_(LLVMGetParam(function_, 1)),
         budget_(LLVMGetParam(function_, 2)),
@@ -58,11 +62,24 @@ public:
       blocks_.emplace(operation.pc,
                       LLVMAppendBasicBlockInContext(
                           context_, function_, ("pc" + std::to_string(operation.pc)).c_str()));
+      admitted_.emplace(operation.pc,
+                        grants_.single(operation.pc)
+                            ? blocks_.at(operation.pc)
+                            : LLVMAppendBasicBlockInContext(context_, function_, "admitted"));
+      if (grants_.head(operation.pc)) {
+        heads_.emplace(operation.pc, LLVMAppendBasicBlockInContext(context_, function_, "grant"));
+      }
     }
     dispatch(done_);
     LLVMPositionBuilderAtEnd(builder_.get(), dispatch_);
     dispatch(outward_);
-    for (const auto &operation : instructions_) { emit(operation); }
+    for (const auto &[pc, block] : heads_) { admission(pc, block); }
+    for (const auto &operation : instructions_) { emit(operation, false); }
+    for (const auto &operation : instructions_) {
+      if (!loop_members_.contains(operation.pc) && !grants_.single(operation.pc)) {
+        emit(operation, true);
+      }
+    }
     for (const auto &[pc, block] : bridges_) { transfer(block, flow_.target(pc)); }
     transfer(outward_, flow_.dispatcher());
     finish();
@@ -74,7 +91,118 @@ private:
                                    load(pc_, builder_.getInt16Ty()),
                                    missing,
                                    static_cast<unsigned>(blocks_.size()));
-    for (const auto &[pc, block] : blocks_) { LLVMAddCase(select, builder_.getInt16(pc), block); }
+    for (const auto &[pc, block] : blocks_) {
+      const auto head = heads_.find(pc);
+      LLVMAddCase(select, builder_.getInt16(pc), head == heads_.end() ? block : head->second);
+    }
+  }
+
+  LLVMValueRef fits(const GrantCost cost) {
+    auto *completed = load(retired_, builder_.getInt32Ty());
+    auto *elapsed = load(cycles_, builder_.getInt64Ty());
+    auto *instructions = builder_.CreateSub(budget_, completed);
+    auto *cycles = builder_.CreateSub(deadline_, elapsed);
+    auto *room = builder_.CreateAnd(
+        LLVMBuildICmp(
+            builder_.get(), LLVMIntUGE, instructions, builder_.getInt32(cost.instructions), ""),
+        LLVMBuildICmp(builder_.get(), LLVMIntUGE, cycles, builder_.getInt64(cost.cycles), ""));
+    return builder_.CreateAnd(room,
+                              builder_.CreateAnd(builder_.CreateICmpULT(completed, budget_),
+                                                 builder_.CreateICmpULT(elapsed, deadline_)));
+  }
+
+  void admission(const Address pc, LLVMBasicBlockRef block) {
+    LLVMPositionBuilderAtEnd(builder_.get(), block);
+    if (grants_.single(pc)) {
+      LLVMBuildBr(builder_.get(), blocks_.at(pc));
+      return;
+    }
+    const auto loop = grants_.loops().find(pc);
+    if (loop != grants_.loops().end()) {
+      loop_grant(loop->second);
+      return;
+    }
+    LLVMBuildCondBr(builder_.get(), fits(grants_.ahead(pc)), admitted_.at(pc), blocks_.at(pc));
+  }
+
+  void account_loop(LLVMValueRef completed, const GrantCost cost) {
+    auto *instructions =
+        LLVMBuildMul(builder_.get(), completed, builder_.getInt32(cost.instructions), "");
+    auto *cycles = LLVMBuildMul(builder_.get(),
+                                builder_.CreateZExt(completed, builder_.getInt64Ty()),
+                                builder_.getInt64(cost.cycles),
+                                "");
+    builder_.CreateStore(builder_.CreateAdd(load(retired_, builder_.getInt32Ty()), instructions),
+                         retired_);
+    builder_.CreateStore(builder_.CreateAdd(load(cycles_, builder_.getInt64Ty()), cycles), cycles_);
+  }
+
+  LLVMBasicBlockRef owner_exit() {
+    if (!loop_) { return done_; }
+    if (loop_->cold_exit == nullptr) {
+      loop_->cold_exit = LLVMAppendBasicBlockInContext(context_, function_, "loop.exact.exit");
+    }
+    return loop_->cold_exit;
+  }
+
+  void loop_grant(const LoopGrant &grant) {
+    auto *entry = LLVMGetInsertBlock(builder_.get());
+    auto *initial_instructions = load(retired_, builder_.getInt32Ty());
+    auto *initial_cycles = load(cycles_, builder_.getInt64Ty());
+    auto *instructions = LLVMBuildUDiv(builder_.get(),
+                                       builder_.CreateSub(budget_, initial_instructions),
+                                       builder_.getInt32(grant.cost.instructions),
+                                       "");
+    auto *cycles = LLVMBuildUDiv(builder_.get(),
+                                 builder_.CreateSub(deadline_, initial_cycles),
+                                 builder_.getInt64(grant.cost.cycles),
+                                 "");
+    auto *wide = builder_.CreateZExt(instructions, builder_.getInt64Ty());
+    auto *quota = builder_.CreateTrunc(
+        builder_.CreateSelect(builder_.CreateICmpULT(wide, cycles), wide, cycles),
+        builder_.getInt32Ty());
+    const auto head = instructions_[grant.first].pc;
+    LLVMBuildCondBr(builder_.get(), fits(grant.cost), admitted_.at(head), blocks_.at(head));
+    LLVMPositionBuilderAtEnd(builder_.get(), admitted_.at(head));
+    auto *remaining = LLVMBuildPhi(builder_.get(), builder_.getInt32Ty(), "turns");
+    LLVMAddIncoming(remaining, &quota, &entry, 1);
+    loop_ = LoopPrefix{.quota = quota,
+                       .remaining = remaining,
+                       .completed = builder_.CreateSub(quota, remaining),
+                       .initial_instructions = initial_instructions,
+                       .initial_cycles = initial_cycles,
+                       .cost = grant.cost,
+                       .head = admitted_.at(head)};
+    for (auto i = grant.first; i <= grant.last; ++i) {
+      loop_members_.insert(instructions_[i].pc);
+      emit(instructions_[i], true, i == grant.last);
+    }
+    const auto prefix = *loop_;
+    loop_.reset();
+    if (prefix.cold_exit != nullptr) {
+      LLVMPositionBuilderAtEnd(builder_.get(), prefix.cold_exit);
+      account_loop(prefix.completed, prefix.cost);
+      LLVMBuildBr(builder_.get(), done_);
+    }
+  }
+
+  void continue_loop(const BlockInstruction &operation, LLVMValueRef taken) {
+    if (!loop_) { throw std::logic_error("CPU12 loop backedge without a grant"); }
+    const auto prefix = *loop_;
+    auto *remaining = builder_.CreateSub(prefix.remaining, builder_.getInt32(1));
+    auto *again = LLVMAppendBasicBlockInContext(context_, function_, "loop.next");
+    auto *complete = LLVMAppendBasicBlockInContext(context_, function_, "loop.done");
+    auto *repeat =
+        builder_.CreateAnd(taken, builder_.CreateICmpNE(remaining, builder_.getInt32(0)));
+    LLVMBuildCondBr(builder_.get(), repeat, again, complete);
+    LLVMPositionBuilderAtEnd(builder_.get(), again);
+    builder_.CreateStore(prefix.initial_instructions, retired_);
+    builder_.CreateStore(prefix.initial_cycles, cycles_);
+    LLVMAddIncoming(prefix.remaining, &remaining, &again, 1);
+    LLVMBuildBr(builder_.get(), prefix.head);
+    LLVMPositionBuilderAtEnd(builder_.get(), complete);
+    account_loop(prefix.completed, prefix.cost);
+    continue_flow(operation, taken, false);
   }
 
   void transfer(LLVMBasicBlockRef block, LLVMValueRef target) {
@@ -198,11 +326,14 @@ private:
                                       : builder_.CreateICmpEQ(value, builder_.getInt32(0));
   }
 
-  void emit(const cpu12::detail::BlockInstruction &operation) {
-    LLVMPositionBuilderAtEnd(builder_.get(), blocks_.at(operation.pc));
+  void emit(const cpu12::detail::BlockInstruction &operation,
+            const bool admitted,
+            const bool loop_end = false) {
+    LLVMPositionBuilderAtEnd(builder_.get(), (admitted ? admitted_ : blocks_).at(operation.pc));
+    builder_.CreateStore(builder_.getInt16(operation.pc), pc_);
     auto *completed = load(retired_, builder_.getInt32Ty());
     auto *elapsed = load(cycles_, LLVMInt64TypeInContext(context_));
-    guard(completed, elapsed);
+    if (!admitted) { guard(completed, elapsed); }
     const auto &instruction = operation.instruction;
     Values state{.d = load(d_, builder_.getInt32Ty()),
                  .x = load(x_, builder_.getInt32Ty()),
@@ -241,11 +372,17 @@ private:
     if (memory_operand(instruction) || stack_operand(instruction) || frame_operand(instruction) ||
         mask_operation(instruction) || instruction.kind == Kind::move) {
       auto *flow_block = LLVMAppendBasicBlockInContext(context_, function_, "resume");
-      LLVMBuildCondBr(
-          builder_.get(), load(boundary_, LLVMInt1TypeInContext(context_)), done_, flow_block);
+      LLVMBuildCondBr(builder_.get(),
+                      load(boundary_, LLVMInt1TypeInContext(context_)),
+                      owner_exit(),
+                      flow_block);
       LLVMPositionBuilderAtEnd(builder_.get(), flow_block);
     }
-    continue_flow(operation, taken);
+    if (loop_end) {
+      continue_loop(operation, taken);
+    } else {
+      continue_flow(operation, taken, admitted);
+    }
   }
 
   LLVMValueRef effect(const BlockInstruction &operation,
@@ -299,16 +436,19 @@ private:
     return destination;
   }
 
-  void continue_flow(const BlockInstruction &operation, LLVMValueRef taken) {
+  void continue_flow(const BlockInstruction &operation, LLVMValueRef taken, const bool admitted) {
     const auto flow = successors(operation);
     if (flow.indirect) {
       LLVMBuildBr(builder_.get(), dispatch_);
     } else if (operation.instruction.kind == Kind::call) {
-      LLVMBuildBr(builder_.get(), target(flow.direct[flow.count - 1]));
+      LLVMBuildBr(builder_.get(), target(flow.direct[flow.count - 1], admitted, operation.pc));
     } else if (flow.count == 1) {
-      LLVMBuildBr(builder_.get(), target(flow.direct[0]));
+      LLVMBuildBr(builder_.get(), target(flow.direct[0], admitted, operation.pc));
     } else if (flow.count == 2) {
-      LLVMBuildCondBr(builder_.get(), taken, target(flow.direct[1]), target(flow.direct[0]));
+      LLVMBuildCondBr(builder_.get(),
+                      taken,
+                      target(flow.direct[1], admitted, operation.pc),
+                      target(flow.direct[0], admitted, operation.pc));
     } else {
       throw std::logic_error("CPU12 LLVM lowering requires a prepared control-flow successor");
     }
@@ -484,7 +624,7 @@ private:
         (static_cast<std::uint64_t>(operation.instruction.opcode) << native_opcode_shift);
     builder_.CreateStore(builder_.getInt64(location), location_);
     builder_.CreateStore(LLVMConstInt(LLVMInt1TypeInContext(context_), 1, 0), boundary_);
-    LLVMBuildBr(builder_.get(), done_);
+    LLVMBuildBr(builder_.get(), owner_exit());
     LLVMPositionBuilderAtEnd(builder_.get(), accepted);
   }
 
@@ -605,7 +745,7 @@ private:
             : builder_.CreateICmpEQ(
                   result, builder_.getInt32(instruction.word ? failed_word_read : failed_read));
     auto *accepted = LLVMAppendBasicBlockInContext(context_, function_, "accepted");
-    LLVMBuildCondBr(builder_.get(), failed, done_, accepted);
+    LLVMBuildCondBr(builder_.get(), failed, owner_exit(), accepted);
     LLVMPositionBuilderAtEnd(builder_.get(), accepted);
     auto *yield =
         load(address(owner_, offsetof(NativeContext, yield_requested)), builder_.getInt8Ty());
@@ -613,9 +753,15 @@ private:
     return access.join(result);
   }
 
-  [[nodiscard]] LLVMBasicBlockRef target(Address address) {
+  [[nodiscard]] LLVMBasicBlockRef target(Address address, const bool admitted, const Address from) {
     const auto found = blocks_.find(address);
-    if (found != blocks_.end()) { return found->second; }
+    if (found != blocks_.end()) {
+      if (admitted && address > from && !grants_.loops().contains(address)) {
+        return admitted_.at(address);
+      }
+      const auto head = heads_.find(address);
+      return head == heads_.end() ? found->second : head->second;
+    }
     if (flow_.target(address) == nullptr) { return done_; }
     const auto [bridge, inserted] = bridges_.try_emplace(address, nullptr);
     if (inserted) {
@@ -642,8 +788,14 @@ private:
         address(registers_, offsetof(cpu12::Registers, sp)));
     builder_.CreateStore(load(pc_, builder_.getInt16Ty()),
                          address(registers_, offsetof(cpu12::Registers, pc)));
-    builder_.CreateStore(load(cycles_, LLVMInt64TypeInContext(context_)),
-                         address(owner_, progress_offset));
+    auto *cycles = load(cycles_, builder_.getInt64Ty());
+    if (loop_) {
+      auto *completed = builder_.CreateZExt(loop_->completed, builder_.getInt64Ty());
+      cycles = builder_.CreateAdd(
+          cycles,
+          LLVMBuildMul(builder_.get(), completed, builder_.getInt64(loop_->cost.cycles), ""));
+    }
+    builder_.CreateStore(cycles, address(owner_, progress_offset));
   }
 
   void finish() {
@@ -672,6 +824,7 @@ private:
   Builder builder_;
   const std::span<const BlockInstruction> instructions_;
   const Memory &memory_;
+  const Grants grants_;
   LLVMValueRef registers_, owner_, budget_;
   LLVMBasicBlockRef done_, dispatch_, outward_;
   LLVMValueRef d_ = nullptr, ccr_ = nullptr, pc_ = nullptr, cycles_ = nullptr;
@@ -679,7 +832,16 @@ private:
   LLVMValueRef sp_ = nullptr;
   LLVMValueRef retired_ = nullptr, location_ = nullptr, deadline_ = nullptr;
   LLVMValueRef boundary_ = nullptr;
-  std::map<cpu12::Address, LLVMBasicBlockRef> blocks_, bridges_;
+
+  struct LoopPrefix {
+    LLVMValueRef quota, remaining, completed, initial_instructions, initial_cycles;
+    GrantCost cost;
+    LLVMBasicBlockRef head, cold_exit = nullptr;
+  };
+
+  std::optional<LoopPrefix> loop_;
+  std::set<Address> loop_members_;
+  std::map<cpu12::Address, LLVMBasicBlockRef> blocks_, admitted_, heads_, bridges_;
 };
 
 }
