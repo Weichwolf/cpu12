@@ -14,7 +14,7 @@ struct InstructionTiming {
   unsigned taken_extra = 0;
 };
 
-inline constexpr unsigned maximum_instruction_cycles = 12;
+inline constexpr unsigned maximum_instruction_cycles = 13;
 [[nodiscard]] InstructionTiming instruction_timing(const Instruction &instruction);
 [[nodiscard]] bool may_access_owner(const Instruction &instruction, const Memory &memory);
 [[nodiscard]] bool branch_taken(const Instruction &instruction, std::uint8_t ccr);

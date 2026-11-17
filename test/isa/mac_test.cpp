@@ -232,6 +232,31 @@ void aliases_and_bounds(const bool dynamic) {
     }
   }
 }
+
+void deadline_overflow() {
+  Fixture f(true, false);
+  f.bus.yield = true;
+  f.reset({.accumulator = 0, .a = 1, .b = 2});
+  constexpr auto maximum = std::numeric_limits<std::uint64_t>::max();
+  auto saved = f.core.save();
+  saved.progress.estimated_cycles = maximum - 13;
+  f.core.restore(saved);
+  const auto complete = f.core.run_until(maximum - 12);
+  require(complete.retired == 1 && complete.fault == Fault::none && f.result() == 2 &&
+              f.core.progress().estimated_cycles == maximum,
+          "EMACS may complete at the last representable nominal cycle");
+  f.reset({.accumulator = 0, .a = 1, .b = 2});
+  saved = f.core.save();
+  saved.progress.estimated_cycles = maximum - 12;
+  f.core.restore(saved);
+  const auto memory = f.bus.ram;
+  bool rejected = false;
+  try {
+    static_cast<void>(f.core.run_until(maximum - 11));
+  } catch (const std::overflow_error &) { rejected = true; }
+  require(rejected && f.core.save() == saved && f.bus.ram == memory && f.bus.accesses == 0,
+          "A deadline without room for EMACS must reject before state, I/O or time changes");
+}
 }
 
 int main() {
@@ -241,6 +266,7 @@ int main() {
     transactions();
     aliases_and_bounds(false);
     aliases_and_bounds(true);
+    deadline_overflow();
     std::cout
         << "EMACS arithmetic, CCR, fixed/dynamic storage and ordered fault/yield prefixes pass\n";
   } catch (const std::exception &error) {
