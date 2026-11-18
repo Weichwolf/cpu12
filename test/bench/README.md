@@ -63,9 +63,10 @@ instructions and cycles per guest instruction, guest instructions/s, native/C++
 elapsed-time ratio (greater than one is slower), standalone preparation seconds
 and native text bytes. Linux uses one perf_event_open group on the execution
 owner thread, excluding kernel/hypervisor work and scaling multiplexed counters.
-Counter refusal is an error. macOS runs correctness checks; counter collection
-there remains unqualified. Pin the benchmark to one host CPU and run measurements
-without concurrent own builds or native workloads.
+Counter refusal is an error on Linux. macOS keeps the same warm timing controls.
+An empty hardware-counter field means the counter is unavailable. Pin the
+benchmark to one host CPU where the OS supports it. Run without concurrent
+builds or native workloads.
 
 CoreMark 1.0 remains an external reference point, not one of these kernels;
 no CoreMark result is currently qualified. Manufacturer/compiler inputs belong

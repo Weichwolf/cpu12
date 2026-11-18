@@ -40,7 +40,7 @@ public:
       throw;
     }
 #else
-    if (enabled) { throw std::runtime_error("Hardware counters unavailable on this host"); }
+    static_cast<void>(enabled);
 #endif
   }
 
@@ -53,6 +53,14 @@ public:
 
   Counters(const Counters &) = delete;
   Counters &operator=(const Counters &) = delete;
+
+  [[nodiscard]] bool has_hardware_counters() const noexcept {
+#if defined(__linux__)
+    return instructions_ >= 0;
+#else
+    return false;
+#endif
+  }
 
   void start() {
 #if defined(__linux__)

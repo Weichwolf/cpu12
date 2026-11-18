@@ -259,10 +259,14 @@ template <class Run> void report(Run &run, const std::string_view name, const bo
   std::ranges::sort(portable);
   const auto &measured = native[1];
   const auto retired = static_cast<double>(measured.retired);
-  std::cout << name << ',' << measured.retired << ',' << measured.instructions / retired << ','
-            << measured.cycles / retired << ',' << retired / measured.seconds << ','
-            << measured.seconds / portable[1] << ',' << run.preparation_seconds() << ','
-            << run.native_bytes() << '\n';
+  std::cout << name << ',' << measured.retired << ',';
+  if (counters.has_hardware_counters()) {
+    std::cout << measured.instructions / retired << ',' << measured.cycles / retired;
+  } else {
+    std::cout << ',';
+  }
+  std::cout << ',' << retired / measured.seconds << ',' << measured.seconds / portable[1] << ','
+            << run.preparation_seconds() << ',' << run.native_bytes() << '\n';
 }
 
 void kernel(const std::string_view name, const bool check_only) {
