@@ -47,7 +47,10 @@ void Grants::collect_heads(const std::span<const BlockInstruction> instructions)
       heads_.insert(operation.pc);
     }
     const auto next = static_cast<Address>(operation.pc + operation.instruction.length);
-    if (flow.indirect || flow.count != 1 || flow.direct[0] != next) {
+    // An alternate entry inside this encoding can start a loop. This fallthrough
+    // enters its body without the loop's grant, just like an explicit branch.
+    const bool skips_entry = i + 1 < instructions.size() && instructions[i + 1].pc < next;
+    if (flow.indirect || flow.count != 1 || flow.direct[0] != next || skips_entry) {
       heads_.insert(next);
       for (unsigned edge = 0; edge < flow.count; ++edge) { heads_.insert(flow.direct[edge]); }
     }

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "cpu12/core.hpp"
 #include "cpu12/memory.hpp"
+#include "isa.hpp"
 
 #include <algorithm>
 #include <array>
@@ -213,10 +214,55 @@ void corners(Fixture &f) {
     }
   }
 }
+
+void overlapping_entry() {
+  constexpr Byte decrement_y = 0x36;
+  constexpr Byte back_to_nop = static_cast<Byte>(-5);
+  constexpr Byte back_to_branch = static_cast<Byte>(-2);
+  // BRN skips its operand, which is also an independently reachable NOP.
+  std::array code{isa::opcode<isa::Opcode::brn_relative>()[0],
+                  isa::nop[0],
+                  isa::incb[0],
+                  isa::opcode<isa::Opcode::dbne_relative>()[0],
+                  decrement_y,
+                  back_to_nop,
+                  isa::opcode<isa::Opcode::bra_relative>()[0],
+                  back_to_branch};
+  constexpr Address loop = entry + 1;
+  constexpr Address done = entry + 6;
+  constexpr unsigned turns = 3;
+  constexpr unsigned instructions_per_turn = 3;
+  constexpr std::uint64_t cycles_per_turn = 5;
+  constexpr std::array entries{entry, loop};
+  const std::array spans{CodeSpan{.address = entry, .words = std::span(code).first(2)},
+                         CodeSpan{.address = loop, .words = std::span(code).subspan(1)}};
+  const std::array variants{CodeVariant{.id = 0, .code = spans, .entries = entries}};
+  const std::array layout{RegionLayout{.first = entry, .size = code.size(), .writable = false}};
+  const std::array layouts{VariantLayout{.id = 0, .memory = layout}};
+  const auto image = Core::compile(
+      {.variants = variants},
+      {.memory = layouts, .interrupts = {}, .transitions = {}, .callbacks = {}, .bindings = {}});
+  Core core(Memory::window({.first = entry, .bytes = code, .writable = false}));
+  core.install(image, 0);
+  for (const auto start : entries) {
+    core.set_registers({.pc = start, .y = turns, .ccr = initial_flags});
+    auto expected = core.registers();
+    expected.pc = done;
+    expected.y = 0;
+    expected.d = turns;
+    const auto prior = core.progress().estimated_cycles;
+    const auto result = core.run(turns * instructions_per_turn);
+    require(result.fault == Fault::none && result.retired == turns * instructions_per_turn &&
+                core.registers() == expected &&
+                core.progress().estimated_cycles == prior + (turns * cycles_per_turn),
+            "The overlapping fallthrough and loop head reach the same exact final state");
+  }
+}
 }
 
 int main() {
   try {
+    overlapping_entry();
     for (const bool counted : {false, true}) {
       for (const bool dynamic : {false, true}) {
         Fixture mapped(counted, false, dynamic);
